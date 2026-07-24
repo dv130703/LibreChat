@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { useForm, FormProvider } from 'react-hook-form';
-import { EModelEndpoint, alternateName, isAssistantsEndpoint } from 'librechat-data-provider';
+import {
+  EModelEndpoint,
+  KnownEndpoints,
+  alternateName,
+  isAssistantsEndpoint,
+} from 'librechat-data-provider';
 import {
   useRevokeUserKeyMutation,
   useRevokeAllUserKeysMutation,
@@ -23,11 +28,16 @@ import { useUserKey, useLocalize } from '~/hooks';
 import { NotificationSeverity } from '~/common';
 import CustomConfig from './CustomEndpoint';
 import GoogleConfig from './GoogleConfig';
+import OllamaConfig from './OllamaConfig';
 import OpenAIConfig from './OpenAIConfig';
 import OtherConfig from './OtherConfig';
 import BedrockConfig from './BedrockConfig';
 import HelpText from './HelpText';
 import { logger } from '~/utils';
+
+/** Ollama's apiKey is a fixed placeholder the server never validates, so the
+ * dialog skips the generic key/URL form and shows only a server-URL field. */
+const OLLAMA_API_KEY_PLACEHOLDER = 'ollama';
 
 const endpointComponents = {
   [EModelEndpoint.google]: GoogleConfig,
@@ -47,6 +57,7 @@ const formSet: Set<string> = new Set([
   EModelEndpoint.assistants,
   EModelEndpoint.azureAssistants,
   EModelEndpoint.bedrock,
+  KnownEndpoints.ollama,
 ]);
 
 const EXPIRY = {
@@ -230,12 +241,15 @@ const SetKeyDialog = ({
       methods.handleSubmit((data) => {
         const isAzure = configuredEndpoint === EModelEndpoint.azureOpenAI;
         const isBedrock = configuredEndpoint === EModelEndpoint.bedrock;
+        const isOllama = endpoint === KnownEndpoints.ollama;
         const isOpenAIBase =
           isAzure ||
           configuredEndpoint === EModelEndpoint.openAI ||
           isAssistantsEndpoint(configuredEndpoint);
         if (isAzure) {
           data.apiKey = 'n/a';
+        } else if (isOllama) {
+          data.apiKey = OLLAMA_API_KEY_PLACEHOLDER;
         }
 
         const emptyValues = Object.keys(data).filter((key) => {
@@ -361,7 +375,10 @@ const SetKeyDialog = ({
     setUserKey('');
   };
 
-  const EndpointComponent = endpointComponents[configuredEndpoint] ?? endpointComponents['default'];
+  const EndpointComponent =
+    endpoint === KnownEndpoints.ollama
+      ? OllamaConfig
+      : (endpointComponents[configuredEndpoint] ?? endpointComponents['default']);
   const expiryTime = getExpiry();
 
   return (
@@ -369,7 +386,9 @@ const SetKeyDialog = ({
       <OGDialogContent className="w-11/12 max-w-2xl">
         <OGDialogHeader>
           <OGDialogTitle>
-            {`${localize('com_endpoint_config_key_for')} ${alternateName[endpoint] ?? endpoint}`}
+            {endpoint === KnownEndpoints.ollama
+              ? `${localize('com_endpoint_config_ollama_url')} — ${alternateName[endpoint]}`
+              : `${localize('com_endpoint_config_key_for')} ${alternateName[endpoint] ?? endpoint}`}
           </OGDialogTitle>
         </OGDialogHeader>
         <div className="grid w-full items-center gap-2 py-4">
