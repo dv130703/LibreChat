@@ -140,7 +140,7 @@
   - 内置审核系统和 Token 消耗管理工具。
 
 - ⚙️ **配置与部署**：  
-  - 支持代理、反向代理、Docker 及多种部署选项。  
+  - 支持代理、反向代理及多种部署选项。  
   - 使用 [S3 与 CloudFront](https://www.librechat.ai/docs/configuration/cdn/cloudfront) 获得稳定的媒体链接、边缘分发、签名 Cookie 和安全下载。
   - 可完全本地运行或部署在云端。
 

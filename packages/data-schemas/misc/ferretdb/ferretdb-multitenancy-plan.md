@@ -110,14 +110,6 @@ Tenant router proven with:
 | `packages/data-schemas/src/methods/orgOperations.ferretdb.spec.ts` | Production operations (backup/restore, migration, deadlock retry) |
 | `packages/data-schemas/src/utils/retryWithBackoff.ts` | Production retry utility |
 
-## Docker
-
-| File | Purpose |
-|---|---|
-| `docker-compose.ferretdb.yml` | Single FerretDB + Postgres (dev/test) |
-
----
-
 ## Detailed Empirical Results
 
 ### Deadlock Retry Behavior

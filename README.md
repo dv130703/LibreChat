@@ -141,10 +141,9 @@
 - 🎛️ **[Admin Panel](https://www.librechat.ai/docs/features/admin_panel)**:
   - Browser-based UI to manage users, groups, roles, and configuration overrides
   - Edit settings and per-role/group permissions live, without redeploying
-  - Bundled with the Docker Compose stacks for one-command setup
 
 - ⚙️ **Configuration & Deployment**:  
-  - Configure Proxy, Reverse Proxy, Docker, & many Deployment options  
+  - Configure Proxy, Reverse Proxy, & many Deployment options  
   - Use [S3 with CloudFront](https://www.librechat.ai/docs/configuration/cdn/cloudfront) for stable media links, edge delivery, signed cookies, and secured downloads
   - Use completely local or deploy on the cloud
 

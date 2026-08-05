@@ -79,24 +79,19 @@ defined in this gateway config.
   tenant base URL is configured at LibreChat/gateway startup. Runtime tenant
   config selects from those known destinations; it does not inject arbitrary
   export URLs into the gateway.
-- The provided Compose gateway config is a three-region Langfuse Cloud preset
-  (`eu`, `us`, `jp`). Compose's static collector config routes only those keys;
-  the gateway fails startup when `LANGFUSE_FANOUT_TENANT_DESTINATIONS` contains
+- The gateway fails startup when `LANGFUSE_FANOUT_TENANT_DESTINATIONS` contains
   a key outside `LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS`. For self-hosted or
-  additional destination keys, update the collector config too or use Helm.
+  additional destination keys, update the collector config accordingly.
 - Helm binds the internal collector receiver to `127.0.0.1:4319` because the
-  collector is a sidecar. Compose binds it to `0.0.0.0:4319` on the private
-  `langfuse-fanout` network. Do not publish the internal collector receiver
+  collector is a sidecar. Do not publish the internal collector receiver
   outside the fanout deployment; tenant routing validation happens in the
   gateway before traces reach the collector.
 - The gateway stores short-lived one-time media upload plans in Redis. This lets
   media create and byte-upload requests land on different gateway replicas.
-  Compose includes a private Redis container; Helm can derive the URI from the
-  bundled Redis chart or use an explicit `langfuseFanout.redis.uri`.
+  Helm can derive the URI from the bundled Redis chart or use an explicit
+  `langfuseFanout.redis.uri`.
 - The gateway requires an explicit public/internal base URL for one-time upload
-  URLs. Compose sets `LANGFUSE_FANOUT_PUBLIC_URL` to its private gateway
-  service URL. Helm derives the fanout Service DNS name unless `publicUrl` is
-  set.
+  URLs. Helm derives the fanout Service DNS name unless `publicUrl` is set.
 - Media fanout is not transactional across central and tenant projects. If one
   destination accepts `POST /api/public/media` and another fails, LibreChat sees
   a gateway error and will not upload bytes, but the successful destination may
@@ -109,8 +104,6 @@ defined in this gateway config.
   `METRICS_SECRET` in the gateway environment. When neither is set, `/metrics`
   returns 401.
 
-## Docker Compose
-
 Set the central Langfuse destination in `.env`:
 
 ```dotenv
@@ -122,7 +115,6 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 LANGFUSE_FANOUT_CENTRAL_BASE_URL=https://cloud.langfuse.com
 LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER=Basic <base64-public-key-colon-secret-key>
 LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED=false
-# Compose's included gateway config supports these three destination keys.
 LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com,jp=https://jp.cloud.langfuse.com
 LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS=eu,us,jp
 LANGFUSE_FANOUT_TENANT_EU_BASE_URL=https://cloud.langfuse.com
@@ -151,22 +143,6 @@ Langfuse Cloud base URL options:
 | EU     | `https://cloud.langfuse.com`    |
 | US     | `https://us.cloud.langfuse.com` |
 | JP     | `https://jp.cloud.langfuse.com` |
-
-Then start LibreChat with the fanout override:
-
-```sh
-docker compose -f docker-compose.yml -f docker-compose.langfuse-fanout.yml up -d
-```
-
-For the deployed compose stack:
-
-```sh
-docker compose -f deploy-compose.yml -f deploy-compose.langfuse-fanout.yml up -d
-```
-
-The override builds the fanout gateway image, sets `LANGFUSE_FANOUT_ENABLED=true`, and points LibreChat at
-`http://langfuse-fanout-collector:4318`. It also starts an internal
-`langfuse-fanout-otel` service on the private fanout network for trace export.
 
 ## Helm
 

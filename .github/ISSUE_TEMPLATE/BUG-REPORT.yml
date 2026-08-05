@@ -31,7 +31,6 @@ body:
         This captures the exact version, commit, branch, and build date so maintainers can pinpoint the build you're running.
 
         If the About panel is unavailable (older version / self-hosted with it disabled), please provide as much of the following as possible instead:
-        - Docker: `docker images | grep librechat` (image tag) and `docker inspect <image> | grep -i "\"Commit\\|BUILD_"` if build args were set
         - Source: `git rev-parse HEAD` and `git rev-parse --abbrev-ref HEAD`
       placeholder: Paste the diagnostics block here
     validations:
@@ -64,8 +63,7 @@ body:
         Please paste relevant logs that were created when reproducing the error.
         
         Log locations:
-        - Docker: Project root directory ./logs
-        - npm: ./api/logs
+        - ./api/logs
         
         There are two types of logs that can help diagnose the issue:
         - debug logs (debug-YYYY-MM-DD.log)

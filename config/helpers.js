@@ -5,7 +5,6 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
-const { execSync } = require('child_process');
 
 const askQuestion = (query) => {
   const rl = readline.createInterface({
@@ -42,15 +41,6 @@ const askMultiLineQuestion = (query) => {
   });
 };
 
-function isDockerRunning() {
-  try {
-    execSync('docker info');
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
 function deleteNodeModules(dir) {
   const nodeModulesPath = path.join(dir, 'node_modules');
   if (fs.existsSync(nodeModulesPath)) {
@@ -79,6 +69,5 @@ module.exports = {
   askQuestion,
   askMultiLineQuestion,
   silentExit,
-  isDockerRunning,
   deleteNodeModules,
 };
