@@ -20,6 +20,20 @@ const OllamaConfig = () => {
           />
         )}
       />
+      <Controller
+        name="apiKey"
+        control={control}
+        render={({ field }) => (
+          <InputWithLabel
+            id="apiKey"
+            {...field}
+            type="password"
+            label={localize('com_endpoint_config_ollama_api_key')}
+            subLabel={localize('com_endpoint_config_ollama_api_key_sublabel')}
+            labelClassName="mb-1"
+          />
+        )}
+      />
     </form>
   );
 };

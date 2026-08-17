@@ -138,17 +138,37 @@ export function checkVariables(): void {
 /**
  * Checks the health of auxiliary API's by attempting a fetch request to their respective `/health` endpoints.
  * Logs information or warning based on the API's availability and response.
+ * Uses a 3-second timeout to avoid blocking startup.
  */
 export async function checkHealth(): Promise<void> {
+  if (!process.env.RAG_API_URL) {
+    logger.debug('RAG_API_URL not configured, skipping health check');
+    return;
+  }
+
   try {
-    const response = await fetch(`${process.env.RAG_API_URL}/health`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    const response = await fetch(`${process.env.RAG_API_URL}/health`, {
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
     if (response?.ok && response?.status === 200) {
       logger.info(`RAG API is running and reachable at ${process.env.RAG_API_URL}.`);
     }
-  } catch {
-    logger.warn(
-      `RAG API is either not running or not reachable at ${process.env.RAG_API_URL}, you may experience errors with file uploads.`,
-    );
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') {
+      logger.warn(
+        `RAG API health check timed out at ${process.env.RAG_API_URL}, startup will continue.`,
+      );
+    } else {
+      logger.warn(
+        `RAG API is either not running or not reachable at ${process.env.RAG_API_URL}, you may experience errors with file uploads.`,
+      );
+    }
   }
 }
 

@@ -248,7 +248,7 @@ const SetKeyDialog = ({
           isAssistantsEndpoint(configuredEndpoint);
         if (isAzure) {
           data.apiKey = 'n/a';
-        } else if (isOllama) {
+        } else if (isOllama && !data.apiKey) {
           data.apiKey = OLLAMA_API_KEY_PLACEHOLDER;
         }
 

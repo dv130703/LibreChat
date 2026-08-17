@@ -323,13 +323,7 @@ const startServer = async () => {
       process.exit(1);
     }
 
-    if (host === '0.0.0.0') {
-      logger.info(
-        `Server listening on all interfaces at port ${port}. Use http://localhost:${port} to access it`,
-      );
-    } else {
-      logger.info(`Server listening at http://${host == '0.0.0.0' ? 'localhost' : host}:${port}`);
-    }
+    logger.debug('HTTP server listening, starting post-boot initialization...');
 
     /**
      * The listen callback is async, so any rejection from these awaits would
@@ -350,7 +344,16 @@ const startServer = async () => {
       if (inspectFlags || isEnabled(process.env.MEM_DIAG)) {
         memoryDiagnostics.start();
       }
+
       serverReady = true;
+
+      if (host === '0.0.0.0') {
+        logger.info(
+          `Server listening on all interfaces at port ${port}. Use http://localhost:${port} to access it`,
+        );
+      } else {
+        logger.info(`Server listening at http://${host == '0.0.0.0' ? 'localhost' : host}:${port}`);
+      }
       logger.info('Server readiness checks passing.');
     } catch (initErr) {
       serverReady = false;
