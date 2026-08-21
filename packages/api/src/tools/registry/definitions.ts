@@ -351,6 +351,75 @@ export const fileSearchSchema: ExtendedJsonSchema = {
   required: ['query'],
 };
 
+/** Create Document tool JSON schema. Mirrors the zod schema in
+ *  `tools/documents/tool.ts`; this is the definitions-only twin the agent
+ *  advertises to the model before any tool instance is constructed. */
+export const createDocumentSchema: ExtendedJsonSchema = {
+  type: 'object',
+  properties: {
+    format: {
+      type: 'string',
+      enum: ['docx', 'xlsx', 'pdf'],
+      description:
+        'File format to produce: docx for Word, xlsx for Excel, pdf for a fixed-layout document.',
+    },
+    filename: {
+      type: 'string',
+      description:
+        'Base file name without an extension, e.g. "Quarterly Sales". The extension is added automatically.',
+    },
+    title: {
+      type: 'string',
+      description: 'Optional document title rendered at the top. Not used for xlsx.',
+    },
+    blocks: {
+      type: 'array',
+      description:
+        'Body content for docx and pdf, rendered in order. Omit for xlsx and use sheets instead.',
+      items: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['heading', 'paragraph', 'bullets', 'table', 'pagebreak'],
+            description: 'The kind of block to render.',
+          },
+          text: { type: 'string', description: 'Text for a heading or paragraph block.' },
+          level: { type: 'number', enum: [1, 2, 3], description: 'Heading depth; 1 is largest.' },
+          items: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Bullet points, for bullets blocks.',
+          },
+          rows: {
+            type: 'array',
+            items: { type: 'array', items: { type: 'string' } },
+            description: 'Table rows; the first row is the header.',
+          },
+        },
+        required: ['type'],
+      },
+    },
+    sheets: {
+      type: 'array',
+      description: 'Worksheets for xlsx. Omit for docx and pdf.',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Worksheet tab name.' },
+          rows: {
+            type: 'array',
+            items: { type: 'array' },
+            description: 'Rows of cells; the first row is bolded and frozen as the header.',
+          },
+        },
+        required: ['name', 'rows'],
+      },
+    },
+  },
+  required: ['format', 'filename'],
+};
+
 /** Tool definitions registry - maps tool names to their definitions */
 export const toolDefinitions: Record<string, ToolRegistryDefinition> = {
   google: {
@@ -422,6 +491,14 @@ export const toolDefinitions: Record<string, ToolRegistryDefinition> = {
     description:
       'Performs semantic search across attached "file_search" documents using natural language queries. This tool analyzes the content of uploaded files to find relevant information, quotes, and passages that best match your query.',
     schema: fileSearchSchema,
+    toolType: 'builtin',
+    responseFormat: 'content_and_artifact',
+  },
+  create_document: {
+    name: 'create_document',
+    description:
+      'Creates a downloadable Word (docx), Excel (xlsx), or PDF document and attaches it to the conversation for the user to preview and download. Use this whenever the user asks for a document, report, spreadsheet, plan, letter, or table they can keep. Write the full content yourself. Do not output CSV text or a script instead — this tool produces the real binary file.',
+    schema: createDocumentSchema,
     toolType: 'builtin',
     responseFormat: 'content_and_artifact',
   },

@@ -6,6 +6,7 @@ export interface FormSelection {
   execute_code: boolean;
   web_search: boolean;
   file_search: boolean;
+  create_document: boolean;
   memory: boolean;
   artifacts: string | undefined;
   tools: string[];
@@ -36,6 +37,8 @@ function isBuiltinSelected(item: AgentItem, form: FormSelection): boolean {
       return form.web_search;
     case 'file_search':
       return form.file_search || form.knowledge_files.length > 0;
+    case 'create_document':
+      return form.create_document;
     case 'memory':
       return form.memory;
     case 'artifacts':

@@ -38,6 +38,7 @@ const createForm = (): AgentForm => ({
   artifacts: '',
   execute_code: false,
   file_search: false,
+  create_document: false,
   web_search: false,
   avatar_file: null,
   avatar_preview: '',

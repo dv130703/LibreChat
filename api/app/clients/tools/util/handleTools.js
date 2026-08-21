@@ -5,6 +5,7 @@ const {
   toolkitParent,
   createSafeUser,
   mcpToolPattern,
+  createDocumentTool,
   loadWebSearchAuth,
   buildInlineMemoryTool,
   getCodeApiAuthHeaders,
@@ -350,6 +351,9 @@ const loadTools = async ({
           fileCitations,
         });
       };
+      continue;
+    } else if (tool === Tools.create_document) {
+      requestedTools[tool] = async () => createDocumentTool();
       continue;
     } else if (tool === Tools.web_search) {
       const result = await loadWebSearchAuth({

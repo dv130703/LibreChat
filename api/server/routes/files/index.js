@@ -1,4 +1,6 @@
+const multer = require('multer');
 const express = require('express');
+const { logger } = require('@librechat/data-schemas');
 const {
   createFileLimiters,
   configMiddleware,
@@ -64,6 +66,32 @@ const initialize = async () => {
   router.use('/images/avatar', avatar);
   router.use('/images/agents', agentAvatarRouter);
   router.use('/images/assistants', asstAvatarRouter);
+
+  /* Multer rejects (unsupported type, size limit) reach Express via next(err),
+   * and without a handler here they surface as an unlogged HTML 500 that names
+   * no cause. Log them and return the real reason to the client instead. */
+  router.use((err, req, res, next) => {
+    if (!err) {
+      return next();
+    }
+
+    const isMulterError = err instanceof multer.MulterError;
+    const status = isMulterError || err.userErrorStatusCode ? 400 : 500;
+
+    logger.error(
+      `[/files] Upload rejected before processing (${req.method} ${req.originalUrl}) file="${
+        req.file?.originalname ?? 'n/a'
+      }" mimetype="${req.file?.mimetype ?? 'n/a'}" code=${err.code ?? 'n/a'}:`,
+      err,
+    );
+
+    if (res.headersSent) {
+      return next(err);
+    }
+
+    res.status(err.userErrorStatusCode ?? status).json({ message: err.message });
+  });
+
   return router;
 };
 

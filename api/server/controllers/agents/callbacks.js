@@ -28,7 +28,7 @@ const {
 } = require('@librechat/api');
 const { processFileCitations } = require('~/server/services/Files/Citations');
 const { processCodeOutput, runPreviewFinalize } = require('~/server/services/Files/Code/process');
-const { saveBase64Image } = require('~/server/services/Files/process');
+const { saveBase64Image, saveDocumentBuffer } = require('~/server/services/Files/process');
 
 function isHostFileAuthoringArtifact(artifact) {
   return artifact?.[HOST_FILE_AUTHORING_ARTIFACT_KEY] === true;
@@ -773,6 +773,42 @@ function createToolEndCallback({ req, res, artifactPromises, streamId = null }) 
           return attachment;
         })().catch((error) => {
           logger.error('Error processing artifact content:', error);
+          return null;
+        }),
+      );
+    }
+
+    if (output.artifact[Tools.create_document]) {
+      artifactPromises.push(
+        (async () => {
+          const { filename, mimeType, base64 } = output.artifact[Tools.create_document];
+          const file = await saveDocumentBuffer({
+            req,
+            buffer: Buffer.from(base64, 'base64'),
+            filename,
+            mimeType,
+          });
+          /* Same shape as the image-generation branch: a file record carrying the
+           * message linkage, which the client merges into `message.files` and renders
+           * as a previewable, downloadable attachment. */
+          const fileMetadata = Object.assign(file, {
+            /* Tags the attachment so the client can lift it out of the tool-call
+             * part and render it once, after the assistant's closing text. */
+            type: Tools.create_document,
+            messageId: metadata.run_id,
+            toolCallId: output.tool_call_id,
+            conversationId: metadata.thread_id,
+          });
+          logger.info(
+            `[create_document] attached "${filename}" (${mimeType}, ${file.bytes} bytes) file_id=${file.file_id}`,
+          );
+          if (!streamId && !res.headersSent) {
+            return fileMetadata;
+          }
+          writeAttachment(res, streamId, fileMetadata);
+          return fileMetadata;
+        })().catch((error) => {
+          logger.error('Error saving generated document:', error);
           return null;
         }),
       );

@@ -1,0 +1,21 @@
+# Web server
+fastapi
+uvicorn[standard]
+python-multipart
+
+# HTTP client (embedding / rerank calls to the processing machine)
+requests
+
+# Vector store
+lancedb
+numpy
+pyarrow
+
+# Auth (verifies LibreChat's short-lived HS256 tokens)
+pyjwt
+python-dotenv
+
+# Document text extraction
+pypdf
+python-docx
+openpyxl

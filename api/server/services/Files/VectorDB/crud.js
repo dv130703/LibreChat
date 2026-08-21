@@ -85,6 +85,9 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata })
 
     const formHeaders = formData.getHeaders();
 
+    logger.info(
+      `[RAG] POST ${process.env.RAG_API_URL}/embed file="${file.originalname}" file_id=${file_id} entity=${entity_id || '-'}`,
+    );
     const response = await axios.post(`${process.env.RAG_API_URL}/embed`, formData, {
       headers: {
         Authorization: `Bearer ${jwtToken}`,
@@ -94,6 +97,9 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata })
     });
 
     const responseData = response.data;
+    logger.info(
+      `[RAG] embed result file_id=${file_id} status=${responseData.status} known_type=${responseData.known_type} chunks=${responseData.chunks ?? 'n/a'}`,
+    );
     logger.debug('Response from embedding file', responseData);
 
     if (responseData.known_type === false) {

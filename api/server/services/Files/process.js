@@ -674,6 +674,16 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
 
   let messageAttachment = !!metadata.message_file;
 
+  /* The upload target decides whether this file is ever seen by the RAG API:
+   * only `file_search` embeds. Everything else lands in the context window. */
+  logger.info(
+    `[RAG] agent upload "${file.originalname}" tool_resource=${tool_resource ?? 'none'} -> ${
+      tool_resource === EToolResources.file_search
+        ? 'embedding via RAG API'
+        : 'NOT embedded; contents are injected into the context window'
+    }`,
+  );
+
   if (agent_id && !tool_resource && !messageAttachment) {
     throw new Error('No tool resource provided for agent file upload');
   }
@@ -1301,6 +1311,52 @@ async function saveBase64Image(
 }
 
 /**
+ * Persists a tool-generated document (docx/xlsx/pdf) as a real file record so it
+ * renders in the chat as a previewable, downloadable attachment.
+ *
+ * Mirrors `saveBase64Image` for non-image binaries: no resizing, and the MIME type
+ * comes from the generator rather than being sniffed from a data URL.
+ *
+ * @param {Object} params
+ * @param {ServerRequest} params.req
+ * @param {Buffer} params.buffer - The generated document bytes.
+ * @param {string} params.filename - Sanitized name including extension.
+ * @param {string} params.mimeType
+ * @param {string} [params.file_id]
+ * @returns {Promise<MongoFile>}
+ */
+async function saveDocumentBuffer({ req, buffer, filename, mimeType, file_id: _file_id }) {
+  const appConfig = req.config;
+  const file_id = _file_id ?? v4();
+  const source = getFileStrategy(appConfig, { isImage: false });
+  const { saveBuffer } = getStrategyFunctions(source);
+
+  const filepath = await saveBuffer({
+    userId: req.user.id,
+    fileName: `${file_id}-${filename}`,
+    buffer,
+    tenantId: req.user.tenantId,
+  });
+
+  return await db.createFile(
+    {
+      type: mimeType,
+      source,
+      context: FileContext.agents,
+      file_id,
+      filepath,
+      ...getStorageMetadata({ filepath, source }),
+      filename,
+      user: req.user.id,
+      bytes: buffer.length,
+      ...(await getRetentionExpiry(req)),
+      tenantId: req.user.tenantId,
+    },
+    true,
+  );
+}
+
+/**
  * Filters a file based on its size and the endpoint origin.
  *
  * @param {Object} params - The parameters for the function.
@@ -1382,6 +1438,7 @@ module.exports = {
   filterFile,
   processFileURL,
   saveBase64Image,
+  saveDocumentBuffer,
   processImageFile,
   uploadImageBuffer,
   sweepExpiredFiles,

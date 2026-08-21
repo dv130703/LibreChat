@@ -85,6 +85,12 @@ const BUILTIN_DEFINITIONS: BuiltinDef[] = [
     nameKey: 'com_assistants_file_search',
     descriptionKey: 'com_agents_file_search_info',
   },
+  {
+    id: AgentCapabilities.create_document,
+    iconKey: 'create_document',
+    nameKey: 'com_agents_create_document',
+    descriptionKey: 'com_agents_create_document_info',
+  },
 ];
 
 function countEndpoints(settings: Action['settings']): number {

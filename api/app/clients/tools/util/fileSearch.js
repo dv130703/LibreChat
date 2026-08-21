@@ -90,6 +90,9 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
   return tool(
     async ({ query }) => {
       if (files.length === 0) {
+        logger.warn(
+          `[RAG] ${Tools.file_search} invoked with no files attached to the tool resource — nothing will be queried.`,
+        );
         return ['No files to search. Instruct the user to add files for the search.', undefined];
       }
       const jwtToken = generateShortLivedToken(userId);
@@ -115,9 +118,15 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
         // directly without the flag, the safe default is unscoped (no
         // entity_id).
         if (!entity_id || file.fromAgent !== true) {
+          logger.info(
+            `[RAG] POST ${process.env.RAG_API_URL}/query file_id=${file.file_id} entity=- k=${body.k} query="${query}"`,
+          );
           return body;
         }
         body.entity_id = entity_id;
+        logger.info(
+          `[RAG] POST ${process.env.RAG_API_URL}/query file_id=${file.file_id} entity=${entity_id} k=${body.k} query="${query}"`,
+        );
         logger.debug(`[${Tools.file_search}] RAG API /query body`, body);
         return body;
       };
@@ -141,6 +150,9 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
 
       const results = await Promise.all(queryPromises);
       const validResults = results.filter((result) => result !== null);
+      logger.info(
+        `[RAG] query returned ${validResults.reduce((sum, result) => sum + (result.data?.length ?? 0), 0)} chunk(s) across ${validResults.length}/${files.length} file(s)`,
+      );
 
       if (validResults.length === 0) {
         return ['No results found or errors occurred while searching the files.', undefined];

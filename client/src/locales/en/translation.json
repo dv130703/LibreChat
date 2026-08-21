@@ -36,6 +36,8 @@
   "com_agents_clear_search": "Clear search",
   "com_agents_contact": "Contact",
   "com_agents_copy_link": "Copy Link",
+  "com_agents_create_document": "Create Document",
+  "com_agents_create_document_info": "Lets the agent build Word, Excel, and PDF files and attach them to the conversation, ready to preview or download.",
   "com_agents_create_error": "There was an error creating your agent.",
   "com_agents_created_by": "by",
   "com_agents_description_card": "Description: {{description}}",

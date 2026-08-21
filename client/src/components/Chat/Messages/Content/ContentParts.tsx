@@ -1,5 +1,5 @@
 import { memo, useRef, useMemo, useCallback } from 'react';
-import { ContentTypes } from 'librechat-data-provider';
+import { Tools, ContentTypes } from 'librechat-data-provider';
 import type {
   TMessageContentParts,
   SearchResultData,
@@ -10,6 +10,7 @@ import type { ToolCallGroupExpansionState } from './ToolCallGroup';
 import { mapAttachments, filterAttachmentsForPart, groupSequentialToolCalls } from '~/utils';
 import { ParallelContentRenderer, type PartWithIndex } from './ParallelContent';
 import { MessageContext, SearchContext } from '~/Providers';
+import { AttachmentGroup } from './Parts/Attachment';
 import PendingSkillCall from './Parts/PendingSkillCall';
 import { EditTextPart, EmptyText } from './Parts';
 import ApprovalProvider from './ApprovalContext';
@@ -151,7 +152,22 @@ const ContentParts = memo(function ContentParts({
   isLatestMessage,
   createdAt,
 }: ContentPartsProps) {
-  const attachmentMap = useMemo(() => mapAttachments(attachments ?? []), [attachments]);
+  /* Generated documents are the message's deliverable, not a detail of the tool
+   * call that produced them: hold them back from the per-part map and render one
+   * group after the closing text, where the reader looks for the file. */
+  const [documentAttachments, partAttachments] = useMemo(() => {
+    const documents: TAttachment[] = [];
+    const rest: TAttachment[] = [];
+    for (const attachment of attachments ?? []) {
+      if (attachment?.type === Tools.create_document) {
+        documents.push(attachment);
+        continue;
+      }
+      rest.push(attachment);
+    }
+    return [documents, rest];
+  }, [attachments]);
+  const attachmentMap = useMemo(() => mapAttachments(partAttachments), [partAttachments]);
   const effectiveIsSubmitting = isLatestMessage ? isSubmitting : false;
   const toolGroupExpansionRef = useRef(new Map<string, ToolCallGroupExpansionState>());
   const fallbackScopeRef = useRef({ messageId, scope: 0 });
@@ -433,6 +449,11 @@ const ContentParts = memo(function ContentParts({
             />
           );
         })}
+        {documentAttachments.length > 0 && (
+          <Container>
+            <AttachmentGroup attachments={documentAttachments} />
+          </Container>
+        )}
       </SearchContext.Provider>
     </ApprovalProvider>
   );

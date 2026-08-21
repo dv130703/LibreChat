@@ -12,6 +12,7 @@ export type BuiltinId =
   | `${AgentCapabilities.execute_code}`
   | `${AgentCapabilities.web_search}`
   | `${AgentCapabilities.file_search}`
+  | `${AgentCapabilities.create_document}`
   | `${AgentCapabilities.artifacts}`
   | `${AgentCapabilities.memory}`
   | `${AgentCapabilities.context}`

@@ -1,31 +1,90 @@
-version: '3.8'
+# RAG configuration reference — NOT a Docker Compose file.
+#
+# Docker was removed from this fork (commit d657219d6); this file survived as a
+# pgvector/rag_api compose definition that no longer described anything real.
+# It is now a plain description of how retrieval is actually wired, kept as the
+# single place to look when RAG misbehaves. Nothing reads it at runtime — the
+# authoritative values live in .env, rag_server/.env, and rag_server/config.py.
 
-services:
-  vectordb:
-    image: pgvector/pgvector:0.8.0-pg15-trixie
-    environment:
-      POSTGRES_DB: mydatabase
-      POSTGRES_USER: myuser
-      POSTGRES_PASSWORD: mypassword
-    volumes:
-      - pgdata2:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"
+version: 2
 
-  rag_api:
-    image: registry.librechat.ai/danny-avila/librechat-rag-api-dev:latest
-    environment:
-      - DB_HOST=vectordb
-      - DB_PORT=5432
-      - POSTGRES_DB=mydatabase
-      - POSTGRES_USER=myuser
-      - POSTGRES_PASSWORD=mypassword
-    ports:
-      - "${RAG_PORT}:${RAG_PORT}"
-    depends_on:
-      - vectordb
-    env_file:
-      - .env
+# The RAG API is a local FastAPI server implementing the HTTP contract LibreChat
+# expects. LibreChat holds no retrieval logic of its own.
+server:
+  entrypoint: rag_server/app.py
+  start: npm run rag
+  # Loopback only; config.py refuses to bind a non-loopback address.
+  host: 127.0.0.1 # RAG_HOST in rag_server/.env
+  port: 1234 # RAG_PORT — must match RAG_API_URL in .env
+  url: http://localhost:1234 # RAG_API_URL in .env
+  python: rag_server/.venv # created from rag_server/requirements.txt
 
-volumes:
-  pgdata2:
+  # Routes LibreChat calls. Response shapes are dictated by LibreChat's parsing;
+  # changing them breaks retrieval silently rather than erroring.
+  routes:
+    - POST   /embed # store a file's chunks (agent File Search uploads)
+    - POST   /query # semantic search within one file
+    - DELETE /documents # drop every chunk of the given files
+    - GET    /documents/{file_id}/context # whole document, if RAG_USE_FULL_CONTEXT
+    - POST   /text # plain-text extraction, no embedding
+    - GET    /health # readiness probe, checked at LibreChat startup
+
+# Requests are authenticated with the short-lived HS256 token LibreChat signs for
+# every RAG call. The secret must be byte-identical on both sides or every
+# request 401s; the `id` claim is the only tenant boundary the store has.
+auth:
+  scheme: bearer
+  algorithm: HS256
+  secret: JWT_SECRET # shared between .env and rag_server/.env
+  ttl: 5m
+
+vector_store:
+  engine: lancedb
+  path: ~/.lancedb/docs # LANCEDB_PATH
+  table: documents
+  # Auto-created and maintained by LanceDB. `_versions/` holds the manifests that
+  # define the table, `_transactions/` the commit records — never delete either;
+  # reclaim space with compaction + cleanup_old_versions().
+  layout: [data/, _versions/, _transactions/]
+  scope: every row carries user_id; reads and writes filter on it
+
+embeddings:
+  # nomic-embed-text is asymmetric: documents and queries are prefixed
+  # differently (search_document: / search_query:) before embedding.
+  provider: ollama
+  endpoint: http://localhost:11434/api/embed # PROCESSING_MACHINE, defaults off OLLAMA_BASE_URL
+  model: nomic-embed-text:latest # EMBED_MODEL
+  dimensions: 768 # EMBED_DIM — changing this requires rebuilding the table
+  batch: 64
+  # Cosine distance over L2-normalised vectors; LibreChat displays 1.0 - distance
+  # as relevance.
+  metric: cosine
+
+chunking:
+  size: 1000 # CHUNK_SIZE
+  overlap: 200 # CHUNK_OVERLAP
+  min: 200 # MIN_CHUNK — a paragraph this long stands as its own chunk
+
+ingestion:
+  # Only agent files uploaded under File Search reach this server. Files added
+  # under Context are extracted to text and injected into the context window;
+  # RAG is never consulted for them. See processAgentFileUpload in
+  # api/server/services/Files/process.js.
+  tool_resource: file_search
+  supported: [pdf, docx, csv, tsv, txt, md, and other UTF-8 text types]
+  unsupported: images, and PDFs with no extractable text (no OCR here)
+
+# Every request is logged to the terminal on both sides. Set RAG_LOG_REQUESTS
+# false in rag_server/.env to silence the Python side.
+observability:
+  rag_server: '-> / <- lines per request, plus query text, hit count, best distance'
+  librechat: '[RAG] lines — upload routing, /embed calls, /query calls and results'
+
+# Inert settings, listed so they aren't mistaken for live configuration.
+unused:
+  # Read by the official librechat-rag-api-dev image, which this fork no longer
+  # runs. The embedding model here is EMBED_MODEL in rag_server/.env.
+  - EMBEDDINGS_PROVIDER
+  - EMBEDDINGS_MODEL
+  - RAG_OPENAI_BASEURL
+  - RAG_OPENAI_API_KEY

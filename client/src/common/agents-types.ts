@@ -22,6 +22,7 @@ export type TAgentOption = OptionWithIcon &
 export type TAgentCapabilities = {
   [AgentCapabilities.web_search]: boolean;
   [AgentCapabilities.file_search]: boolean;
+  [AgentCapabilities.create_document]: boolean;
   [AgentCapabilities.execute_code]: boolean;
   [AgentCapabilities.memory]?: boolean;
   [AgentCapabilities.end_after_tools]?: boolean;
