@@ -1,0 +1,23 @@
+[0;1;34m# ]8;;file://SFO-EFU-AI/etc/systemd/system/ollama.service/etc/systemd/system/ollama.service]8;;[0m
+[0;1;36m[Unit][0m
+Description=Ollama Service
+After=network-online.target
+[0;1;38;5;245m[0m
+[0;1;36m[Service][0m
+ExecStart=/usr/local/bin/ollama serve
+User=ollama
+Group=ollama
+Restart=always
+RestartSec=3
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+[0;1;38;5;245m[0m
+[0;1;36m[Install][0m
+WantedBy=default.target
+
+[0;1;34m# ]8;;file://SFO-EFU-AI/etc/systemd/system/ollama.service.d/override.conf/etc/systemd/system/ollama.service.d/override.conf]8;;[0m
+[0;1;36m[Service][0m
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+Environment="OLLAMA_ORIGINS=*"
+Environment="OLLAMA_DEBUG=2"
+Environment="OLLAMA_LOG_REQUESTS=true"
+Environment="OLLAMA_LOG_RESPONSES=true"

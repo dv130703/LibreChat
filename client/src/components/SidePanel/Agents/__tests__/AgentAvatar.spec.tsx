@@ -61,7 +61,7 @@ const defaultFormValues: AgentForm = {
   artifacts: '',
   execute_code: false,
   file_search: false,
-  create_document: false,
+  transcribe_audio: false,
   web_search: false,
   avatar_file: null,
   avatar_preview: '',

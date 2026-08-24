@@ -27,7 +27,7 @@ export enum Tools {
   skill = 'skill',
   read_file = 'read_file',
   bash_tool = 'bash_tool',
-  create_document = 'create_document',
+  transcribe_audio = 'transcribe_audio',
 }
 
 export enum EToolResources {
@@ -37,6 +37,7 @@ export enum EToolResources {
   image_edit = 'image_edit',
   context = 'context',
   ocr = 'ocr',
+  transcribe_audio = 'transcribe_audio',
 }
 
 export type Tool = {
@@ -191,6 +192,7 @@ export interface AgentToolResources {
   [EToolResources.context]?: AgentBaseResource;
   /** @deprecated Use context instead */
   [EToolResources.ocr]?: AgentBaseResource;
+  [EToolResources.transcribe_audio]?: AgentBaseResource;
 }
 /**
  * A resource for the execute_code tool.

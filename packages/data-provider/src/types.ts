@@ -106,6 +106,7 @@ export type TEphemeralAgent = {
   web_search?: boolean;
   file_search?: boolean;
   execute_code?: boolean;
+  transcribe_audio?: boolean;
   artifacts?: string;
   skills?: boolean;
   memory?: boolean;

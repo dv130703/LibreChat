@@ -98,6 +98,7 @@ export async function loadAddedAgent(
       mcp?: string[];
       execute_code?: boolean;
       file_search?: boolean;
+      transcribe_audio?: boolean;
       web_search?: boolean;
       artifacts?: unknown;
       memory?: boolean;
@@ -116,6 +117,7 @@ export async function loadAddedAgent(
         mcp?: string[];
         execute_code?: boolean;
         file_search?: boolean;
+        transcribe_audio?: boolean;
         web_search?: boolean;
         artifacts?: unknown;
         memory?: boolean;
@@ -186,6 +188,9 @@ export async function loadAddedAgent(
   }
   if (ephemeralAgent?.file_search === true || modelSpec?.fileSearch === true) {
     tools.push(Tools.file_search);
+  }
+  if (ephemeralAgent?.transcribe_audio === true) {
+    tools.push(Tools.transcribe_audio);
   }
   if (ephemeralAgent?.web_search === true || modelSpec?.webSearch === true) {
     tools.push(Tools.web_search);

@@ -9,6 +9,7 @@ embed, query, and delete. The routes below mirror what it calls:
     GET    /documents/{file_id}/context  whole document (RAG_USE_FULL_CONTEXT)
     POST   /guidance                     document authoring rules (create_document)
     POST   /text                         plain-text extraction, no embedding
+    POST   /transcribe                   speaker-labelled audio/video transcription
     GET    /health                       readiness probe
 
 Response shapes are dictated by LibreChat's parsing and are documented per
@@ -16,17 +17,31 @@ route; changing them silently breaks retrieval rather than erroring.
 """
 
 import logging
+import os
+import sys
+import tempfile
 import time
 import uuid
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
+
+# transcription/ is a sibling of rag_server/, not a subpackage of it - both are
+# separately-rooted folders by design (RAG and transcription are distinct
+# concerns), sharing only this process and venv. Running from within
+# rag_server/ (see the "rag" npm script) means the repo root isn't on
+# sys.path by default, so add it before importing the sibling package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import db
 import guidance
 from auth import get_user_id
 from config import LOG_REQUESTS, embed_documents, embed_query
 from extract import UnsupportedFileType, chunk_text, extract_pages, is_supported
+from transcription.schemas import TranscriptionResponse
+from transcription.whisperx_service import get_whisperx_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("rag_server")
@@ -265,6 +280,62 @@ async def extract_file_text(
     return {"text": "\n\n".join(text for _, text in pages).strip()}
 
 
+_TRANSCRIBE_CONTENT_PREFIXES = ("audio/", "video/")
+
+
+@app.post("/transcribe", tags=["Transcription"], response_model=TranscriptionResponse)
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    diarize: bool = Form(True),
+    min_speakers: int | None = Form(None),
+    max_speakers: int | None = Form(None),
+    language: str | None = Form(None),
+    user_id: str = Depends(get_user_id),
+) -> TranscriptionResponse:
+    """Speaker-labelled transcript via WhisperX (model set by WHISPERX_WHISPER_MODEL).
+
+    Runs the actual ASR/diarization pipeline in a thread pool - it is a long,
+    blocking, GPU/CPU-bound call, and this server also answers /embed and
+    /query for every other request in flight.
+    """
+    if file.content_type and not file.content_type.startswith(_TRANSCRIBE_CONTENT_PREFIXES):
+        raise HTTPException(status_code=400, detail="File must be an audio or video file")
+
+    suffix = os.path.splitext(file.filename or "")[1] or ".wav"
+    data = await file.read()
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+
+    service = get_whisperx_service()
+    try:
+        segments, detected_language, diagnostics = await run_in_threadpool(
+            service.transcribe,
+            tmp_path,
+            language=language,
+            diarize=diarize,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+        )
+    except Exception as error:
+        logger.exception("Transcription failed for %s", file.filename)
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    logger.info(
+        "Transcribed %s for user=%s: %d segment(s), language=%s",
+        file.filename,
+        user_id,
+        len(segments),
+        detected_language,
+    )
+    return TranscriptionResponse(segments=segments, language=detected_language, diagnostics=diagnostics)
+
+
 def _build_rows(
     pages: list[tuple[int | None, str]],
     filename: str,
@@ -313,5 +384,16 @@ if __name__ == "__main__":
     import uvicorn
     from config import HOST, PORT
 
+    # reload_dirs must be explicit: transcription/ lives outside this file's
+    # own directory (rag_server/), which is uvicorn's default (and otherwise
+    # only) watched root - without this, edits there would never trigger a
+    # reload.
+    _repo_root = Path(__file__).resolve().parent.parent
     # HOST is validated as loopback in config.py
-    uvicorn.run("app:app", host=HOST, port=PORT, reload=True)
+    uvicorn.run(
+        "app:app",
+        host=HOST,
+        port=PORT,
+        reload=True,
+        reload_dirs=[str(Path(__file__).resolve().parent), str(_repo_root / "transcription")],
+    )

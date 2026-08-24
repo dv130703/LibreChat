@@ -1,0 +1,405 @@
+/* A plain vertical stack: the recording's shape, the line you scrub along, and
+   the transport under it. Every row is a block-level child of a column flex
+   container, so each is full width by default and none can be squeezed down to
+   the width of its own contents. */
+
+.audio-player {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+/* Sits inside a panel that already has its own padding and rule, so it brings
+   neither. */
+.audio-player--compact {
+  padding: 0;
+  gap: var(--space-2);
+}
+
+/* Scoped one level deeper than `.waveform`'s own `height: 100%` so this wins on
+   specificity rather than on which stylesheet happens to be emitted last. Kept
+   short deliberately: the wave is a shape to recognise the recording by, not
+   the primary reading surface on the page it sits in. */
+.audio-player .audio-player__wave {
+  flex: none;
+  height: 88px;
+}
+
+.audio-player--compact .audio-player__wave {
+  height: 96px;
+}
+
+/* ---- the line you scrub along ----------------------------------------- */
+
+.audio-player__seek-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.audio-player__time {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-muted);
+}
+
+.audio-player__scrubber {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 1.25rem;
+  display: flex;
+  align-items: center;
+}
+
+.audio-player__track,
+.audio-player__buffered,
+.audio-player__played {
+  position: absolute;
+  left: 0;
+  height: 4px;
+  border-radius: var(--radius-pill);
+}
+
+.audio-player__track {
+  width: 100%;
+  background: var(--color-surface-sunken);
+}
+
+.audio-player__buffered {
+  background: var(--color-border-strong);
+}
+
+.audio-player__played {
+  background: var(--color-accent);
+}
+
+.audio-player__seek {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 1.25rem;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+
+.audio-player__seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-surface);
+  cursor: pointer;
+  margin-top: 0;
+}
+
+.audio-player__seek::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-surface);
+  cursor: pointer;
+}
+
+.audio-player__seek::-moz-range-track {
+  background: transparent;
+}
+
+/* ---- the transport ----------------------------------------------------- */
+
+/* Three columns, the outer two matched, so the play button sits on the centre
+   line whether or not there is a volume control out to the right. */
+.audio-player__controls {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.audio-player__side {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.audio-player__side--end {
+  justify-content: flex-end;
+}
+
+/* ---- playback speed ---------------------------------------------------- */
+
+.audio-player__speed {
+  position: relative;
+}
+
+.audio-player__speed-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  height: 2rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+/* Grows the tap target to the 44px guideline without changing the button's
+   visible size - an invisible hit-area extension, not a bigger chip. */
+.audio-player__speed-toggle::before {
+  content: '';
+  position: absolute;
+  inset: -9px;
+}
+
+.audio-player__speed-toggle:hover,
+.audio-player__speed-toggle[aria-expanded='true'] {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+  color: var(--color-ink);
+}
+
+.audio-player__speed-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Opens upward: the compact player sits low in the file panel, and a menu
+   dropping below it would fall outside the panel entirely. */
+.audio-player__speed-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 4rem;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: 0 8px 20px rgba(20, 22, 27, 0.14);
+}
+
+.audio-player__speed-option {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--color-ink-soft);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.audio-player__speed-option:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+}
+
+.audio-player__speed-option[aria-checked='true'] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+  font-weight: 700;
+}
+
+.audio-player__transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.audio-player__toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(30, 44, 158, 0.3), 0 8px 18px -8px rgba(30, 44, 158, 0.55);
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.audio-player--compact .audio-player__toggle {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.audio-player--compact .audio-player__toggle::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+}
+
+.audio-player__toggle:hover {
+  background: var(--color-accent-hover);
+}
+
+.audio-player__toggle:active {
+  transform: scale(0.95);
+}
+
+.audio-player__skip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+
+.audio-player__skip::before {
+  content: '';
+  position: absolute;
+  inset: -7px;
+}
+
+.audio-player__skip:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+}
+
+.audio-player__skip:active {
+  transform: scale(0.94);
+}
+
+/* ---- volume ------------------------------------------------------------ */
+
+.audio-player__volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.audio-player__mute {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: none;
+  background: none;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.audio-player__mute::before {
+  content: '';
+  position: absolute;
+  inset: -7px;
+}
+
+.audio-player__mute:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+}
+
+/* Allowed to give ground before anything else does - the mute button beside it
+   still works when the slider is down to a stub, and the transport in the
+   middle must not be pushed off centre. */
+.audio-player__volume-range {
+  flex: 0 1 4rem;
+  min-width: 2rem;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    to right,
+    var(--color-accent) 0 var(--volume-fill, 100%),
+    var(--color-surface-sunken) var(--volume-fill, 100%) 100%
+  );
+  outline: none;
+  cursor: pointer;
+}
+
+.audio-player__volume-range::-moz-range-track {
+  background: transparent;
+}
+
+.audio-player__volume-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  cursor: pointer;
+}
+
+.audio-player__volume-range::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-accent);
+  cursor: pointer;
+}
+
+.audio-player__toggle:focus-visible,
+.audio-player__skip:focus-visible,
+.audio-player__mute:focus-visible,
+.audio-player__speed-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The compact player lives in a rail that can be quite narrow, so both side
+   controls trim rather than shove the transport over. */
+.audio-player--compact .audio-player__controls {
+  gap: 6px;
+}
+
+.audio-player--compact .audio-player__volume-range {
+  flex-basis: 2.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .audio-player__toggle,
+  .audio-player__skip,
+  .audio-player__mute,
+  .audio-player__speed-toggle,
+  .audio-player__speed-option {
+    transition: none;
+  }
+}

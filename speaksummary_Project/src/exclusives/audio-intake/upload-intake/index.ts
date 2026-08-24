@@ -1,0 +1,1 @@
+export { UploadIntake } from './UploadIntake'

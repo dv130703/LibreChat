@@ -37,7 +37,7 @@ const emptyFormState = {
   execute_code: false,
   web_search: false,
   file_search: false,
-  create_document: false,
+  transcribe_audio: false,
   memory: false,
   artifacts: '',
   tools: [] as string[],

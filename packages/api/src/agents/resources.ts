@@ -132,6 +132,19 @@ const categorizeFileForToolResources = ({
       tool_resources,
       processedResourceFiles,
     });
+    return;
+  }
+
+  if (
+    requestFileSet.has(file.file_id) &&
+    (file.type.startsWith('audio') || file.type.startsWith('video'))
+  ) {
+    addFileToResource({
+      file,
+      resourceType: EToolResources.transcribe_audio,
+      tool_resources,
+      processedResourceFiles,
+    });
   }
 };
 

@@ -28,7 +28,6 @@ const {
   buildMCPAuthRunStepDeltaEvent,
   buildMCPAuthRunStepCompletedEvent,
   isFileAuthoringToolDefinition,
-  buildDocumentGuidanceContext,
   ASK_USER_QUESTION_TOOL_NAME,
 } = require('@librechat/api');
 const {
@@ -512,7 +511,7 @@ async function processRequiredActions(client, requiredActions) {
 const nativeTools = new Set([
   Tools.execute_code,
   Tools.file_search,
-  Tools.create_document,
+  Tools.transcribe_audio,
   Tools.web_search,
   Tools.memory,
 ]);
@@ -573,8 +572,8 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
     if (tool === Tools.file_search) {
       return checkCapability(AgentCapabilities.file_search);
     }
-    if (tool === Tools.create_document) {
-      return checkCapability(AgentCapabilities.create_document);
+    if (tool === Tools.transcribe_audio) {
+      return checkCapability(AgentCapabilities.transcribe_audio);
     }
     if (tool === Tools.execute_code) {
       return checkCapability(AgentCapabilities.execute_code);
@@ -978,17 +977,6 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
   const hasWebSearch = filteredTools.includes(Tools.web_search);
   const hasFileSearch = filteredTools.includes(Tools.file_search);
   const hasExecuteCode = filteredTools.includes(Tools.execute_code);
-  const hasCreateDocument = filteredTools.includes(Tools.create_document);
-
-  /* Authoring rules live in the RAG service's `guidance` table so they can be
-   * edited without a redeploy; injected as tool context so the model reads them
-   * before writing, rather than needing a second tool call. */
-  if (hasCreateDocument) {
-    const guidance = await buildDocumentGuidanceContext(req.user.id);
-    if (guidance) {
-      toolContextMap[Tools.create_document] = guidance;
-    }
-  }
 
   if (hasWebSearch) {
     toolContextMap[Tools.web_search] = buildWebSearchContext();
@@ -1146,8 +1134,8 @@ async function loadAgentTools({
   const _agentTools = agent.tools?.filter((tool) => {
     if (tool === Tools.file_search) {
       return checkCapability(AgentCapabilities.file_search);
-    } else if (tool === Tools.create_document) {
-      return checkCapability(AgentCapabilities.create_document);
+    } else if (tool === Tools.transcribe_audio) {
+      return checkCapability(AgentCapabilities.transcribe_audio);
     } else if (tool === Tools.execute_code) {
       return checkCapability(AgentCapabilities.execute_code);
     } else if (tool === Tools.web_search) {
@@ -1236,7 +1224,7 @@ async function loadAgentTools({
       tool.name &&
       (tool.name === Tools.execute_code ||
         tool.name === Tools.file_search ||
-        tool.name === Tools.create_document)
+        tool.name === Tools.transcribe_audio)
     ) {
       agentTools.push(tool);
       continue;

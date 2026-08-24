@@ -1,0 +1,5 @@
+.venv/
+.venv-nemo/
+__pycache__/
+*.pyc
+.env

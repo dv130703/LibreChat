@@ -1,0 +1,532 @@
+/* Design tokens live with the audio-intake component so that folder can be
+   exported with the styling contract it reads. Imported first: @import must
+   precede every other rule, and every stylesheet below depends on these. */
+@import './exclusives/audio-intake/tokens.css';
+
+html,
+body,
+#root,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Scrollbars                                                             */
+/*                                                                         */
+/* One treatment for every scroller in the app - the shell, the rails, the */
+/* dropdown lists, a textarea. No track, no stepper buttons, no corner:    */
+/* just a thin pill thumb in the border grey that darkens under the        */
+/* pointer. The thumb is inset by a transparent border rather than made    */
+/* narrower, so the 4px bar keeps a comfortable gutter from the content    */
+/* it scrolls past and the hit target stays a usable 10px.                 */
+/* ---------------------------------------------------------------------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  transition: background-color 0.18s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-ink-muted);
+}
+
+/* Chrome still reserves space for the steppers unless they're zeroed out. */
+*::-webkit-scrollbar-button {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  /* Every figure in this app sits in a column against another figure - sizes
+     against sizes, timestamps against timestamps. Fixed-width digits are what
+     the monospaced family used to buy, and this buys it without a second font. */
+  font-variant-numeric: tabular-nums;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-sans);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--color-ink);
+}
+
+/* The one uppercase label used across every panel head, ruler and legend.
+   inline-flex so it can carry a leading icon without each caller re-laying it
+   out; with no icon it behaves exactly as a span would. */
+/* Section label: 13/600, tracked, uppercase. */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Shared control primitives                                              */
+/*                                                                         */
+/* Checkboxes and selects are drawn here rather than left to the browser:  */
+/* the platform defaults ship their own blue, their own radius and their   */
+/* own focus outline, none of which belong to this palette.                */
+/* ---------------------------------------------------------------------- */
+
+.checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: 1.5px solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface);
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  transition: background-color var(--motion) var(--ease), border-color var(--motion) var(--ease);
+}
+
+/* The tick is drawn by the box itself and scales in, so checking reads as one
+   movement rather than as a glyph appearing. */
+.checkbox::after {
+  content: '';
+  width: 10px;
+  height: 10px;
+  transform: scale(0);
+  transition: transform var(--motion) var(--ease);
+  background: var(--color-on-accent);
+  clip-path: polygon(14% 46%, 0 60%, 39% 100%, 100% 22%, 86% 8%, 39% 71%);
+}
+
+.checkbox:checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.checkbox:checked::after {
+  transform: scale(1);
+}
+
+.checkbox:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.checkbox:disabled {
+  background: var(--color-surface-raised);
+  border-color: var(--color-border);
+  cursor: not-allowed;
+}
+
+/* A select drawn as an input: 40px tall, its own chevron, no platform arrow. */
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--space-4) 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-2) center;
+  font: inherit;
+  font-size: var(--font-size-base);
+  color: var(--color-ink);
+  transition: border-color var(--motion) var(--ease), box-shadow var(--motion) var(--ease);
+}
+
+.select:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+}
+
+.select:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+}
+
+.select:disabled {
+  background-color: var(--color-surface-raised);
+  color: var(--color-ink-muted);
+  cursor: not-allowed;
+}
+
+/* A pill that states a fact (a format, a count, a setting that is on). Never
+   a status - amber and red stay reserved for things worth acting on. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-raised);
+  color: var(--color-ink-soft);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pill--accent {
+  background: var(--color-accent-wash);
+  color: var(--color-accent-ink);
+  font-weight: 600;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Shared primitives                                                      */
+/* ---------------------------------------------------------------------- */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  padding: 0.625rem 1rem;
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background-color var(--motion) var(--ease), border-color var(--motion) var(--ease),
+    color var(--motion) var(--ease), transform var(--motion) var(--ease), box-shadow var(--motion) var(--ease);
+  white-space: nowrap;
+}
+
+/* Presses in rather than down - the whole control acknowledges the click. */
+.button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.button--primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.button--primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.button--primary:active:not(:disabled) {
+  background: var(--color-accent-active);
+  border-color: var(--color-accent-active);
+}
+
+.button--primary:disabled {
+  background: var(--color-surface-raised);
+  border-color: var(--color-border);
+  color: var(--color-ink-muted);
+  cursor: not-allowed;
+}
+
+.button--ghost {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-ink);
+  text-decoration: none;
+}
+
+.button--ghost:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+.button--ghost:disabled {
+  color: var(--color-ink-muted);
+  cursor: not-allowed;
+}
+
+.button--subtle {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-ink-soft);
+  padding: 0.4rem 0.7rem;
+}
+
+.button--subtle:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+}
+
+.button--small {
+  padding: 0.35rem 0.75rem;
+  font-size: var(--font-size-xs);
+}
+
+.button--large {
+  padding: 0.9rem 1.5rem;
+  font-size: var(--font-size-md);
+}
+
+.button--full {
+  width: 100%;
+}
+
+/* Inline confirm for a destructive/overwriting action: replaces the button that
+   was just pressed with a question, in place, rather than opening a dialog over
+   it. Shared by anything that discards work in one click - file removal, and
+   regenerating a transcript/summary over hand-edited text. */
+.confirm-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.confirm-inline__danger,
+.confirm-inline__cancel {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--motion) var(--ease);
+}
+
+.confirm-inline__danger {
+  background: var(--color-error);
+  color: var(--color-on-accent);
+}
+
+.confirm-inline__danger:hover {
+  background: var(--color-error-strong);
+}
+
+.confirm-inline__cancel {
+  background: none;
+  border-color: var(--color-border);
+  color: var(--color-ink);
+}
+
+.confirm-inline__cancel:hover {
+  background: var(--color-surface-sunken);
+}
+
+.confirm-inline__danger:focus-visible,
+.confirm-inline__cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm-inline__danger,
+  .confirm-inline__cancel {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Flat by default - a border is enough to separate a secondary card from the
+   page. Only the card the step is worked in takes the lifted level. */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+}
+
+.panel-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  color: var(--color-ink-muted);
+}
+
+.empty-state__icon {
+  color: var(--color-ink-muted);
+  margin-bottom: var(--space-1);
+}
+
+.empty-state__title {
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  font-size: var(--font-size-base);
+}
+
+.empty-state__hint {
+  font-size: var(--font-size-sm);
+  max-width: 22rem;
+}
+
+.status-message {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+}
+
+.status-message--error {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+
+.status-message--hint {
+  color: var(--color-ink-muted);
+}
+
+.progress-bar {
+  height: 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-sunken);
+  overflow: hidden;
+}
+
+.progress-bar__fill {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  transform-origin: left;
+  transition: transform 0.2s ease;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-sunken);
+  color: var(--color-ink-soft);
+}
+
+.badge--success {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.badge--accent {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+
+.badge--warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.option-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.option-radio--compact {
+  align-items: center;
+}
+
+.option-radio input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+  accent-color: var(--color-accent);
+}
+
+.option-radio span {
+  display: flex;
+  flex-direction: column;
+}
+
+.option-radio--compact span {
+  flex-direction: row;
+}
+
+.option-radio small {
+  color: var(--color-ink-muted);
+  font-size: var(--font-size-xs);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

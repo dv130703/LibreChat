@@ -1,0 +1,74 @@
+/* Two-column layout: left rail (audio player + options), right card (transcript). */
+
+.transcript-layout {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-6);
+  flex: 1;
+  min-height: 0;
+}
+
+.transcript-rail {
+  width: 20rem;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  overflow-y: auto;
+}
+
+.transcript-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+}
+
+.transcript-panel .panel-header {
+  flex: none;
+  padding: var(--space-2) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.transcript-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+@media (max-width: 64rem) {
+  .transcript-layout {
+    flex-direction: column;
+  }
+
+  .transcript-rail {
+    width: 100%;
+  }
+
+  .transcript-panel {
+    height: auto;
+  }
+}
+
+/* Speakers row layout (SpeakerLabel components render inside) */
+
+.speakers-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Transcript rows */
+
+.transcript-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}

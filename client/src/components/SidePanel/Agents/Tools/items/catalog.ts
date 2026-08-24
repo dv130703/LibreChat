@@ -86,10 +86,10 @@ const BUILTIN_DEFINITIONS: BuiltinDef[] = [
     descriptionKey: 'com_agents_file_search_info',
   },
   {
-    id: AgentCapabilities.create_document,
-    iconKey: 'create_document',
-    nameKey: 'com_agents_create_document',
-    descriptionKey: 'com_agents_create_document_info',
+    id: AgentCapabilities.transcribe_audio,
+    iconKey: 'transcribe_audio',
+    nameKey: 'com_agents_transcribe_audio',
+    descriptionKey: 'com_agents_transcribe_audio_info',
   },
 ];
 

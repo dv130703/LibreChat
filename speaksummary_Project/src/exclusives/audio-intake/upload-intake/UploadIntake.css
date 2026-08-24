@@ -1,0 +1,576 @@
+/* ---------------------------------------------------------------------- */
+/* Audio intake - rebuilt at the app's normal type/spacing scale rather     */
+/* than a step-local upscale. The step still owns the whole viewport, but   */
+/* the previous 40-50% larger tokens were the single biggest reason this    */
+/* page needed more height than most screens give a browser tab: bigger     */
+/* text costs line-height everywhere it appears, compounding down a column  */
+/* of a dozen rows. Density comes from using the space well, not from       */
+/* enlarging everything that sits in it.                                    */
+/* ---------------------------------------------------------------------- */
+
+.intake-empty {
+  max-width: 44rem;
+  margin: 0 auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.intake-empty__panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 18rem;
+  max-height: 28rem;
+  padding: var(--space-8) var(--space-6);
+  text-align: center;
+  border-style: dashed;
+  border-width: 2px;
+}
+
+.intake-empty__icon {
+  width: 3.5rem;
+  height: 3.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  margin-bottom: var(--space-3);
+  padding: 0;
+}
+
+.intake-empty__icon svg {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.intake-empty__title {
+  font-weight: 650;
+  font-size: var(--font-size-xl);
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+
+.intake-empty__hint {
+  font-size: var(--font-size-base);
+  color: var(--color-ink-muted);
+  line-height: 1.5;
+  max-width: 26rem;
+}
+
+.intake-empty__browse {
+  margin-top: var(--space-4);
+  min-height: 44px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  cursor: pointer;
+}
+
+.intake-empty__browse svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.intake-empty__browse:has(:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.intake-empty__error {
+  margin-top: var(--space-4);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Intake page - three regions: the recording and whether it's usable, what */
+/* the transcriber should be told, and - reading back both - what's about   */
+/* to happen and the button that starts it. Scrolls as one only when a very */
+/* small window genuinely can't fit it; the target is zero scroll at normal */
+/* desktop sizes, verified against real content, not assumed.               */
+/* ---------------------------------------------------------------------- */
+
+.intake {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+  transition: background-color 0.15s ease;
+  container-type: inline-size;
+}
+
+.intake[data-dragging='true'],
+.intake-empty[data-dragging='true'] {
+  background: var(--color-accent-soft);
+}
+
+.intake-empty[data-dragging='true'] .intake-empty__panel {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.intake__canvas {
+  width: 100%;
+  max-width: 100rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.intake-stage__inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Weighted by what each column is for: the recording is the subject and
+   gets the widest track, the briefing needs room for sentences, the
+   confirmation rail is read rather than worked in and stays narrowest. */
+.intake-grid {
+  display: grid;
+  grid-template-columns: minmax(20rem, 1.15fr) minmax(17rem, 1fr) minmax(15rem, 0.8fr);
+  align-items: stretch;
+  gap: var(--space-5);
+  width: 100%;
+}
+
+.intake-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.intake-col--ready {
+  background: var(--color-surface-sunken);
+}
+
+.intake-col__heading {
+  margin: 0 0 var(--space-4);
+  font-size: var(--font-size-md);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+  text-transform: none;
+}
+
+/* ---- the recording ---------------------------------------------------- */
+
+.intake-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.intake-hero > .audio-player {
+  border: 0;
+  box-shadow: none;
+  background: none;
+  padding: 0;
+}
+
+.intake-wave-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.intake-hero__id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.intake-hero__name {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intake-hero__meta {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-ink-muted);
+}
+
+/* Only used when there is nothing playable to hand - otherwise the player
+   owns this block and brings the waveform with it. */
+.intake-wave {
+  height: 96px;
+}
+
+.intake-wave__ticks {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-1) 2px 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-muted);
+}
+
+.intake-file__error {
+  margin: 0;
+}
+
+/* ---- swapping or discarding the recording ----------------------------- */
+
+.intake-secondary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.intake-secondary__action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-ink-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--motion) var(--ease), color var(--motion) var(--ease);
+}
+
+.intake-secondary__action:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+}
+
+.intake-secondary__action:has(:focus-visible),
+.intake-secondary__action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.intake-secondary__action--danger:hover {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+
+/* ---- Sound check + Format ----------------------------------------------
+   One paired settings set, not two items in a longer list: framed as one
+   group, stacked by default, side by side once the column has room. The
+   Format trigger's collapsed view was simplified (name + size only, no
+   description/tag - both stay in the expanded panel) specifically so this
+   pairing can engage at ordinary desktop widths instead of only on very
+   wide monitors. */
+
+.intake-strip {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.intake-strip .intake-row {
+  min-width: 0;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.intake-strip .intake-row:last-child {
+  border-bottom: 0;
+}
+
+@container (min-width: 26rem) {
+  .intake-strip {
+    display: grid;
+    grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr);
+  }
+
+  .intake-strip .intake-row {
+    padding-top: var(--space-2);
+    border-bottom: 0;
+  }
+
+  .intake-row--quality {
+    padding-right: var(--space-4);
+    border-right: 1px solid var(--color-border-soft);
+  }
+
+  .intake-row--format {
+    padding-left: var(--space-4);
+  }
+}
+
+.intake-row {
+  padding: var(--space-2) 0;
+}
+
+.intake-row--quality {
+  padding-top: var(--space-1);
+}
+
+.intake-row__label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--color-ink);
+  margin-bottom: var(--space-1);
+}
+
+.intake-row--format .intake-row__label {
+  margin-bottom: var(--space-2);
+}
+
+.intake-quality__state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  color: var(--color-ink-soft);
+}
+
+.intake-quality__state--muted {
+  color: var(--color-ink-muted);
+}
+
+.intake-skeleton {
+  display: flex;
+  flex-direction: column;
+}
+
+.intake-skeleton__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.intake-skeleton__row:last-child {
+  border-bottom: 0;
+}
+
+.intake-skeleton__bar {
+  height: 12px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-raised) 25%,
+    var(--color-border) 37%,
+    var(--color-surface-raised) 63%
+  );
+  background-size: 400% 100%;
+  animation: intake-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes intake-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intake-skeleton__bar {
+    animation: none;
+  }
+}
+
+/* ---- the ready-to-transcribe column ------------------------------------ */
+
+.intake-ready__summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.intake-ready__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.intake-ready__row-label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.intake-ready__row-value {
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 550;
+  line-height: 1.4;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.intake-ready__row--file .intake-ready__row-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intake-ready__row[data-tone='warn'] .intake-ready__row-value {
+  color: var(--color-warning);
+}
+
+.intake-ready__row-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* ---- the page's one commitment ---------------------------------------- */
+
+.intake-go {
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.intake-go__status {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  color: var(--color-ink-soft);
+}
+
+.intake-go__status[data-tone='good'] {
+  color: var(--color-success);
+}
+
+.intake-go__status[data-tone='error'] {
+  color: var(--color-error);
+}
+
+.intake-go__button {
+  width: 100%;
+  height: 44px;
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  font-weight: 650;
+  letter-spacing: -0.005em;
+}
+
+.intake-go__progress {
+  display: block;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.intake-go__progress-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  transform-origin: left;
+  transition: transform 0.25s ease-out;
+}
+
+.intake-go__save {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: var(--space-1);
+  border: 0;
+  background: none;
+  color: var(--color-ink-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease;
+}
+
+.intake-go__save:hover {
+  color: var(--color-accent-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intake,
+  .intake-secondary__action,
+  .intake-go__progress-fill,
+  .intake-go__save {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Narrow                                                                  */
+/* ---------------------------------------------------------------------- */
+
+@container (max-width: 58rem) {
+  .intake-grid {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  }
+
+  .intake-col--ready {
+    grid-column: 1 / -1;
+  }
+
+  .intake-go {
+    margin-top: var(--space-3);
+  }
+}
+
+@container (max-width: 40rem) {
+  .intake-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
+  .intake-secondary,
+  .intake-go {
+    margin-top: var(--space-3);
+  }
+}
+
+@container (max-width: 30rem) {
+  .intake-col {
+    padding: var(--space-4);
+  }
+}

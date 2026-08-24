@@ -5,7 +5,6 @@ const {
   toolkitParent,
   createSafeUser,
   mcpToolPattern,
-  createDocumentTool,
   loadWebSearchAuth,
   buildInlineMemoryTool,
   getCodeApiAuthHeaders,
@@ -51,6 +50,10 @@ const {
 const { getMCPRequestContext } = require('~/server/services/MCPRequestContext');
 const { createFileSearchTool, primeFiles: primeSearchFiles } = require('./fileSearch');
 const { primeFiles: primeCodeFiles } = require('~/server/services/Files/Code/process');
+const {
+  createTranscribeAudioTool,
+  primeFiles: primeTranscribeFiles,
+} = require('../structured/TranscribeAudio');
 const { getUserPluginAuthValue } = require('~/server/services/PluginService');
 const { loadAuthValues } = require('~/server/services/Tools/credentials');
 const { getMCPServerTools, checkCapability } = require('~/server/services/Config');
@@ -352,8 +355,17 @@ const loadTools = async ({
         });
       };
       continue;
-    } else if (tool === Tools.create_document) {
-      requestedTools[tool] = async () => createDocumentTool();
+    } else if (tool === Tools.transcribe_audio) {
+      requestedTools[tool] = async () => {
+        const { files, toolContext } = await primeTranscribeFiles({
+          ...options,
+          agentId: agent?.id,
+        });
+        if (toolContext) {
+          dynamicToolContextMap[tool] = toolContext;
+        }
+        return createTranscribeAudioTool({ req: options.req, files });
+      };
       continue;
     } else if (tool === Tools.web_search) {
       const result = await loadWebSearchAuth({
