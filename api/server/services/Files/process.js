@@ -1311,6 +1311,46 @@ async function saveBase64Image(
 }
 
 /**
+ * Persists a tool-generated transcript as a text-only file record, so it renders
+ * in the Artifacts side panel like any other tool output. No physical bytes are
+ * stored (mirrors the `FileSources.text` records `createTextFile` produces for
+ * OCR/STT output elsewhere in this file) - the transcript text lives directly on
+ * the Mongo record. `file_id` is expected to be deterministic (derived from the
+ * source audio file's own id) so re-transcribing the same source overwrites this
+ * record instead of leaking a duplicate.
+ *
+ * @param {Object} params
+ * @param {ServerRequest} params.req
+ * @param {string} params.file_id
+ * @param {string} params.filename
+ * @param {string} params.text
+ * @param {string} [params.conversationId]
+ * @param {boolean} [params.embedded] - Whether the matching RAG embed call succeeded.
+ * @returns {Promise<MongoFile>}
+ */
+async function saveTranscriptFile({ req, file_id, filename, text, conversationId, embedded }) {
+  const bytes = Buffer.byteLength(text, 'utf8');
+  return await db.createFile(
+    {
+      type: 'text/markdown',
+      source: FileSources.text,
+      context: FileContext.transcript_rag,
+      file_id,
+      filepath: `transcript://${file_id}`,
+      filename,
+      text,
+      bytes,
+      embedded: Boolean(embedded),
+      user: req.user.id,
+      conversationId,
+      ...(await getRetentionExpiry(req)),
+      tenantId: req.user.tenantId,
+    },
+    true,
+  );
+}
+
+/**
  * Filters a file based on its size and the endpoint origin.
  *
  * @param {Object} params - The parameters for the function.
@@ -1392,6 +1432,7 @@ module.exports = {
   filterFile,
   processFileURL,
   saveBase64Image,
+  saveTranscriptFile,
   processImageFile,
   uploadImageBuffer,
   sweepExpiredFiles,

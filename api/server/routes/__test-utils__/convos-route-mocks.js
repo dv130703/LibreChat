@@ -39,6 +39,7 @@ module.exports = {
       azureAssistants: 'azureAssistants',
       assistants: 'assistants',
     },
+    FileContext: { transcript_rag: 'transcript_rag' },
     ...overrides,
   }),
 
@@ -59,7 +60,11 @@ module.exports = {
     deleteAllSharedLinks: jest.fn(),
     deleteConvoSharedLink: jest.fn(),
     deleteToolCalls: jest.fn(),
+    deleteTranscriptCorrections: jest.fn(),
+    getFiles: jest.fn().mockResolvedValue([]),
   }),
+
+  filesProcess: () => ({ processDeleteRequest: jest.fn() }),
 
   requireJwtAuth: () => (req, res, next) => next(),
 

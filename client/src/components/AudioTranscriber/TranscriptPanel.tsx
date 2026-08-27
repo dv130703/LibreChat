@@ -1,0 +1,997 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { isEqual } from 'lodash';
+import { FileText, Download, AlertCircle, MessageSquarePlus } from 'lucide-react';
+import { Spinner } from '@librechat/client';
+import {
+  useGetConvoIdQuery,
+  useFilePreview,
+  useFileDownload,
+  useTranscriptCorrectionsQuery,
+  useRenameTranscriptSpeakerMutation,
+  useReassignTranscriptSegmentMutation,
+  useEditTranscriptTextMutation,
+  useInsertTranscriptLineMutation,
+} from '~/data-provider';
+import { useAuthContext, useLocalize } from '~/hooks';
+import type { MouseEvent } from 'react';
+import type { ParsedLine, SpeakerOption } from './types';
+import { computeInsertionSlots, formatSlotTimestamp } from './lineInsert';
+import { reduceCorrections, createCustomSpeakerId } from './corrections';
+import { getSpeakerDotColor } from './speakerColors';
+import TranscriptHeader from './TranscriptHeader';
+import TranscriptRow from './TranscriptRow';
+import { splitFileIds } from './fileIds';
+import SpeakerLabel from './SpeakerLabel';
+
+/** Matches exactly what `formatLine` (api/server/services/Transcription/index.js)
+ *  produces: an optional `[start-end]` (the end half is only present on
+ *  transcripts saved after end timestamps started being persisted - older
+ *  ones just have `[start]`), an optional `Speaker N:` label, then the spoken
+ *  text. The label is the RAG server's own human-readable rewrite of
+ *  WhisperX's raw diarization ids (see `_speaker_label` in
+ *  `transcription/whisperx_service.py`) - not raw `SPEAKER_00`-style output -
+ *  so this can't false-match ordinary sentences that happen to contain a colon. */
+const LINE_PATTERN = /^(?:\[([0-9:.]+)(?:-([0-9:.]+))?\] )?(?:(Speaker \d+): )?(.*)$/;
+
+/** How far short of a bounded-playback boundary to stop, so the next line
+ *  never gets a chance to register as "currently playing." */
+const BOUNDARY_BACKOFF_SECONDS = 0.15;
+
+/** Rough, fixed estimate of the row context menu's own footprint rather than
+ *  measuring it - it's one line of text, so the size barely varies, and this
+ *  only needs to keep it from hanging off the viewport edge, not be exact. */
+const CONTEXT_MENU_WIDTH = 192;
+const CONTEXT_MENU_HEIGHT = 44;
+
+/** "02:05.3" or "1:02:05.0" -> seconds, for seeking the `<audio>` element and
+ *  for comparing against its `currentTime` to find the active line.
+ *  Tenths-of-a-second precision (see `formatTimestamp` in
+ *  `api/server/services/Transcription/index.js`) matters here: a whole-second
+ *  boundary leaves up to half a second of slack, which is audible as either
+ *  an early cutoff or a bleed into the next line during bounded playback. */
+function parseTimestampToSeconds(timestamp: string): number | undefined {
+  const parts = timestamp.split(':').map(Number);
+  if (parts.length === 0 || parts.some((part) => Number.isNaN(part))) {
+    return undefined;
+  }
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
+function parseTranscript(text: string): ParsedLine[] {
+  return text
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line, lineIndex) => {
+      const match = LINE_PATTERN.exec(line);
+      if (!match) {
+        return { lineIndex, text: line };
+      }
+      const [, timestamp, endTimestamp, speaker, rest] = match;
+      return {
+        lineIndex,
+        timestamp,
+        seconds: timestamp ? parseTimestampToSeconds(timestamp) : undefined,
+        endSeconds: endTimestamp ? parseTimestampToSeconds(endTimestamp) : undefined,
+        speaker,
+        text: rest,
+      };
+    });
+}
+
+function downloadTextFile(text: string, filename: string): void {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export default function TranscriptPanel({
+  conversationId,
+  headerContainer,
+}: {
+  conversationId: string;
+  /** DOM node (owned by `Workspace`, sized to the chat pane) to portal the
+   *  audio player into, so it renders above the chat rather than inside the
+   *  scrollable transcript pane. `null` until `Workspace`'s ref callback
+   *  attaches, so the player briefly renders nowhere on first paint. */
+  headerContainer: HTMLDivElement | null;
+}) {
+  const localize = useLocalize();
+  const { user, isAuthenticated } = useAuthContext();
+  const {
+    data: conversation,
+    isLoading: isConvoLoading,
+    isError: isConvoError,
+    refetch: refetchConvo,
+  } = useGetConvoIdQuery(conversationId, { enabled: isAuthenticated });
+  const { sourceFileId, transcriptFileId } = useMemo(
+    () => splitFileIds((conversation as { files?: string[] } | undefined)?.files ?? []),
+    [conversation],
+  );
+
+  const { data: preview, isLoading: isPreviewLoading } = useFilePreview(transcriptFileId);
+  const lines = useMemo(
+    () => (preview?.text ? parseTranscript(preview.text) : []),
+    [preview?.text],
+  );
+
+  const { data: corrections } = useTranscriptCorrectionsQuery(transcriptFileId, conversationId);
+  const { speakerNames, segmentReassignments, textEdits, insertedLines } = useMemo(
+    () => reduceCorrections(corrections ?? []),
+    [corrections],
+  );
+
+  /** `reduceCorrections` builds brand-new objects every time `corrections`
+   *  changes at all - including for a plain text-edit correction, which
+   *  never touches speaker data. Passing those straight through would give
+   *  `speakerOrder`/`speakerOptions` below a new reference on every single
+   *  edit of any kind, which - since `speakerOptions` is a prop on every
+   *  row - would defeat `TranscriptRow`'s `memo()` for the entire
+   *  (unvirtualized) list on every commit, not just the one row that
+   *  changed. Freezing these three to their previous reference when the
+   *  values are actually unchanged keeps that cascade scoped to edits that
+   *  actually touch speaker data (renames, reassignments, and inserted
+   *  lines, which carry a speaker of their own). */
+  const stableSpeakerDataRef = useRef({ speakerNames, segmentReassignments, insertedLines });
+  if (
+    !isEqual(stableSpeakerDataRef.current.speakerNames, speakerNames) ||
+    !isEqual(stableSpeakerDataRef.current.segmentReassignments, segmentReassignments) ||
+    !isEqual(stableSpeakerDataRef.current.insertedLines, insertedLines)
+  ) {
+    stableSpeakerDataRef.current = { speakerNames, segmentReassignments, insertedLines };
+  }
+  const stableSpeakerNames = stableSpeakerDataRef.current.speakerNames;
+  const stableSegmentReassignments = stableSpeakerDataRef.current.segmentReassignments;
+  const stableInsertedLines = stableSpeakerDataRef.current.insertedLines;
+
+  const effectiveLines = useMemo(() => {
+    const insertedList = Object.values(stableInsertedLines);
+    const baseLines = insertedList.length === 0 ? lines : [...lines, ...insertedList];
+    const hasOverlay =
+      Object.keys(stableSegmentReassignments).length > 0 || Object.keys(textEdits).length > 0;
+    const overlaid = !hasOverlay
+      ? baseLines
+      : baseLines.map((line) => {
+          const reassignedTo = stableSegmentReassignments[line.lineIndex];
+          const editedText = textEdits[line.lineIndex];
+          if (reassignedTo == null && editedText == null) {
+            return line;
+          }
+          return {
+            ...line,
+            speaker: reassignedTo ?? line.speaker,
+            text: editedText ?? line.text,
+          };
+        });
+    // Original lines already come out of `parseTranscript` in time order;
+    // only re-sort once an inserted line's fractional index needs merging in.
+    return insertedList.length === 0
+      ? overlaid
+      : overlaid.sort((a, b) => a.lineIndex - b.lineIndex);
+  }, [lines, stableSegmentReassignments, textEdits, stableInsertedLines]);
+
+  /** `effectiveLines` gets a new array reference on every single correction
+   *  (any edit, on any line, of any type) - the fast path a few lines up
+   *  only keeps individual *untouched* line objects stable, not the array
+   *  itself. Reading through this ref instead of closing over `effectiveLines`
+   *  directly is what lets the callbacks below skip it as a dependency, so
+   *  they don't churn - and defeat every `TranscriptRow`'s `memo()` for the
+   *  entire (unvirtualized) list - on every commit, the exact same class of
+   *  bug `stableSpeakerDataRef` above exists to prevent for `speakerOptions`. */
+  const effectiveLinesRef = useRef(effectiveLines);
+  effectiveLinesRef.current = effectiveLines;
+
+  /** `lineIndex` is a stable identity, not an array position, once inserted
+   *  lines exist between the original integer ones - every lookup by
+   *  `lineIndex` alone (as opposed to `togglePlaySegment`'s, which also needs
+   *  the *next* line and so tracks array position itself) goes through this. */
+  const findEffectiveLine = useCallback(
+    (lineIndex: number) => effectiveLinesRef.current.find((line) => line.lineIndex === lineIndex),
+    [],
+  );
+
+  /** A line just inserted from the right-click menu, rendered and playable
+   *  in place immediately - not yet a real correction, since typing text
+   *  into it (or leaving it blank) is what actually decides whether it
+   *  becomes one (see `onTextCommit`). Purely local state; never sent
+   *  anywhere until it's committed. */
+  const [drafts, setDrafts] = useState<ParsedLine[]>([]);
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+
+  // Once a draft's own `line_insert` correction has actually round-tripped
+  // and shows up in `insertedLines`, the local draft that stood in for it is
+  // done its job - dropping it here (rather than the moment the mutation is
+  // fired) avoids a flash of the row briefly disappearing before the real
+  // one takes its place.
+  useEffect(() => {
+    setDrafts((current) => current.filter((draft) => !(draft.lineIndex in stableInsertedLines)));
+  }, [stableInsertedLines]);
+
+  /** What actually renders - real lines plus any still-uncommitted drafts,
+   *  in time order. Playback (`togglePlaySegment`) also looks lines up
+   *  through this, not `effectiveLines` alone, so a draft's play button
+   *  works immediately - re-hearing the exact gap being filled in is the
+   *  entire point of not doing this as a modal. */
+  const displayLines = useMemo(() => {
+    if (drafts.length === 0) {
+      return effectiveLines;
+    }
+    return [...effectiveLines, ...drafts].sort((a, b) => a.lineIndex - b.lineIndex);
+  }, [effectiveLines, drafts]);
+
+  const displayLinesRef = useRef(displayLines);
+  displayLinesRef.current = displayLines;
+
+  const deleteDraft = useCallback((lineIndex: number) => {
+    setDrafts((current) => current.filter((draft) => draft.lineIndex !== lineIndex));
+  }, []);
+
+  // Derived from the raw parsed `lines` (+ inserted lines) + reassignments
+  // directly, not from `effectiveLines` - that array gets a new reference on
+  // every text edit too (see above), which would recompute this (and
+  // everything chained off it) for edits that never touch which speakers
+  // exist at all.
+  const speakerOrder = useMemo(() => {
+    const order = new Map<string, number>();
+    for (const line of lines) {
+      const speaker = stableSegmentReassignments[line.lineIndex] ?? line.speaker;
+      if (speaker != null && !order.has(speaker)) {
+        order.set(speaker, order.size);
+      }
+    }
+    for (const line of Object.values(stableInsertedLines)) {
+      const speaker = stableSegmentReassignments[line.lineIndex] ?? line.speaker;
+      if (speaker != null && !order.has(speaker)) {
+        order.set(speaker, order.size);
+      }
+    }
+    return order;
+  }, [lines, stableSegmentReassignments, stableInsertedLines]);
+
+  const getDisplayName = useCallback(
+    (speakerId: string) => stableSpeakerNames[speakerId] ?? speakerId,
+    [stableSpeakerNames],
+  );
+
+  /* Colors are assigned per speaker ID (deterministic, order-of-first-
+   * appearance), never per display name - so two IDs that end up sharing a
+   * display name (e.g. a custom speaker renamed to something an existing
+   * speaker is already called) would show that same name with two different
+   * colors, breaking the "recognize by color" guarantee. Rather than key
+   * color off the name instead (which would make color jump around as
+   * speakers get renamed), renames are blocked from creating the collision
+   * in the first place. */
+  const isSpeakerNameTaken = useCallback(
+    (candidateName: string, excludeSpeakerId?: string) => {
+      const normalized = candidateName.trim().toLowerCase();
+      for (const id of speakerOrder.keys()) {
+        if (id !== excludeSpeakerId && getDisplayName(id).trim().toLowerCase() === normalized) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [speakerOrder, getDisplayName],
+  );
+
+  const uniqueSpeakerIds = useMemo(() => Array.from(speakerOrder.keys()), [speakerOrder]);
+
+  const speakerOptions: SpeakerOption[] = useMemo(
+    () =>
+      uniqueSpeakerIds.map((id) => ({
+        id,
+        name: getDisplayName(id),
+        dotColorClass: getSpeakerDotColor(speakerOrder.get(id) ?? 0),
+      })),
+    [uniqueSpeakerIds, speakerOrder, getDisplayName],
+  );
+
+  const audioQuery = useFileDownload(user?.id, sourceFileId);
+  useEffect(() => {
+    // `sourceFileId` is a stable pointer to immutable file content, durably
+    // persisted on the conversation - nothing about the audio itself needs
+    // to survive a reload, only this id does, so re-fetching by it is
+    // exactly the point rather than something to route around. Within a
+    // session, react-query already holds the resolved blob URL in cache (see
+    // the `cacheTime`/`staleTime` on `useFileDownload`), so remounting this
+    // panel reuses it instead of re-downloading; a hard reload/reopen wipes
+    // that in-memory cache entirely, which is expected - this just looks up
+    // the same pointer again from scratch.
+    //
+    // Waiting on `user?.id` too (not just `sourceFileId`) matters on exactly
+    // that reload path: auth can resolve after the conversation does, and
+    // `useFileDownload`'s query fn silently no-ops without a userId - firing
+    // once during that gap would otherwise "succeed" with empty data and
+    // never retry, permanently losing the player for the rest of the session.
+    if (sourceFileId && user?.id && audioQuery.data == null) {
+      audioQuery.refetch();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceFileId, user?.id]);
+
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  /** A boundary (in seconds) past which playback auto-pauses - set whenever
+   *  playback was started bounded to a single line, so it stops right where
+   *  that line ends instead of continuing into the next. Watched by a
+   *  `requestAnimationFrame` loop (~60 times a second) rather than the
+   *  `timeupdate` event (throttled to ~4 times a second by browsers) -
+   *  `timeupdate` is fine for tracking the playhead for highlighting, but far
+   *  too coarse to catch a stop point before audio has already played past
+   *  it and come out of the speakers. */
+  const playUntilRef = useRef<number | null>(null);
+  const boundaryRafRef = useRef<number | null>(null);
+  /** Which line the current boundary belongs to (null when nothing's
+   *  bounded) - and which line last reached its boundary on its own. This is
+   *  what lets a chunk's play button tell "you paused this partway through"
+   *  (should resume right there, like any ordinary player) apart from "this
+   *  already played to the end" (nothing left to resume - pressing play
+   *  again should start over), instead of treating every pause the same way. */
+  const boundaryLineIndexRef = useRef<number | null>(null);
+  const finishedLineIndexRef = useRef<number | null>(null);
+
+  const stopBoundaryWatch = useCallback(() => {
+    if (boundaryRafRef.current != null) {
+      cancelAnimationFrame(boundaryRafRef.current);
+      boundaryRafRef.current = null;
+    }
+  }, []);
+
+  /** Retires whatever bounded-playback was in flight - called by the main
+   *  player's own controls (play/skip/seek), which have no notion of "stop at
+   *  this line's end" and shouldn't inherit one left over from a chunk button.
+   *  Deliberately NOT called on every pause: pausing a chunk with its own
+   *  button and pressing that same button again needs the boundary to still
+   *  be there to resume into, not silently gone. */
+  const clearBoundary = useCallback(() => {
+    playUntilRef.current = null;
+    boundaryLineIndexRef.current = null;
+    stopBoundaryWatch();
+  }, [stopBoundaryWatch]);
+
+  useEffect(() => {
+    const audioEl = audioRef.current;
+    if (!audioEl) {
+      return;
+    }
+    // Boundary enforcement for bounded playback lives in the rAF loop below,
+    // not here - `timeupdate` only fires a few times a second (browsers
+    // commonly throttle it to ~250ms), so by the time it would notice we'd
+    // crossed a stop point, that much audio has already come out of the
+    // speakers. This handler just tracks the playhead for highlighting.
+    const handleTimeUpdate = () => setCurrentTime(audioEl.currentTime);
+    const handlePlay = () => setIsPlaying(true);
+    // A pause (from anywhere) just means "not playing right now" - it does
+    // NOT retire the boundary, since resuming the exact same chunk needs it
+    // to still be armed. Stopping the watch loop here is just housekeeping
+    // (nothing to poll for while paused); it re-arms on resume.
+    const handlePause = () => {
+      setIsPlaying(false);
+      stopBoundaryWatch();
+    };
+    audioEl.addEventListener('timeupdate', handleTimeUpdate);
+    audioEl.addEventListener('play', handlePlay);
+    audioEl.addEventListener('pause', handlePause);
+    return () => {
+      audioEl.removeEventListener('timeupdate', handleTimeUpdate);
+      audioEl.removeEventListener('play', handlePlay);
+      audioEl.removeEventListener('pause', handlePause);
+    };
+  }, [audioQuery.data, stopBoundaryWatch]);
+
+  /** Whichever line the playhead currently falls within - drives both the
+   *  "follow along" highlight/auto-scroll and, while `isPlaying`, doubles as
+   *  the previewing line's live position for its progress bar. */
+  const followedLineIndex = useMemo(() => {
+    for (let i = displayLines.length - 1; i >= 0; i--) {
+      const line = displayLines[i];
+      if (
+        line.seconds != null &&
+        currentTime >= line.seconds &&
+        (line.endSeconds == null || currentTime < line.endSeconds)
+      ) {
+        return line.lineIndex;
+      }
+    }
+    return -1;
+  }, [displayLines, currentTime]);
+
+  // Same reasoning as `effectiveLinesRef` above: `togglePlaySegment` needs
+  // the current value of both at call time, not at the time it was created -
+  // reading them by ref instead of closing over them keeps every row's
+  // `onPlaySegment` prop identity stable through ordinary playback ticks
+  // (`isPlaying`/`followedLineIndex` change up to ~4x/sec while anything is
+  // playing), instead of re-rendering the whole list that often.
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const followedLineIndexRef = useRef(followedLineIndex);
+  followedLineIndexRef.current = followedLineIndex;
+
+  useEffect(() => {
+    if (followedLineIndex < 0) {
+      return;
+    }
+    const row = document.querySelector(`[data-line-index="${followedLineIndex}"]`);
+    row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [followedLineIndex]);
+
+  const startBoundaryWatch = useCallback(() => {
+    if (boundaryRafRef.current != null) {
+      return;
+    }
+    const tick = () => {
+      const audioEl = audioRef.current;
+      const boundary = playUntilRef.current;
+      if (!audioEl || boundary == null) {
+        boundaryRafRef.current = null;
+        return;
+      }
+      if (audioEl.currentTime >= boundary) {
+        // Stop just short of the boundary, not on top of it - landing
+        // exactly on the next line's start would make it read as
+        // "currently playing" even though we deliberately never played into
+        // it, and the backoff also absorbs whatever tiny overshoot still
+        // slipped through this frame.
+        const stopAt = Math.max(0, boundary - BOUNDARY_BACKOFF_SECONDS);
+        audioEl.pause();
+        audioEl.currentTime = stopAt;
+        playUntilRef.current = null;
+        finishedLineIndexRef.current = boundaryLineIndexRef.current;
+        boundaryLineIndexRef.current = null;
+        setCurrentTime(stopAt);
+        boundaryRafRef.current = null;
+        return;
+      }
+      boundaryRafRef.current = requestAnimationFrame(tick);
+    };
+    boundaryRafRef.current = requestAnimationFrame(tick);
+  }, []);
+
+  useEffect(() => stopBoundaryWatch, [stopBoundaryWatch]);
+
+  /** Seeking before the element has loaded metadata (`readyState === 0`) is
+   *  unreliable across browsers - the assignment can be silently ignored or
+   *  reset once metadata does load, which would play from wherever the
+   *  element happened to be (often the very start) instead of where we
+   *  asked, while still applying our stop boundary - i.e. exactly "plays the
+   *  wrong content, bounded to the wrong window." Deferring the seek until
+   *  `loadedmetadata` (or immediately, if already loaded) closes that gap. */
+  const seekAndPlayBounded = useCallback(
+    (startSeconds: number, boundarySeconds: number | null) => {
+      const audioEl = audioRef.current;
+      if (!audioEl) {
+        return;
+      }
+      const run = () => {
+        audioEl.currentTime = startSeconds;
+        playUntilRef.current = boundarySeconds;
+        audioEl.play().catch(() => {});
+        startBoundaryWatch();
+      };
+      if (audioEl.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        run();
+      } else {
+        audioEl.addEventListener('loadedmetadata', run, { once: true });
+      }
+    },
+    [startBoundaryWatch],
+  );
+
+  /** Plays just this one line, stopping at its own real end time - not the
+   *  next line's start, which can sit noticeably later than where this
+   *  line's speech actually stops (letting the next speaker bleed in).
+   *  Same rule as any ordinary player:
+   *  - playing this line right now -> pause in place (nothing finished, so a
+   *    later press should pick back up from here)
+   *  - paused partway through this exact line (you stopped it, it didn't
+   *    reach the end on its own) -> resume right where it is
+   *  - anything else - never started, a different line, or this one
+   *    genuinely already played to its end - -> (re)start from the top,
+   *    since there's nothing left to resume */
+  const togglePlaySegment = useCallback(
+    (lineIndex: number) => {
+      const audioEl = audioRef.current;
+      // Drafts too, not just committed lines - a draft's play button needs
+      // to work immediately, since re-hearing the exact gap being filled in
+      // is the reason this isn't a modal that would take the audio away.
+      const currentLines = displayLinesRef.current;
+      // `lineIndex` is a stable identity, not an array position, once
+      // inserted lines exist between the original integer ones - looked up
+      // by value, with the surrounding array position (not `lineIndex + 1`)
+      // giving the real next line for the end-of-segment boundary below.
+      const position = currentLines.findIndex((candidate) => candidate.lineIndex === lineIndex);
+      const line = position === -1 ? undefined : currentLines[position];
+      if (!audioEl || line?.seconds == null) {
+        return;
+      }
+      const isThisLineCurrent = followedLineIndexRef.current === lineIndex;
+      if (isPlayingRef.current && isThisLineCurrent) {
+        audioEl.pause();
+        return;
+      }
+
+      if (
+        isThisLineCurrent &&
+        boundaryLineIndexRef.current === lineIndex &&
+        finishedLineIndexRef.current !== lineIndex &&
+        playUntilRef.current != null
+      ) {
+        audioEl.play().catch(() => {});
+        startBoundaryWatch();
+        return;
+      }
+
+      const boundary = line.endSeconds ?? currentLines[position + 1]?.seconds ?? null;
+      finishedLineIndexRef.current = null;
+      boundaryLineIndexRef.current = lineIndex;
+      seekAndPlayBounded(line.seconds, boundary);
+    },
+    [seekAndPlayBounded, startBoundaryWatch],
+  );
+
+  /* Corrections - backend-persisted with real user attribution (an
+   * append-only `TranscriptCorrection` log), not device-local, since a
+   * forensic reviewer's changes need to survive across devices and
+   * reviewers and carry a real "who changed this, when." */
+  const renameSpeakerMutation = useRenameTranscriptSpeakerMutation(transcriptFileId ?? '');
+  const reassignSegmentMutation = useReassignTranscriptSegmentMutation(transcriptFileId ?? '');
+  const editTextMutation = useEditTranscriptTextMutation(transcriptFileId ?? '');
+  const insertLineMutation = useInsertTranscriptLineMutation(transcriptFileId ?? '');
+
+  const renameSpeaker = useCallback(
+    (speakerId: string, newName: string) => {
+      if (!conversationId) {
+        return;
+      }
+      renameSpeakerMutation.mutate({
+        conversationId,
+        speakerId,
+        fromName: getDisplayName(speakerId),
+        toName: newName,
+      });
+    },
+    // react-query's useMutation() returns a brand-new object every render;
+    // only `.mutate` itself is stable (bound once on the MutationObserver
+    // instance), so listing the whole mutation object here would make this
+    // callback - and every TranscriptRow it's passed to - churn on each of
+    // the ~4/sec `timeupdate` re-renders during playback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [conversationId, getDisplayName, renameSpeakerMutation.mutate],
+  );
+
+  const reassignSegment = useCallback(
+    (lineIndex: number, toSpeakerId: string) => {
+      // A draft has no correction to reassign yet - just remember the pick
+      // locally until it's actually committed (see `onTextCommit`).
+      if (draftsRef.current.some((draft) => draft.lineIndex === lineIndex)) {
+        setDrafts((current) =>
+          current.map((draft) =>
+            draft.lineIndex === lineIndex ? { ...draft, speaker: toSpeakerId } : draft,
+          ),
+        );
+        return;
+      }
+      if (!conversationId) {
+        return;
+      }
+      const fromSpeakerId = findEffectiveLine(lineIndex)?.speaker;
+      reassignSegmentMutation.mutate({ conversationId, lineIndex, fromSpeakerId, toSpeakerId });
+    },
+    // See the eslint-disable note on `renameSpeaker` above - same reasoning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [conversationId, findEffectiveLine, reassignSegmentMutation.mutate],
+  );
+
+  const onTextCommit = useCallback(
+    (lineIndex: number, toText: string) => {
+      const draft = draftsRef.current.find((candidate) => candidate.lineIndex === lineIndex);
+      if (draft) {
+        const trimmed = toText.trim();
+        if (!trimmed) {
+          // Never actually typed into - discard, same as if the context
+          // menu had never been used at all.
+          setDrafts((current) => current.filter((candidate) => candidate.lineIndex !== lineIndex));
+          return;
+        }
+        if (!conversationId || draft.seconds == null || draft.endSeconds == null) {
+          return;
+        }
+        insertLineMutation.mutate({
+          conversationId,
+          lineIndex: draft.lineIndex,
+          speaker: draft.speaker,
+          text: trimmed,
+          seconds: draft.seconds,
+          endSeconds: draft.endSeconds,
+        });
+        return;
+      }
+      if (!conversationId) {
+        return;
+      }
+      editTextMutation.mutate({
+        conversationId,
+        lineIndex,
+        fromText: findEffectiveLine(lineIndex)?.text,
+        toText,
+      });
+    },
+    // See the eslint-disable note on `renameSpeaker` above - same reasoning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [conversationId, findEffectiveLine, editTextMutation.mutate, insertLineMutation.mutate],
+  );
+
+  /* Adding a brand-new speaker the pipeline missed - the naming field lives
+   * on the row being reassigned, so this state (which line, and the name
+   * being typed) is lifted here rather than kept per-row. */
+  const [addingSpeakerForLine, setAddingSpeakerForLine] = useState<number | null>(null);
+  const [newSpeakerName, setNewSpeakerName] = useState('');
+
+  const startAddSpeaker = useCallback((lineIndex: number) => {
+    setAddingSpeakerForLine(lineIndex);
+    setNewSpeakerName('');
+  }, []);
+
+  const cancelNewSpeaker = useCallback(() => {
+    setAddingSpeakerForLine(null);
+    setNewSpeakerName('');
+  }, []);
+
+  const commitNewSpeaker = useCallback(
+    (lineIndex: number) => {
+      setAddingSpeakerForLine(null);
+      const trimmed = newSpeakerName.trim();
+      setNewSpeakerName('');
+      if (!trimmed || !conversationId) {
+        return;
+      }
+      if (isSpeakerNameTaken(trimmed)) {
+        window.alert(localize('com_ui_transcript_duplicate_speaker_name'));
+        return;
+      }
+      const newSpeakerId = createCustomSpeakerId();
+      // Naming the speaker is real either way; only *attributing* an
+      // existing line to it needs the reassign correction below - a draft
+      // has no line to reassign yet, so it just remembers the pick locally.
+      if (draftsRef.current.some((draft) => draft.lineIndex === lineIndex)) {
+        setDrafts((current) =>
+          current.map((draft) =>
+            draft.lineIndex === lineIndex ? { ...draft, speaker: newSpeakerId } : draft,
+          ),
+        );
+        renameSpeakerMutation.mutate({ conversationId, speakerId: newSpeakerId, toName: trimmed });
+        return;
+      }
+      const fromSpeakerId = findEffectiveLine(lineIndex)?.speaker;
+      reassignSegmentMutation.mutate(
+        { conversationId, lineIndex, fromSpeakerId, toSpeakerId: newSpeakerId },
+        {
+          onSuccess: () => {
+            renameSpeakerMutation.mutate({
+              conversationId,
+              speakerId: newSpeakerId,
+              toName: trimmed,
+            });
+          },
+        },
+      );
+    },
+    // See the eslint-disable note on `renameSpeaker` above - same reasoning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      newSpeakerName,
+      conversationId,
+      isSpeakerNameTaken,
+      localize,
+      findEffectiveLine,
+      reassignSegmentMutation.mutate,
+      renameSpeakerMutation.mutate,
+    ],
+  );
+
+  /* Inserting a line the pipeline missed entirely - right-click a row for a
+   * one-item context menu ("insert dialogue here"), which drops a new,
+   * immediately-editable draft row directly below it, in place - not a
+   * dialog, since filling one in is meant to happen while re-listening to
+   * the audio right there, not after closing something that took it away.
+   * The browser's own context menu is suppressed for the whole transcript
+   * panel, not just rows, so there's never a jarring "menu sometimes
+   * appears, sometimes doesn't" depending on exactly where the right-click
+   * landed. Right-clicking a draft itself works the same way and inserts
+   * right after it, which is how another missing line gets added below one
+   * just created. */
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    lineIndex: number;
+  } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  const handleRowContextMenu = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    const rowEl = (event.target as HTMLElement).closest<HTMLElement>('[data-line-index]');
+    if (!rowEl?.dataset.lineIndex) {
+      return;
+    }
+    setContextMenu({
+      x: Math.min(event.clientX, window.innerWidth - CONTEXT_MENU_WIDTH - 8),
+      y: Math.min(event.clientY, window.innerHeight - CONTEXT_MENU_HEIGHT - 8),
+      lineIndex: Number(rowEl.dataset.lineIndex),
+    });
+  }, []);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  /** Drops one new draft row into the gap right after whichever row the
+   *  context menu was opened on - a real `ParsedLine` (computed via the same
+   *  slot-splitting a real correction uses), just not sent anywhere until
+   *  its text is actually committed. Right-clicking a draft targets the gap
+   *  after *it*, so repeating this against the row just created is what adds
+   *  another missing line below it. */
+  const handleInsertDraftLine = useCallback(() => {
+    const anchorLineIndex = contextMenu?.lineIndex;
+    closeContextMenu();
+    if (anchorLineIndex == null) {
+      return;
+    }
+    const currentLines = displayLinesRef.current;
+    const position = currentLines.findIndex((line) => line.lineIndex === anchorLineIndex);
+    const prevLine = position === -1 ? undefined : currentLines[position];
+    if (!prevLine) {
+      return;
+    }
+    const nextLine = currentLines[position + 1] ?? null;
+    const [slot] = computeInsertionSlots(prevLine, nextLine, 1);
+    setDrafts((current) => [
+      ...current,
+      {
+        lineIndex: slot.lineIndex,
+        timestamp: formatSlotTimestamp(slot.seconds),
+        seconds: slot.seconds,
+        endSeconds: slot.endSeconds,
+        speaker: undefined,
+        text: '',
+      },
+    ]);
+  }, [contextMenu, closeContextMenu]);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+    function handleDismiss(event: PointerEvent | KeyboardEvent) {
+      if (event.type === 'keydown') {
+        if ((event as KeyboardEvent).key === 'Escape') {
+          closeContextMenu();
+        }
+        return;
+      }
+      // Excludes clicks inside the menu itself - without this, pressing the
+      // "insert dialogue" item would close the menu on `pointerdown` (which
+      // fires before `click`) and unmount it before its own `onClick` ever
+      // got a chance to run, silently eating the click.
+      if (!contextMenuRef.current?.contains(event.target as Node)) {
+        closeContextMenu();
+      }
+    }
+    document.addEventListener('pointerdown', handleDismiss);
+    document.addEventListener('keydown', handleDismiss);
+    return () => {
+      document.removeEventListener('pointerdown', handleDismiss);
+      document.removeEventListener('keydown', handleDismiss);
+    };
+  }, [contextMenu, closeContextMenu]);
+
+  const handleExportTxt = useCallback(() => {
+    const title = conversation?.title ?? 'transcript';
+    const text = effectiveLines
+      .map((line) => {
+        const speaker = line.speaker != null ? `${getDisplayName(line.speaker)}: ` : '';
+        const time = line.timestamp ? `[${line.timestamp}] ` : '';
+        return `${time}${speaker}${line.text}`;
+      })
+      .join('\n');
+    downloadTextFile(text, `${title}-transcript.txt`);
+  }, [conversation?.title, effectiveLines, getDisplayName]);
+
+  const isLoading =
+    !isConvoError && (isConvoLoading || (transcriptFileId != null && isPreviewLoading));
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {headerContainer &&
+        createPortal(
+          <TranscriptHeader
+            audioSrc={audioQuery.data}
+            audioRef={audioRef}
+            onUnboundedPlaybackRequested={clearBoundary}
+          />,
+          headerContainer,
+        )}
+      {!isLoading && lines.length > 0 && (
+        <div className="flex flex-shrink-0 items-center justify-between gap-3 border-b border-border-medium px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400"
+            >
+              <FileText className="h-4 w-4" />
+            </span>
+            <div className="flex min-w-0 flex-col">
+              <h2 className="truncate text-sm font-semibold leading-tight text-text-primary">
+                {localize('com_ui_transcript')}
+              </h2>
+              <span className="text-xs text-text-secondary">
+                {localize('com_ui_transcript_line_count', { count: lines.length })}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleExportTxt}
+            className="flex shrink-0 items-center gap-1.5 rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            {localize('com_ui_transcript_export')}
+            <span className="text-text-secondary">{localize('com_ui_transcript_export_txt')}</span>
+          </button>
+        </div>
+      )}
+      <div
+        className="flex-1 overflow-y-auto p-3"
+        onContextMenu={(event) => {
+          // Suppressed everywhere in this pane, not just on rows - a native
+          // menu with nothing this feature can act on (cut/paste/inspect)
+          // showing up on some parts of the panel but not others would be a
+          // worse experience than just never showing it here at all.
+          event.preventDefault();
+          handleRowContextMenu(event);
+        }}
+      >
+        {isLoading && (
+          <div className="flex h-full items-center justify-center">
+            <Spinner className="text-text-primary" />
+          </div>
+        )}
+        {!isLoading && isConvoError && (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <span
+              aria-hidden="true"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-500"
+            >
+              <AlertCircle className="h-5 w-5" />
+            </span>
+            <p role="alert" className="text-sm text-red-500">
+              {localize('com_ui_transcript_error')}
+            </p>
+            <button
+              type="button"
+              onClick={() => refetchConvo()}
+              className="rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+            >
+              {localize('com_ui_retry')}
+            </button>
+          </div>
+        )}
+        {!isLoading && !isConvoError && preview?.status === 'failed' && (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <span
+              aria-hidden="true"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-500"
+            >
+              <AlertCircle className="h-5 w-5" />
+            </span>
+            <p role="alert" className="max-w-xs text-sm text-red-500">
+              {preview.previewError ?? localize('com_ui_transcript_error')}
+            </p>
+          </div>
+        )}
+        {!isLoading && !isConvoError && lines.length === 0 && preview?.status !== 'failed' && (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <span
+              aria-hidden="true"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-hover text-text-secondary"
+            >
+              <FileText className="h-5 w-5" />
+            </span>
+            <p className="text-sm font-medium text-text-primary">
+              {localize('com_ui_transcript_empty_title')}
+            </p>
+            <p className="max-w-xs text-xs text-text-secondary">
+              {localize('com_ui_transcript_empty')}
+            </p>
+          </div>
+        )}
+        {!isLoading && lines.length > 0 && (
+          <>
+            {uniqueSpeakerIds.length > 0 && (
+              <div className="mb-4">
+                <h3 className="mb-1.5 px-0.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+                  {localize('com_ui_transcript_speakers_label')}
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {speakerOptions.map((option) => (
+                    <SpeakerLabel
+                      key={option.id}
+                      name={option.name}
+                      dotColorClass={option.dotColorClass}
+                      isNameTaken={(candidate) => isSpeakerNameTaken(candidate, option.id)}
+                      onRename={(newName) => renameSpeaker(option.id, newName)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex flex-col gap-1">
+              {displayLines.map((line) => {
+                const isDraft = draftsRef.current.some(
+                  (draft) => draft.lineIndex === line.lineIndex,
+                );
+                const isPreviewing = isPlaying && followedLineIndex === line.lineIndex;
+                const duration =
+                  line.endSeconds != null && line.seconds != null
+                    ? line.endSeconds - line.seconds
+                    : 0;
+                const playbackRatio =
+                  isPreviewing && duration > 0 && line.seconds != null
+                    ? Math.min(1, Math.max(0, (currentTime - line.seconds) / duration))
+                    : 0;
+                return (
+                  <TranscriptRow
+                    key={line.lineIndex}
+                    line={line}
+                    isFollowed={followedLineIndex === line.lineIndex}
+                    isPreviewing={isPreviewing}
+                    playbackRatio={playbackRatio}
+                    canPlay={audioQuery.data != null}
+                    speakerOptions={speakerOptions}
+                    isAddingSpeaker={addingSpeakerForLine === line.lineIndex}
+                    newSpeakerName={newSpeakerName}
+                    onPlaySegment={togglePlaySegment}
+                    onTextCommit={onTextCommit}
+                    onSpeakerSelect={reassignSegment}
+                    onStartAddSpeaker={startAddSpeaker}
+                    onNewSpeakerNameChange={setNewSpeakerName}
+                    onCommitNewSpeaker={commitNewSpeaker}
+                    onCancelNewSpeaker={cancelNewSpeaker}
+                    isDraft={isDraft}
+                    onDeleteDraft={isDraft ? () => deleteDraft(line.lineIndex) : undefined}
+                  />
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+      {contextMenu &&
+        createPortal(
+          <div
+            ref={contextMenuRef}
+            role="menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            className="fixed z-50 min-w-[12rem] rounded-lg border border-border-medium bg-surface-primary p-1 shadow-lg duration-100 animate-in fade-in-0 zoom-in-95"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={handleInsertDraftLine}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-text-primary transition-colors hover:bg-surface-hover"
+            >
+              <MessageSquarePlus
+                className="h-4 w-4 shrink-0 text-text-secondary"
+                aria-hidden="true"
+              />
+              {localize('com_ui_transcript_context_menu_insert')}
+            </button>
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}

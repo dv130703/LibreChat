@@ -8,7 +8,6 @@ import { isEphemeralAgent } from '~/common';
 interface AgentToolPermissionsResult {
   fileSearchAllowedByAgent: boolean;
   codeAllowedByAgent: boolean;
-  transcribeAudioAllowedByAgent: boolean;
   tools: string[] | undefined;
   provider?: string;
 }
@@ -65,21 +64,9 @@ export default function useAgentToolPermissions(
     return tools?.includes(Tools.execute_code) ?? false;
   }, [agentId, selectedAgent, tools, ephemeralAgent]);
 
-  const transcribeAudioAllowedByAgent = useMemo(() => {
-    // Check ephemeral agent settings
-    if (isEphemeralAgent(agentId)) {
-      return ephemeralAgent?.[EToolResources.transcribe_audio] ?? false;
-    }
-    // If agentId exists but agent not found, disallow
-    if (!selectedAgent) return false;
-    // Check if the agent has the transcribe_audio tool
-    return tools?.includes(Tools.transcribe_audio) ?? false;
-  }, [agentId, selectedAgent, tools, ephemeralAgent]);
-
   return {
     fileSearchAllowedByAgent,
     codeAllowedByAgent,
-    transcribeAudioAllowedByAgent,
     provider,
     tools,
   };

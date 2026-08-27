@@ -1,6 +1,15 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolved from this file's own location, not the process's current working
+# directory - a bare ".env" only ever found rag_server/.env because the one
+# npm script that starts this server happens to `cd rag_server` first
+# (package.json's "rag" script). Any other way of starting it (a different
+# working directory, a container, a systemd unit) would silently start with
+# no .env at all, with WHISPERX_HF_TOKEN unset and no indication why.
+_ENV_FILE = Path(__file__).resolve().parent.parent / "rag_server" / ".env"
 
 
 class Settings(BaseSettings):
@@ -18,17 +27,6 @@ class Settings(BaseSettings):
     # The older, more battle-tested pyannote/speaker-diarization-3.1 is also
     # supported - it needs its own terms acceptance on huggingface.co.
     diarization_model: str | None = None
-    # "pyannote" (default) or "nemo". "nemo" runs NVIDIA's Sortformer model
-    # (best published accuracy, but CC-BY-NC-4.0 non-commercial license and a
-    # hard cap of 4 speakers) via a separate venv - not ported here, see
-    # whisperx_service.py's note on _NEMO_SCRIPT/_NEMO_VENV_PYTHON.
-    diarization_backend: str = "pyannote"
-    # Path to the python executable inside a NeMo venv. Defaults to that path
-    # relative to this directory when left unset (see caveat above - not ported).
-    nemo_python_path: str | None = None
-    # HF Hub id of the NeMo Sortformer checkpoint. Bump this if NVIDIA ships a
-    # newer streaming Sortformer release (check nvidia/ on huggingface.co).
-    nemo_model_name: str = "nvidia/diar_streaming_sortformer_4spk-v2"
     # None lets whisperx auto-detect the spoken language.
     default_language: str | None = None
     # Batch size for transcription. Auto-reduced when using beam search to prevent OOM.
@@ -82,7 +80,7 @@ class Settings(BaseSettings):
     # VAD method: "silero" or "pyannote"
     vad_method: str = "silero"
 
-    # --- Diarization tuning (pyannote backend only; no-op under diarization_backend="nemo") ---
+    # --- Diarization tuning ---
     # Clustering threshold for speaker merging. None uses pipeline default.
     diarization_clustering_threshold: float | None = None
     # Minimum cluster size for speaker detection
@@ -92,7 +90,7 @@ class Settings(BaseSettings):
     # Force numerals to be spelled out (e.g. "2014" → "twenty fourteen")
     suppress_numerals: bool = True
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="WHISPERX_", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_ENV_FILE, env_prefix="WHISPERX_", extra="ignore")
 
 
 @lru_cache

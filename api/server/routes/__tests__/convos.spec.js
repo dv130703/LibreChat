@@ -8,6 +8,7 @@ jest.mock('@librechat/api', () => require(MOCKS).api());
 jest.mock('@librechat/data-schemas', () => require(MOCKS).dataSchemas());
 jest.mock('librechat-data-provider', () => require(MOCKS).dataProvider());
 jest.mock('~/models', () => require(MOCKS).sharedModels());
+jest.mock('~/server/services/Files/process', () => require(MOCKS).filesProcess());
 jest.mock('~/server/middleware/requireJwtAuth', () => require(MOCKS).requireJwtAuth());
 jest.mock('~/server/middleware', () => require(MOCKS).middlewarePassthrough());
 jest.mock('~/server/utils/import/fork', () => require(MOCKS).forkUtils());
@@ -60,6 +61,30 @@ describe('Convos Routes', () => {
       expect(response.status).toBe(201);
       expect(deleteAgentCheckpoints).toHaveBeenCalledTimes(1);
       expect(deleteAgentCheckpoints.mock.calls[0][0]).toEqual(conversationIds);
+    });
+
+    it('cleans up transcript_rag files across all deleted conversations', async () => {
+      const conversationIds = ['conv-a', 'conv-b'];
+      const { getFiles } = require('~/models');
+      const { processDeleteRequest } = require('~/server/services/Files/process');
+
+      deleteConvos.mockResolvedValue({ deletedCount: 2, conversationIds });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteAllSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+      const transcriptFiles = [{ file_id: 't1' }, { file_id: 't2' }];
+      getFiles.mockResolvedValue(transcriptFiles);
+
+      const response = await request(app).delete('/api/convos/all');
+
+      expect(response.status).toBe(201);
+      expect(getFiles).toHaveBeenCalledWith({
+        conversationId: { $in: conversationIds },
+        context: 'transcript_rag',
+      });
+      expect(processDeleteRequest).toHaveBeenCalledWith({
+        req: expect.anything(),
+        files: transcriptFiles,
+      });
     });
 
     it('should delete all conversations, tool calls, and shared links for a user', async () => {
@@ -271,6 +296,67 @@ describe('Convos Routes', () => {
         'test-user-123',
         mockConversationId,
       );
+    });
+
+    it('cleans up transcript_rag files scoped to the deleted conversation, leaving other files alone', async () => {
+      const mockConversationId = 'conv-123';
+      const { getFiles } = require('~/models');
+      const { processDeleteRequest } = require('~/server/services/Files/process');
+
+      deleteConvos.mockResolvedValue({
+        deletedCount: 1,
+        conversationIds: [mockConversationId],
+      });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteConvoSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+      const transcriptFile = { file_id: 'transcript-1', context: 'transcript_rag' };
+      getFiles.mockResolvedValue([transcriptFile]);
+
+      const response = await request(app)
+        .delete('/api/convos')
+        .send({ arg: { conversationId: mockConversationId } });
+
+      expect(response.status).toBe(201);
+      expect(getFiles).toHaveBeenCalledWith({
+        conversationId: { $in: [mockConversationId] },
+        context: 'transcript_rag',
+      });
+      expect(processDeleteRequest).toHaveBeenCalledWith({
+        req: expect.anything(),
+        files: [transcriptFile],
+      });
+    });
+
+    it('does not call processDeleteRequest when the conversation has no transcript files', async () => {
+      const { getFiles } = require('~/models');
+      const { processDeleteRequest } = require('~/server/services/Files/process');
+
+      deleteConvos.mockResolvedValue({ deletedCount: 1, conversationIds: ['conv-456'] });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteConvoSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+      getFiles.mockResolvedValue([]);
+
+      const response = await request(app)
+        .delete('/api/convos')
+        .send({ arg: { conversationId: 'conv-456' } });
+
+      expect(response.status).toBe(201);
+      expect(processDeleteRequest).not.toHaveBeenCalled();
+    });
+
+    it('does not fail conversation deletion when transcript cleanup throws', async () => {
+      const { getFiles } = require('~/models');
+
+      deleteConvos.mockResolvedValue({ deletedCount: 1, conversationIds: ['conv-789'] });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteConvoSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+      getFiles.mockRejectedValue(new Error('Mongo unavailable'));
+
+      const response = await request(app)
+        .delete('/api/convos')
+        .send({ arg: { conversationId: 'conv-789' } });
+
+      expect(response.status).toBe(201);
     });
 
     it('should not call deleteConvoSharedLinksWithCleanup when no conversationId provided', async () => {

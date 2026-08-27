@@ -92,10 +92,6 @@ class PromptBuild:
     budget_tokens: int = 0
     used_tokens: int = 0
 
-    @property
-    def is_empty(self) -> bool:
-        return not self.prompt
-
 
 def estimate_tokens(text: str) -> int:
     """Fallback counter for callers with no tokenizer."""

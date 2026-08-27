@@ -6,7 +6,6 @@ import {
   Sparkles,
   FileText,
   FileSearch,
-  Mic,
   Wrench,
   Server,
   Workflow,
@@ -42,10 +41,6 @@ const BUILTIN_ICONS: Record<string, ItemIcon> = {
   file_search: {
     Icon: FileSearch,
     colorClass: 'bg-pink-500/15 text-pink-600 dark:text-pink-300',
-  },
-  transcribe_audio: {
-    Icon: Mic,
-    colorClass: 'bg-rose-500/15 text-rose-600 dark:text-rose-300',
   },
   memory: {
     Icon: Brain,

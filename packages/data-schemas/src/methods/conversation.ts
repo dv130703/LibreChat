@@ -16,6 +16,7 @@ import logger from '~/config/winston';
 
 export interface ConversationMethods {
   getConvoFiles(conversationId: string): Promise<string[]>;
+  addConvoFile(conversationId: string, file_id: string): Promise<void>;
   searchConversation(conversationId: string): Promise<IConversation | null>;
   deleteNullOrEmptyConversations(): Promise<{
     conversations: { deletedCount?: number };
@@ -158,6 +159,21 @@ export function createConversationMethods(
     } catch (error) {
       logger.error('[deleteNullOrEmptyConversations] Error deleting conversations', error);
       throw new Error('Error deleting conversations with null or empty conversationId');
+    }
+  }
+
+  /**
+   * Adds a file id to a conversation's `files` list after the fact - e.g. a file
+   * a tool generated mid-turn, too late to have been included in the snapshot
+   * `saveConvo` normally writes from the turn's attachments. Idempotent.
+   */
+  async function addConvoFile(conversationId: string, file_id: string): Promise<void> {
+    try {
+      const Conversation = mongoose.models.Conversation as Model<IConversation>;
+      await Conversation.updateOne({ conversationId }, { $addToSet: { files: file_id } });
+    } catch (error) {
+      logger.error('[addConvoFile] Error adding file to conversation', error);
+      throw new Error('Error adding file to conversation');
     }
   }
 
@@ -838,6 +854,7 @@ export function createConversationMethods(
 
   return {
     getConvoFiles,
+    addConvoFile,
     searchConversation,
     deleteNullOrEmptyConversations,
     saveConvo,

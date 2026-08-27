@@ -40,6 +40,10 @@ import { createActionMethods, type ActionMethods } from './action';
 import { createAssistantMethods, type AssistantMethods } from './assistant';
 import { createBannerMethods, type BannerMethods } from './banner';
 import { createToolCallMethods, type ToolCallMethods } from './toolCall';
+import {
+  createTranscriptCorrectionMethods,
+  type TranscriptCorrectionMethods,
+} from './transcriptCorrection';
 import { createCategoriesMethods, type CategoriesMethods } from './categories';
 import { createPresetMethods, type PresetMethods } from './preset';
 /* Tier 2 — Moderate (service deps injected) */
@@ -140,6 +144,7 @@ export type AllMethods = UserMethods &
   AssistantMethods &
   BannerMethods &
   ToolCallMethods &
+  TranscriptCorrectionMethods &
   CategoriesMethods &
   PresetMethods &
   ConversationTagMethods &
@@ -273,6 +278,7 @@ export function createMethods(
     ...createAssistantMethods(mongoose),
     ...createBannerMethods(mongoose),
     ...createToolCallMethods(mongoose),
+    ...createTranscriptCorrectionMethods(mongoose),
     ...createCategoriesMethods(mongoose),
     ...createPresetMethods(mongoose),
     /* Tier 2 */
@@ -318,6 +324,7 @@ export type {
   AssistantMethods,
   BannerMethods,
   ToolCallMethods,
+  TranscriptCorrectionMethods,
   CategoriesMethods,
   PresetMethods,
   ConversationTagMethods,

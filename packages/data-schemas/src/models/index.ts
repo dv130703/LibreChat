@@ -16,6 +16,7 @@ import { createAssistantModel } from './assistant';
 import { createSkillFileModel } from './skillFile';
 import { createConversationModel } from './convo';
 import { createToolCallModel } from './toolCall';
+import { createTranscriptCorrectionModel } from './transcriptCorrection';
 import { createAclEntryModel } from './aclEntry';
 import { createAuditLogModel } from './auditLog';
 import { createSessionModel } from './session';
@@ -69,6 +70,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
   ConversationTag: ReturnType<typeof createConversationTagModel>;
   SharedLink: ReturnType<typeof createSharedLinkModel>;
   ToolCall: ReturnType<typeof createToolCallModel>;
+  TranscriptCorrection: ReturnType<typeof createTranscriptCorrectionModel>;
   MemoryEntry: ReturnType<typeof createMemoryModel>;
   ToolFavorite: ReturnType<typeof createToolFavoriteModel>;
   AccessRole: ReturnType<typeof createAccessRoleModel>;
@@ -108,6 +110,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
     ConversationTag: createConversationTagModel(mongoose),
     SharedLink: createSharedLinkModel(mongoose),
     ToolCall: createToolCallModel(mongoose),
+    TranscriptCorrection: createTranscriptCorrectionModel(mongoose),
     MemoryEntry: createMemoryModel(mongoose),
     ToolFavorite: createToolFavoriteModel(mongoose),
     AccessRole: createAccessRoleModel(mongoose),

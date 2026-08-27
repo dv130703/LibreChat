@@ -1,21 +1,13 @@
-import json
 import logging
-import os
-import subprocess
-import tempfile
 from dataclasses import replace
 from functools import lru_cache
-from pathlib import Path
 from threading import Lock
 
-import pandas as pd
 import torch
 import whisperx
 from whisperx.diarize import DiarizationPipeline
 
 from .config import Settings, get_settings
-from .diarization_merge import merge_fragmented_speakers
-from .reconciliation import reconcile_word_speakers
 from .speaker_bounds import resolve_speaker_bounds
 from .transcription_prompt import (
     PromptBuild,
@@ -26,14 +18,6 @@ from .transcription_prompt import (
 )
 
 logger = logging.getLogger(__name__)
-
-_BACKEND_DIR = Path(__file__).resolve().parent
-_NEMO_SCRIPT = _BACKEND_DIR / "scripts" / "nemo_diarize.py"
-_NEMO_VENV_PYTHON = _BACKEND_DIR / ".venv-nemo" / "bin" / "python"
-# NeMo diarization (nemo_diarize.py, .venv-nemo) was not ported from the
-# standalone speak-summary app — pyannote (the default diarization_backend)
-# is fully supported; set WHISPERX_DIARIZATION_BACKEND=nemo only after porting
-# backend/scripts/nemo_diarize.py and its separate venv from that project.
 
 
 class WhisperXService:
@@ -59,20 +43,15 @@ class WhisperXService:
         return self._model is not None
 
     def _calculate_batch_size(self) -> int:
-        """Optimize batch_size based on beam search parameters to prevent OOM.
+        """Reduce batch_size as beam_size grows, to stay within memory limits.
 
-        Beam search with best_of multiplies memory usage, so we reduce batch_size
-        proportionally to stay within GPU/CPU memory limits.
+        Only beam_size, not best_of - despite both being "beam search"
+        settings, best_of never reaches ctranslate2 under whisperx's batched
+        decoder (see the asr_options comment in `_get_model`), so scaling
+        this by it would shrink the batch for a setting that costs nothing.
         """
-        base_batch_size = self.settings.batch_size
-        # Each beam * best_of combination roughly multiplies memory by that factor
         beam_multiplier = max(1, self.settings.beam_size // 5)  # baseline is beam_size=5
-        best_of_multiplier = max(1, self.settings.best_of // 5)
-        reduction_factor = beam_multiplier * best_of_multiplier
-
-        # Reduce batch size to prevent OOM, but keep minimum of 1
-        effective_batch_size = max(1, base_batch_size // reduction_factor)
-        return effective_batch_size
+        return max(1, self.settings.batch_size // beam_multiplier)
 
     def _get_model(self):
         if self._model is None:
@@ -136,6 +115,13 @@ class WhisperXService:
                         # the default for calls that supply no context.
                         "initial_prompt": self.settings.initial_prompt,
                     }
+                    logger.info(
+                        "Loading whisper model %s on %s/%s (cold start - this can take a "
+                        "while the first time a model is downloaded)",
+                        self.settings.whisper_model,
+                        self.device,
+                        self.compute_type,
+                    )
                     self._model = whisperx.load_model(
                         self.settings.whisper_model,
                         self.device,
@@ -147,69 +133,41 @@ class WhisperXService:
                         vad_options=vad_options,
                         asr_options=asr_options,
                     )
+                    logger.info("Whisper model %s loaded", self.settings.whisper_model)
         return self._model
 
     def _get_align_model(self, language_code: str):
         if language_code not in self._align_models:
             with self._lock:
                 if language_code not in self._align_models:
+                    logger.info("Loading alignment model for language=%s", language_code)
                     self._align_models[language_code] = whisperx.load_align_model(
                         language_code=language_code,
                         device=self.device,
                         model_dir=self.settings.model_cache_dir,
                     )
+                    logger.info("Alignment model for language=%s loaded", language_code)
         return self._align_models[language_code]
 
     def _get_diarize_model(self):
         if self._diarize_model is None:
             if not self.settings.hf_token:
                 raise RuntimeError(
-                    "Diarization requires a Hugging Face token. Set WHISPERX_HF_TOKEN in backend/.env "
-                    "after accepting the pyannote/speaker-diarization-community-1 model terms on "
-                    "huggingface.co."
+                    "Diarization requires a Hugging Face token. Set WHISPERX_HF_TOKEN in "
+                    "rag_server/.env after accepting the pyannote/speaker-diarization-community-1 "
+                    "model terms on huggingface.co."
                 )
             with self._lock:
                 if self._diarize_model is None:
+                    logger.info("Loading diarization model %s", self.settings.diarization_model)
                     self._diarize_model = DiarizationPipeline(
                         model_name=self.settings.diarization_model,
                         token=self.settings.hf_token,
                         device=self.device,
                         cache_dir=self.settings.model_cache_dir,
                     )
+                    logger.info("Diarization model loaded")
         return self._diarize_model
-
-    def _diarize_with_nemo(self, audio_path: str) -> pd.DataFrame:
-        python_path = self.settings.nemo_python_path or str(_NEMO_VENV_PYTHON)
-        if not Path(python_path).exists():
-            raise RuntimeError(
-                f"NeMo venv python not found at {python_path}. Set up backend/.venv-nemo (see README) "
-                "or set WHISPERX_NEMO_PYTHON_PATH."
-            )
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
-            out_path = out_file.name
-
-        try:
-            proc = subprocess.run(
-                [
-                    python_path,
-                    str(_NEMO_SCRIPT),
-                    audio_path,
-                    out_path,
-                    "--model-name",
-                    self.settings.nemo_model_name,
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if proc.returncode != 0:
-                raise RuntimeError(f"NeMo diarization failed: {proc.stderr[-2000:]}")
-            with open(out_path) as f:
-                data = json.load(f)
-        finally:
-            os.unlink(out_path)
-
-        return pd.DataFrame(data["segments"])
 
     def _token_counter(self, model):
         """Exact token counting against the loaded model's own vocabulary.
@@ -310,81 +268,74 @@ class WhisperXService:
         result = self._transcribe_batched(model, audio, language, initial_prompt)
         language_code = result["language"]
 
-        # Alignment-gap counting (Tier 3b)
         alignment_gap_count = 0
         alignment_gap_total_s = 0.0
+        alignment_failed = False
 
         try:
             model_a, metadata = self._get_align_model(language_code)
             result = whisperx.align(
                 result["segments"], model_a, metadata, audio, self.device, return_char_alignments=False
             )
-            # Count alignment gaps (words with missing start/end times)
+            # Count alignment gaps (words with missing start/end times), and
+            # total up the duration only of words that DO have both, so
+            # elapsed time never gets attributed to a gap that has none.
             for segment in result["segments"]:
-                if "words" in segment:
-                    for word in segment["words"]:
-                        if word.get("start") is None or word.get("end") is None:
-                            alignment_gap_count += 1
-                            if word.get("start") is not None and word.get("end") is not None:
-                                alignment_gap_total_s += word.get("end") - word.get("start")
+                for word in segment.get("words", []):
+                    start, end = word.get("start"), word.get("end")
+                    if start is None or end is None:
+                        alignment_gap_count += 1
+                    else:
+                        alignment_gap_total_s += end - start
         except Exception:
-            # No alignment model for this language; fall back to the unaligned segments.
-            pass
+            # Timestamps come from this stage - silently keeping the
+            # unaligned segments would mean a bad transcript with no trace of
+            # why, so this is worth a real log line even though it's handled.
+            alignment_failed = True
+            logger.exception(
+                "Alignment failed for language=%s; falling back to unaligned segment timestamps",
+                language_code,
+            )
 
         diarization_speaker_count = 0
-        diarization_backend = self.settings.diarization_backend or "pyannote"
-        # Whether the hint actually reached a diarizer. False when one was given
-        # and the active backend can't take it - which is worth reporting rather
-        # than letting the caller believe a number they set was honoured.
+        # Whether the hint actually reached the diarizer - worth reporting
+        # rather than letting the caller believe a number they set was
+        # honoured when clustering could still land outside it regardless.
         speaker_hint_applied = False
 
         if diarize:
-            if self.settings.diarization_backend == "nemo":
-                # This Sortformer wrapper takes no speaker-count argument; it
-                # always predicts among up to 4 speakers on its own.
-                diarize_segments = self._diarize_with_nemo(audio_path)
-                if bounds.is_set:
-                    logger.warning(
-                        "Speaker-count hint (%s) ignored: the nemo backend does not accept one.",
-                        bounds.describe(),
-                    )
-            else:
-                diarize_model = self._get_diarize_model()
+            diarize_model = self._get_diarize_model()
 
-                # Tier 3c: Clustering threshold tuning (pyannote only)
-                # Apply clustering hyperparameters if available
-                if (
-                    hasattr(diarize_model, "model")
-                    and self.settings.diarization_clustering_threshold is not None
-                ):
-                    try:
-                        # Pyannote pipeline supports instantiate() with hyperparameter tuning
-                        hyper_params = {
-                            "clustering": {
-                                "method": "average",
-                                "threshold": self.settings.diarization_clustering_threshold,
-                            }
+            if (
+                hasattr(diarize_model, "model")
+                and self.settings.diarization_clustering_threshold is not None
+            ):
+                try:
+                    hyper_params = {
+                        "clustering": {
+                            "method": "average",
+                            "threshold": self.settings.diarization_clustering_threshold,
                         }
-                        if self.settings.diarization_min_cluster_size is not None:
-                            hyper_params["clustering"]["min_cluster_size"] = (
-                                self.settings.diarization_min_cluster_size
-                            )
-                        diarize_model.model.instantiate(hyper_params)
-                        logger.info(
-                            f"Applied clustering threshold {self.settings.diarization_clustering_threshold}"
+                    }
+                    if self.settings.diarization_min_cluster_size is not None:
+                        hyper_params["clustering"]["min_cluster_size"] = (
+                            self.settings.diarization_min_cluster_size
                         )
-                    except Exception as e:
-                        logger.warning(
-                            f"Could not apply clustering hyperparameters: {e}. "
-                            "Using default settings."
-                        )
+                    diarize_model.model.instantiate(hyper_params)
+                    logger.info(
+                        "Applied clustering threshold %s",
+                        self.settings.diarization_clustering_threshold,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Could not apply clustering hyperparameters; using pipeline defaults"
+                    )
 
-                diarize_segments = diarize_model(
-                    audio, min_speakers=bounds.min_speakers, max_speakers=bounds.max_speakers
-                )
-                speaker_hint_applied = bounds.is_set
+            diarize_segments = diarize_model(
+                audio, min_speakers=bounds.min_speakers, max_speakers=bounds.max_speakers
+            )
+            speaker_hint_applied = bounds.is_set
 
-            # Non-empty assertion (Tier 3c)
             if len(diarize_segments) == 0:
                 raise RuntimeError(
                     "Diarization produced no speaker segments. This may indicate that the audio "
@@ -393,27 +344,7 @@ class WhisperXService:
                     "the speaker-diarization-community-1 model terms on huggingface.co."
                 )
 
-            # Tier 3c: Centroid-merge post-pass to fix fragmented speakers
-            diarize_segments, merge_pairs = merge_fragmented_speakers(
-                diarize_segments,
-                cosine_threshold=self.settings.diarization_clustering_threshold or 0.5,
-                min_turn_duration=5.0,
-            )
-            if merge_pairs:
-                logger.info(f"Merged {len(merge_pairs)} fragmented speaker pairs")
-
-            # Tier 3d: VAD-masked, duration-weighted reconciliation
-            # Note: Would use cached VAD timeline here if available
             result = whisperx.assign_word_speakers(diarize_segments, result)
-
-            # TODO: Integrate reconciliation when word-level embeddings are available
-            # For now, rely on improved diarization from centroid-merge
-            # reconciled_segments = reconcile_word_speakers(
-            #     result["segments"],
-            #     diarize_segments,
-            #     vad_timeline=vad_timeline_from_cache,
-            # )
-
             diarization_speaker_count = int(diarize_segments["speaker"].nunique()) if "speaker" in diarize_segments else 0
 
             # A hint is a hint, not a constraint - clustering can still land
@@ -444,10 +375,9 @@ class WhisperXService:
         diagnostics = {
             "alignment_gap_count": alignment_gap_count,
             "alignment_gap_total_s": round(alignment_gap_total_s, 2),
-            "low_confidence_word_count": 0,  # TODO: Tier 3b - count words with confidence < threshold
-            "diarization_backend": diarization_backend,
+            "alignment_failed": alignment_failed,
+            "diarization_backend": "pyannote",
             "diarization_speaker_count": diarization_speaker_count,
-            "vad_speech_ratio": 0.0,  # TODO: Tier 3a - calculate from VAD timeline
             # What the prompt window actually took. Reported rather than
             # guessed at: a term the user typed and that never reached the
             # model is worth saying out loud.

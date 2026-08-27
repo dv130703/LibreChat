@@ -729,8 +729,28 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
     doc.postSaveHook?.(next);
   });
 
-  schema.post('updateOne', function (doc: DocumentWithMeiliIndex, next) {
-    doc.postUpdateHook?.(next);
+  // Query middleware (`Model.updateOne(...)`, as opposed to `doc.updateOne(...)`)
+  // never hands the hook a hydrated document - `doc` here is the raw write result
+  // (`{ acknowledged, modifiedCount, ... }`), which has no `postUpdateHook` method.
+  // The old `doc.postUpdateHook?.(next)` silently no-opped on that shape, so `next()`
+  // was never called and the middleware chain - and the caller's awaited promise -
+  // hung forever, even though the underlying write had already succeeded. Fetch the
+  // affected document explicitly so indexing can still run for this call style.
+  schema.post('updateOne', async function (this: Query<unknown, DocumentWithMeiliIndex>, _result, next) {
+    if (!meiliEnabled) {
+      return next();
+    }
+    try {
+      const doc = (await this.model.findOne(this.getQuery())) as DocumentWithMeiliIndex | null;
+      if (doc?.postUpdateHook) {
+        doc.postUpdateHook(next);
+      } else {
+        next();
+      }
+    } catch (error) {
+      logger.error('[MeiliMongooseModel.updateOne] Error syncing document to MeiliSearch', error);
+      next();
+    }
   });
 
   schema.post('deleteOne', function (doc: DocumentWithMeiliIndex, next) {

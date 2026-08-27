@@ -10,19 +10,50 @@ const {
   deleteConvoSharedLinksWithCleanup,
 } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
-const { CacheKeys, EModelEndpoint } = require('librechat-data-provider');
+const { CacheKeys, FileContext, EModelEndpoint } = require('librechat-data-provider');
 const {
   createImportLimiters,
   validateConvoAccess,
   createForkLimiters,
   configMiddleware,
 } = require('~/server/middleware');
+const { processDeleteRequest } = require('~/server/services/Files/process');
 const { forkConversation, duplicateConversation } = require('~/server/utils/import/fork');
 const { storage, importFileFilter } = require('~/server/routes/files/multer');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
 const { importConversations } = require('~/server/utils/import');
 const getLogStores = require('~/cache/getLogStores');
 const db = require('~/models');
+
+/**
+ * Deletes the per-conversation RAG transcript files (see the Audio Transcriber
+ * feature, `api/server/routes/transcribe.js`) for the given conversations, so
+ * they never survive their conversation and
+ * never show up in any general file listing. Scoped strictly by
+ * `context: FileContext.transcript_rag` - deliberately NOT a bare
+ * `conversationId` match, which would also catch the user's own regular
+ * `file_search` documents that happen to carry the same conversationId.
+ * Best-effort: never blocks conversation deletion on cleanup failure.
+ *
+ * @param {ServerRequest} req
+ * @param {string[]} conversationIds
+ */
+async function cleanupTranscriptFiles(req, conversationIds) {
+  if (!conversationIds?.length) {
+    return;
+  }
+  try {
+    const files = await db.getFiles({
+      conversationId: { $in: conversationIds },
+      context: FileContext.transcript_rag,
+    });
+    if (files?.length) {
+      await processDeleteRequest({ req, files });
+    }
+  } catch (error) {
+    logger.error('[cleanupTranscriptFiles] Failed to clean up transcript RAG files', error);
+  }
+}
 
 const assistantClients = {
   [EModelEndpoint.azureAssistants]: require('~/server/services/Endpoints/azureAssistants'),
@@ -146,8 +177,10 @@ router.delete('/', configMiddleware, async (req, res) => {
   try {
     const dbResponse = await db.deleteConvos(req.user.id, filter);
     // HITL: prune the deleted conversations' durable checkpoints — a paused run's
-    // checkpoint would otherwise persist until the Mongo TTL. Never throws.
-    await deleteAgentCheckpoints(
+    // checkpoint would otherwise persist until the Mongo TTL. Never throws, and
+    // doesn't depend on (or get depended on by) the tool-call/shared-link cleanup
+    // below, so it runs concurrently with it instead of blocking before it.
+    const checkpointsCleanup = deleteAgentCheckpoints(
       dbResponse.conversationIds,
       req.config?.endpoints?.[EModelEndpoint.agents]?.checkpointer,
     );
@@ -155,6 +188,9 @@ router.delete('/', configMiddleware, async (req, res) => {
       await db.deleteToolCalls(req.user.id, filter.conversationId);
       await deleteConvoSharedLinksWithCleanup(req.user.id, filter.conversationId);
     }
+    await checkpointsCleanup;
+    await cleanupTranscriptFiles(req, dbResponse.conversationIds);
+    await db.deleteTranscriptCorrections(dbResponse.conversationIds);
     res.status(201).json(dbResponse);
   } catch (error) {
     logger.error('Error clearing conversations', error);
@@ -165,13 +201,18 @@ router.delete('/', configMiddleware, async (req, res) => {
 router.delete('/all', configMiddleware, async (req, res) => {
   try {
     const dbResponse = await db.deleteConvos(req.user.id, {});
-    // HITL: prune ALL the deleted conversations' durable checkpoints in one bulk pass.
-    await deleteAgentCheckpoints(
+    // HITL: prune ALL the deleted conversations' durable checkpoints in one bulk
+    // pass. Never throws, and is independent of the tool-call/shared-link
+    // cleanup below, so it runs concurrently with it instead of blocking before it.
+    const checkpointsCleanup = deleteAgentCheckpoints(
       dbResponse.conversationIds,
       req.config?.endpoints?.[EModelEndpoint.agents]?.checkpointer,
     );
     await db.deleteToolCalls(req.user.id);
     await deleteAllSharedLinksWithCleanup(req.user.id);
+    await checkpointsCleanup;
+    await cleanupTranscriptFiles(req, dbResponse.conversationIds);
+    await db.deleteTranscriptCorrections(dbResponse.conversationIds);
     res.status(201).json(dbResponse);
   } catch (error) {
     logger.error('Error clearing conversations', error);

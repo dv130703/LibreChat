@@ -303,6 +303,18 @@ export const mcpServer = (serverName: string) => `${BASE_URL}/api/mcp/servers/${
 
 export const revertAgentVersion = (agent_id: string) => `${agents({ path: `${agent_id}/revert` })}`;
 
+export const transcribe = () => `${BASE_URL}/api/transcribe`;
+const transcriptCorrectionsRoot = `${BASE_URL}/api/transcript-corrections`;
+export const transcriptCorrections = (transcriptFileId: string, conversationId: string) =>
+  `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}${buildQuery({ conversationId })}`;
+export const renameTranscriptSpeaker = (transcriptFileId: string) =>
+  `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/speaker-rename`;
+export const reassignTranscriptSegment = (transcriptFileId: string) =>
+  `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/segment-reassign`;
+export const editTranscriptText = (transcriptFileId: string) =>
+  `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/text-edit`;
+export const insertTranscriptLine = (transcriptFileId: string) =>
+  `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/line-insert`;
 export const files = () => `${BASE_URL}/api/files`;
 export const fileUpload = () => `${BASE_URL}/api/files`;
 export const fileDelete = () => `${BASE_URL}/api/files`;

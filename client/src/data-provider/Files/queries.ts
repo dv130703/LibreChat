@@ -114,6 +114,12 @@ export const useFileDownload = (
     {
       enabled: false,
       retry: false,
+      // A `file_id` never changes what bytes it points to in this app (a new
+      // upload gets a new id), so once downloaded there's nothing to
+      // invalidate - keep the blob URL cached indefinitely instead of
+      // treating it as stale the moment a consumer remounts.
+      staleTime: Infinity,
+      cacheTime: Infinity,
     },
   );
 };

@@ -9,13 +9,50 @@ type TUseScrollToRef = {
 
 type ThrottledFunction = (() => void) & {
   cancel: () => void;
-  flush: () => void;
 };
 
 type ScrollToRefReturn = {
   scrollToRef?: ThrottledFunction;
   handleSmoothToRef: React.MouseEventHandler<HTMLButtonElement>;
 };
+
+/** Same leading+trailing coalescing as lodash's `throttle`, but keyed to
+ *  animation frames instead of a fixed millisecond window - during streaming,
+ *  a ResizeObserver can call this many times a second, and a fixed-ms window
+ *  (the previous 145ms) makes the follow-scroll visibly step once per window
+ *  instead of tracking new content continuously. */
+function rafThrottle(fn: () => void): ThrottledFunction {
+  let rafId: number | null = null;
+  let pending = false;
+
+  const flushOnNextFrame = () => {
+    rafId = null;
+    if (pending) {
+      pending = false;
+      fn();
+      rafId = window.requestAnimationFrame(flushOnNextFrame);
+    }
+  };
+
+  const throttled = (() => {
+    if (rafId === null) {
+      fn();
+      rafId = window.requestAnimationFrame(flushOnNextFrame);
+    } else {
+      pending = true;
+    }
+  }) as ThrottledFunction;
+
+  throttled.cancel = () => {
+    if (rafId !== null) {
+      window.cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    pending = false;
+  };
+
+  return throttled;
+}
 
 export default function useScrollToRef({
   targetRef,
@@ -31,7 +68,7 @@ export default function useScrollToRef({
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const scrollToRef = useCallback(
-    throttle(() => logAndScroll('instant', callback), 145, { leading: true }),
+    rafThrottle(() => logAndScroll('instant', callback)),
     [targetRef],
   );
 

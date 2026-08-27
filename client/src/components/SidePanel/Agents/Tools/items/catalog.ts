@@ -85,12 +85,6 @@ const BUILTIN_DEFINITIONS: BuiltinDef[] = [
     nameKey: 'com_assistants_file_search',
     descriptionKey: 'com_agents_file_search_info',
   },
-  {
-    id: AgentCapabilities.transcribe_audio,
-    iconKey: 'transcribe_audio',
-    nameKey: 'com_agents_transcribe_audio',
-    descriptionKey: 'com_agents_transcribe_audio_info',
-  },
 ];
 
 function countEndpoints(settings: Action['settings']): number {

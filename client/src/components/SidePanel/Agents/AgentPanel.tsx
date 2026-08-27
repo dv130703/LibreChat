@@ -429,9 +429,6 @@ export default function AgentPanel() {
       if (data.file_search === true) {
         tools.push(Tools.file_search);
       }
-      if (data.transcribe_audio === true) {
-        tools.push(Tools.transcribe_audio);
-      }
       if (data.web_search === true) {
         tools.push(Tools.web_search);
       }

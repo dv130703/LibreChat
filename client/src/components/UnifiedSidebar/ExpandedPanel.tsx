@@ -52,10 +52,10 @@ const NewChatButton = memo(function NewChatButton({
           data-testid="new-chat-button"
           aria-label={localize('com_ui_new_chat')}
           aria-keyshortcuts={ariaKey}
-          className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-surface-hover"
+          className="group flex h-9 w-9 items-center justify-center rounded-lg transition-all duration-200 ease-out hover:scale-105 hover:bg-surface-hover active:scale-90"
           onClick={handleClick}
         >
-          <SquarePen className="h-5 w-5 text-text-primary" />
+          <SquarePen className="h-5 w-5 text-text-primary transition-transform duration-200 group-hover:scale-110" />
         </a>
       }
     />
@@ -111,12 +111,24 @@ const NavIconButton = memo(function NavIconButton({
           aria-pressed={isActive}
           data-testid={`nav-panel-${link.id}`}
           className={cn(
-            'h-9 w-9 rounded-lg',
-            isActive ? 'bg-surface-active-alt text-text-primary' : 'text-text-secondary',
+            'group relative h-9 w-9 rounded-lg transition-all duration-200 ease-out hover:scale-105 active:scale-90',
+            isActive
+              ? 'bg-surface-active-alt text-text-primary shadow-sm'
+              : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary',
           )}
           onClick={handleClick}
         >
-          <link.icon className="h-5 w-5" aria-hidden="true" />
+          <span
+            aria-hidden="true"
+            className={cn(
+              'absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-text-primary transition-opacity duration-200',
+              isActive ? 'opacity-100' : 'opacity-0',
+            )}
+          />
+          <link.icon
+            className="h-5 w-5 transition-transform duration-200 group-hover:scale-110"
+            aria-hidden="true"
+          />
         </Button>
       }
     />
@@ -157,10 +169,16 @@ function ExpandedPanel({
             aria-label={localize(toggleLabel)}
             aria-expanded={expanded}
             aria-keyshortcuts={toggleSidebarAriaKey}
-            className="h-9 w-9 rounded-lg"
+            className="group h-9 w-9 rounded-lg transition-all duration-200 ease-out hover:scale-105 active:scale-90"
             onClick={toggleClick}
           >
-            <Sidebar aria-hidden="true" className="h-5 w-5 text-text-primary" />
+            <Sidebar
+              aria-hidden="true"
+              className={cn(
+                'h-5 w-5 text-text-primary transition-transform duration-200 group-hover:scale-110',
+                expanded ? 'rotate-0' : 'rotate-180',
+              )}
+            />
           </Button>
         }
       />

@@ -31,6 +31,9 @@ export enum FileContext {
   assistants_output = 'assistants_output',
   message_attachment = 'message_attachment',
   skill_file = 'skill_file',
+  /** Transcript embedded into RAG for one conversation only - never listed in
+   *  the general file library, deleted along with the conversation. */
+  transcript_rag = 'transcript_rag',
   filename = 'filename',
   updatedAt = 'updatedAt',
   source = 'source',
@@ -192,6 +195,86 @@ export type TFilePreview = {
 
 export type AvatarUploadResponse = {
   url: string;
+};
+
+/** One WhisperX segment, as returned by `POST /api/transcribe`. */
+export type TTranscriptSegment = {
+  start: number;
+  end: number;
+  speaker: string;
+  text: string;
+};
+
+/** Response shape for `POST /api/transcribe` (Audio Transcriber section). */
+export type TTranscribeResponse = {
+  conversationId: string;
+  segments: TTranscriptSegment[];
+  language?: string;
+  diagnostics?: Record<string, unknown>;
+  sourceFile: { file_id: string; filename: string };
+  transcriptFile: { file_id: string; filename: string } | null;
+};
+
+/** One append-only correction event against an Audio Transcriber transcript -
+ *  see `GET/POST /api/transcript-corrections`. Never edited or deleted; the
+ *  client replays the full chronological list (last write per key wins) to
+ *  derive current speaker names and segment reassignments. */
+export type TTranscriptCorrection = {
+  _id: string;
+  transcriptFileId: string;
+  conversationId: string;
+  user: string;
+  type: 'speaker_rename' | 'segment_reassign' | 'text_edit' | 'line_insert';
+  speakerId?: string;
+  fromName?: string;
+  toName?: string;
+  lineIndex?: number;
+  fromSpeakerId?: string;
+  toSpeakerId?: string;
+  fromText?: string;
+  toText?: string;
+  /** line_insert: the new line's speaker id, text, and time range - see
+   *  `TLineInsertRequest`. */
+  speaker?: string;
+  text?: string;
+  seconds?: number;
+  endSeconds?: number;
+  createdAt: string;
+};
+
+export type TSpeakerRenameRequest = {
+  conversationId: string;
+  speakerId: string;
+  fromName?: string;
+  toName: string;
+};
+
+export type TSegmentReassignRequest = {
+  conversationId: string;
+  lineIndex: number;
+  fromSpeakerId?: string;
+  toSpeakerId: string;
+};
+
+export type TTextEditRequest = {
+  conversationId: string;
+  lineIndex: number;
+  fromText?: string;
+  toText: string;
+};
+
+/** A line the pipeline missed entirely, not a correction to an existing one.
+ *  `lineIndex` must be strictly between the two neighboring lines' own
+ *  indices at insert time (fractional, e.g. `4.5` between lines `4` and `5`) -
+ *  the client, not the server, computes it, since only the client has the
+ *  currently-displayed neighbor lines to compute it from. */
+export type TLineInsertRequest = {
+  conversationId: string;
+  lineIndex: number;
+  speaker?: string;
+  text: string;
+  seconds: number;
+  endSeconds: number;
 };
 
 export type FileDownloadURLResponse = {

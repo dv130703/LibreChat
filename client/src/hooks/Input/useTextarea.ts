@@ -29,7 +29,7 @@ import { useChatContext } from '~/Providers/ChatContext';
 import { useUploadModalContext } from '~/Providers';
 import { globalAudioId } from '~/common';
 import { useLocalize } from '~/hooks';
-import store from '~/store';
+import store, { isAudioTranscriberConvo } from '~/store';
 
 type KeyEvent = KeyboardEvent<HTMLTextAreaElement>;
 
@@ -83,6 +83,13 @@ export default function useTextarea({
   const { index, conversation, isSubmitting, filesLoading, setFilesLoading } = useChatContext();
   const latestMessage = useLatestMessageMeta(index);
   const [activePrompt, setActivePrompt] = useRecoilState(store.activePromptByIndex(index));
+  /** In the Audio Transcriber workspace, "Message {raw model id}" reads as a
+   *  dev-time backend detail rather than the task at hand - a forensic
+   *  reviewer thinks "ask about this transcript," not "which model is
+   *  serving this." */
+  const isTranscriberConvo = useRecoilValue(
+    isAudioTranscriberConvo(conversation?.conversationId ?? ''),
+  );
 
   const { endpoint = '' } = conversation || {};
   const { entity, isAgent, isAssistant } = getEntity({
@@ -137,6 +144,10 @@ export default function useTextarea({
         return placeholder;
       }
 
+      if (isTranscriberConvo) {
+        return localize('com_ui_transcript_chat_placeholder');
+      }
+
       const sender =
         isAssistant || isAgent
           ? getEntityName({ name: entityName, isAgent, localize })
@@ -180,6 +191,7 @@ export default function useTextarea({
     latestMessage,
     isNotAppendable,
     placeholder,
+    isTranscriberConvo,
   ]);
 
   const handleKeyDown = useCallback(

@@ -18,6 +18,7 @@ import {
 } from '~/hooks';
 import KeyboardShortcutsDialog from '~/components/Nav/KeyboardShortcutsDialog';
 import KeyboardDeleteDialog from '~/components/Nav/KeyboardDeleteDialog';
+import AudioTranscriberRedirectGuard from '~/components/AudioTranscriber/RedirectGuard';
 import { useUserTermsQuery, useGetStartupConfig } from '~/data-provider';
 import useKeyboardShortcuts from '~/hooks/useKeyboardShortcuts';
 import { UnifiedSidebar } from '~/components/UnifiedSidebar';
@@ -113,6 +114,7 @@ export default function Root() {
             />
           )}
           <KeyboardShortcutsProvider />
+          <AudioTranscriberRedirectGuard />
         </AssistantsMapContext.Provider>
       </FileMapContext.Provider>
     </SetConvoProvider>

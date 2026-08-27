@@ -174,7 +174,6 @@ export function useAgentItems({
   const executeCode = (useWatch({ control, name: 'execute_code' }) ?? false) as boolean;
   const webSearch = (useWatch({ control, name: 'web_search' }) ?? false) as boolean;
   const fileSearch = (useWatch({ control, name: 'file_search' }) ?? false) as boolean;
-  const transcribeAudio = (useWatch({ control, name: 'transcribe_audio' }) ?? false) as boolean;
   const memory = (useWatch({ control, name: 'memory' }) ?? false) as boolean;
   const artifacts = (useWatch({ control, name: 'artifacts' }) ?? '') as string;
   const { contextFiles, knowledgeFiles, codeFiles } = useAgentFileEntries();
@@ -218,7 +217,6 @@ export function useAgentItems({
           execute_code: executeCode,
           web_search: webSearch,
           file_search: fileSearch,
-          transcribe_audio: transcribeAudio,
           memory,
           artifacts,
           tools,
@@ -234,7 +232,6 @@ export function useAgentItems({
       executeCode,
       webSearch,
       fileSearch,
-      transcribeAudio,
       memory,
       artifacts,
       tools,

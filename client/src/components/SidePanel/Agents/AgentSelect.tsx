@@ -57,7 +57,6 @@ function AgentSelect({
       const capabilities: TAgentCapabilities = {
         [AgentCapabilities.web_search]: false,
         [AgentCapabilities.file_search]: false,
-        [AgentCapabilities.transcribe_audio]: false,
         [AgentCapabilities.execute_code]: false,
         [AgentCapabilities.memory]: false,
         [AgentCapabilities.end_after_tools]: false,

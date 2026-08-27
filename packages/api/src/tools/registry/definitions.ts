@@ -351,34 +351,6 @@ export const fileSearchSchema: ExtendedJsonSchema = {
   required: ['query'],
 };
 
-/** Transcribe Audio tool JSON schema. Mirrors the zod schema in
- *  `api/app/clients/tools/structured/TranscribeAudio.js`; this is the
- *  definitions-only twin the agent advertises to the model before any tool
- *  instance is constructed. */
-export const transcribeAudioSchema: ExtendedJsonSchema = {
-  type: 'object',
-  properties: {
-    diarize: {
-      type: 'boolean',
-      description: 'Label who is speaking (speaker diarization). Defaults to true.',
-    },
-    min_speakers: {
-      type: 'integer',
-      minimum: 1,
-      description: 'Hint: minimum number of distinct speakers expected in the recording.',
-    },
-    max_speakers: {
-      type: 'integer',
-      minimum: 1,
-      description: 'Hint: maximum number of distinct speakers expected in the recording.',
-    },
-    language: {
-      type: 'string',
-      description: 'ISO 639-1 language code to force (e.g. "en"). Omit to auto-detect.',
-    },
-  },
-};
-
 /** Tool definitions registry - maps tool names to their definitions */
 export const toolDefinitions: Record<string, ToolRegistryDefinition> = {
   google: {
@@ -450,14 +422,6 @@ export const toolDefinitions: Record<string, ToolRegistryDefinition> = {
     description:
       'Performs semantic search across attached "file_search" documents using natural language queries. This tool analyzes the content of uploaded files to find relevant information, quotes, and passages that best match your query.',
     schema: fileSearchSchema,
-    toolType: 'builtin',
-    responseFormat: 'content_and_artifact',
-  },
-  transcribe_audio: {
-    name: 'transcribe_audio',
-    description:
-      'Transcribes the audio/video file(s) attached for transcription into a speaker-labelled, timestamped transcript using WhisperX. No file reference needed - it transcribes whatever is currently attached.',
-    schema: transcribeAudioSchema,
     toolType: 'builtin',
     responseFormat: 'content_and_artifact',
   },

@@ -66,6 +66,12 @@ export const useGetStartupConfig = (
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
       refetchOnMount: false,
+      // A restarting backend can take longer to come back up than react-query's
+      // default 3-attempt/~7s retry window - without more attempts, a request
+      // that fires mid-restart settles into a permanent error for the rest of
+      // the session (nothing above re-triggers it), leaving startup-config-gated
+      // UI stuck as if the server had never come back.
+      retry: (failureCount) => failureCount < 8,
       ...config,
       enabled: (config?.enabled ?? true) === true && queriesEnabled,
     },

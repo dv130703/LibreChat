@@ -384,16 +384,15 @@ if __name__ == "__main__":
     import uvicorn
     from config import HOST, PORT
 
-    # reload_dirs must be explicit: transcription/ lives outside this file's
-    # own directory (rag_server/), which is uvicorn's default (and otherwise
-    # only) watched root - without this, edits there would never trigger a
-    # reload.
-    _repo_root = Path(__file__).resolve().parent.parent
+    # reload=True kills and restarts this whole process on any file change under
+    # the watched dirs - fine for quick embed/query calls, but it silently drops
+    # in-flight /transcribe requests (which legitimately run 30-90+s), with no
+    # error surfacing to the caller. Disabled; restart `npm run rag` manually
+    # after editing rag_server/ or transcription/.
     # HOST is validated as loopback in config.py
     uvicorn.run(
         "app:app",
         host=HOST,
         port=PORT,
-        reload=True,
-        reload_dirs=[str(Path(__file__).resolve().parent), str(_repo_root / "transcription")],
+        reload=False,
     )

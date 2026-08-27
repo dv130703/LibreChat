@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "ignoreDeprecations": "5.0",
     "target": "ES6",
     "module": "CommonJS",
     // "checkJs": true,           // Report errors in JavaScript files

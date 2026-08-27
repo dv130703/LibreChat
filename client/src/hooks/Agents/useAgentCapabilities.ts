@@ -8,7 +8,6 @@ interface AgentCapabilitiesResult {
   ocrEnabled: boolean;
   contextEnabled: boolean;
   fileSearchEnabled: boolean;
-  transcribeAudioEnabled: boolean;
   webSearchEnabled: boolean;
   codeEnabled: boolean;
   skillsEnabled: boolean;
@@ -48,11 +47,6 @@ export default function useAgentCapabilities(
 
   const fileSearchEnabled = useMemo(
     () => capabilities?.includes(AgentCapabilities.file_search) ?? false,
-    [capabilities],
-  );
-
-  const transcribeAudioEnabled = useMemo(
-    () => capabilities?.includes(AgentCapabilities.transcribe_audio) ?? false,
     [capabilities],
   );
 
@@ -102,7 +96,6 @@ export default function useAgentCapabilities(
     artifactsEnabled,
     webSearchEnabled,
     fileSearchEnabled,
-    transcribeAudioEnabled,
     deferredToolsEnabled,
     programmaticToolsEnabled,
     backgroundToolsEnabled,

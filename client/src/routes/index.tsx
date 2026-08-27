@@ -51,6 +51,11 @@ const loadProjectWorkspace = () =>
     Component: m.ProjectWorkspace,
   }));
 
+const loadAudioTranscriberView = () =>
+  import('~/components/AudioTranscriber/AudioTranscriberPage').then((m) => ({
+    Component: m.default,
+  }));
+
 const baseEl = document.querySelector('base');
 const baseHref = baseEl?.getAttribute('href') || '/';
 
@@ -169,6 +174,14 @@ export const router = createBrowserRouter(
             {
               path: 'projects/:projectId',
               lazy: loadProjectWorkspace,
+            },
+            {
+              path: 'audio-transcriber',
+              lazy: loadAudioTranscriberView,
+            },
+            {
+              path: 'audio-transcriber/:conversationId',
+              lazy: loadAudioTranscriberView,
             },
             {
               path: 'agents',

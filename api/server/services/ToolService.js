@@ -511,7 +511,6 @@ async function processRequiredActions(client, requiredActions) {
 const nativeTools = new Set([
   Tools.execute_code,
   Tools.file_search,
-  Tools.transcribe_audio,
   Tools.web_search,
   Tools.memory,
 ]);
@@ -571,9 +570,6 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
   const filteredTools = agent.tools?.filter((tool) => {
     if (tool === Tools.file_search) {
       return checkCapability(AgentCapabilities.file_search);
-    }
-    if (tool === Tools.transcribe_audio) {
-      return checkCapability(AgentCapabilities.transcribe_audio);
     }
     if (tool === Tools.execute_code) {
       return checkCapability(AgentCapabilities.execute_code);
@@ -1134,8 +1130,6 @@ async function loadAgentTools({
   const _agentTools = agent.tools?.filter((tool) => {
     if (tool === Tools.file_search) {
       return checkCapability(AgentCapabilities.file_search);
-    } else if (tool === Tools.transcribe_audio) {
-      return checkCapability(AgentCapabilities.transcribe_audio);
     } else if (tool === Tools.execute_code) {
       return checkCapability(AgentCapabilities.execute_code);
     } else if (tool === Tools.web_search) {
@@ -1220,12 +1214,7 @@ async function loadAgentTools({
   const agentTools = [];
   for (let i = 0; i < loadedTools.length; i++) {
     const tool = loadedTools[i];
-    if (
-      tool.name &&
-      (tool.name === Tools.execute_code ||
-        tool.name === Tools.file_search ||
-        tool.name === Tools.transcribe_audio)
-    ) {
+    if (tool.name && (tool.name === Tools.execute_code || tool.name === Tools.file_search)) {
       agentTools.push(tool);
       continue;
     }

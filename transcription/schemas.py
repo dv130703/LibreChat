@@ -12,6 +12,7 @@ class TranscriptSegment(BaseModel):
 class TranscriptionDiagnostics(BaseModel):
     alignment_gap_count: int = 0
     alignment_gap_total_s: float = 0.0
+    alignment_failed: bool = False
     diarization_backend: str = "pyannote"
     diarization_speaker_count: int = 0
     speaker_min_requested: int | None = None

@@ -477,6 +477,60 @@ export const uploadFile = (
   return request.postMultiPart(endpoints.files(), data, requestConfig);
 };
 
+/** Uploads an audio/video file for transcription (Audio Transcriber section).
+ *  A plain REST action the user triggers directly, not an agent tool call -
+ *  transcription and RAG embedding both happen synchronously server-side
+ *  before this resolves. Real transcriptions take 30-90s+, so give this a
+ *  generous timeout via `requestConfig` if the caller needs one. */
+export const transcribeAudio = (
+  data: FormData,
+  signal?: AbortSignal | null,
+): Promise<f.TTranscribeResponse> => {
+  const requestConfig = signal ? { signal, timeout: 20 * 60 * 1000 } : { timeout: 20 * 60 * 1000 };
+  return request.postMultiPart(endpoints.transcribe(), data, requestConfig);
+};
+
+/** Every correction event recorded against a transcript (speaker renames,
+ *  segment reassignments), chronological - see `GET /api/transcript-corrections`. */
+export const getTranscriptCorrections = (
+  transcriptFileId: string,
+  conversationId: string,
+): Promise<f.TTranscriptCorrection[]> => {
+  return request.get(endpoints.transcriptCorrections(transcriptFileId, conversationId));
+};
+
+/** Renames a speaker - applies to every line from that speaker at once. */
+export const renameTranscriptSpeaker = (
+  transcriptFileId: string,
+  data: f.TSpeakerRenameRequest,
+): Promise<f.TTranscriptCorrection> => {
+  return request.post(endpoints.renameTranscriptSpeaker(transcriptFileId), data);
+};
+
+/** Reassigns one misattributed line to a different (existing or brand-new) speaker. */
+export const reassignTranscriptSegment = (
+  transcriptFileId: string,
+  data: f.TSegmentReassignRequest,
+): Promise<f.TTranscriptCorrection> => {
+  return request.post(endpoints.reassignTranscriptSegment(transcriptFileId), data);
+};
+
+/** Edits one line's transcribed text. */
+export const editTranscriptText = (
+  transcriptFileId: string,
+  data: f.TTextEditRequest,
+): Promise<f.TTranscriptCorrection> => {
+  return request.post(endpoints.editTranscriptText(transcriptFileId), data);
+};
+
+/** Inserts a line the pipeline missed entirely. */
+export const insertTranscriptLine = (
+  transcriptFileId: string,
+  data: f.TLineInsertRequest,
+): Promise<f.TTranscriptCorrection> => {
+  return request.post(endpoints.insertTranscriptLine(transcriptFileId), data);
+};
+
 /**
  * Marks uploaded files as used (owner-scoped TTL touch) so the upload-window
  * TTL cannot reap attachments held in a client-side queue during a long run.

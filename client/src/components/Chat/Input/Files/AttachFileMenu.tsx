@@ -2,7 +2,6 @@ import React, { useRef, useState, useMemo, useCallback } from 'react';
 import { useRecoilState } from 'recoil';
 import * as Ariakit from '@ariakit/react';
 import {
-  Mic,
   FileSearch,
   ImageUpIcon,
   FileType2Icon,
@@ -52,8 +51,7 @@ type FileUploadType =
   | 'document'
   | 'image_document'
   | 'image_document_extended'
-  | 'image_document_video_audio'
-  | 'audio_video';
+  | 'image_document_video_audio';
 
 /** What each provider upload path can actually send, used to scope the picker filter to selectable files. */
 const fileTypeCapabilities: Record<FileUploadType, MimeUploadCapability> = {
@@ -69,8 +67,6 @@ const fileTypeCapabilities: Record<FileUploadType, MimeUploadCapability> = {
     categories: ['image', 'document', 'audio', 'video'],
     documentMimeTypes: ['application/pdf'],
   },
-  /** transcribe_audio tool: file is a plain attachment, not sent to the model directly. */
-  audio_video: { categories: ['audio', 'video'] },
 };
 
 interface AttachFileMenuProps {
@@ -134,8 +130,10 @@ const AttachFileMenu = ({
    * */
   const capabilities = useAgentCapabilities(agentsConfig?.capabilities ?? defaultAgentCapabilities);
 
-  const { fileSearchAllowedByAgent, codeAllowedByAgent, transcribeAudioAllowedByAgent, provider } =
-    useAgentToolPermissions(agentId, ephemeralAgent);
+  const { fileSearchAllowedByAgent, codeAllowedByAgent, provider } = useAgentToolPermissions(
+    agentId,
+    ephemeralAgent,
+  );
 
   const handleUploadClick = useCallback(
     (fileType?: FileUploadType) => {
@@ -162,8 +160,6 @@ const AttachFileMenu = ({
         inputRef.current.accept = `image/*,.heif,.heic,${bedrockDocumentExtensions}`;
       } else if (fileType === 'image_document_video_audio') {
         inputRef.current.accept = 'image/*,.heif,.heic,.pdf,application/pdf,video/*,audio/*';
-      } else if (fileType === 'audio_video') {
-        inputRef.current.accept = 'audio/*,video/*';
       } else {
         inputRef.current.accept = '';
       }
@@ -267,21 +263,6 @@ const AttachFileMenu = ({
         });
       }
 
-      if (capabilities.transcribeAudioEnabled && transcribeAudioAllowedByAgent) {
-        items.push({
-          label: localize('com_ui_upload_transcribe_audio'),
-          onClick: () => {
-            setToolResource(EToolResources.transcribe_audio);
-            setEphemeralAgent((prev) => ({
-              ...prev,
-              [EToolResources.transcribe_audio]: true,
-            }));
-            onAction('audio_video');
-          },
-          icon: <Mic className="icon-md" />,
-        });
-      }
-
       return items;
     };
 
@@ -314,7 +295,6 @@ const AttachFileMenu = ({
     sharePointEnabled,
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
-    transcribeAudioAllowedByAgent,
     setIsSharePointDialogOpen,
   ]);
 

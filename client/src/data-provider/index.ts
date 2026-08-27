@@ -1,5 +1,6 @@
 export * from './Auth';
 export * from './Agents';
+export * from './AudioTranscriber';
 export * from './Endpoints';
 export * from './Skills';
 export * from './Files';

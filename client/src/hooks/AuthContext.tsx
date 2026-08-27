@@ -28,6 +28,7 @@ import {
 } from '~/data-provider';
 import { TAuthConfig, TUserContext, TAuthContext, TResError } from '~/common';
 import { SESSION_KEY, isSafeRedirect, getPostLoginRedirect } from '~/utils';
+import { getResponseStatus } from '~/utils/errors';
 import useTimeout from './useTimeout';
 import store from '~/store';
 
@@ -45,6 +46,7 @@ const AuthContextProvider = ({
   children: ReactNode;
 }) => {
   const isExternalRedirectRef = useRef(false);
+  const silentRefreshRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [user, setUser] = useRecoilState(store.user);
   const logoutRedirectRef = useRef<string | undefined>(undefined);
   const [token, setToken] = useState<string | undefined>(undefined);
@@ -215,10 +217,26 @@ const AuthContextProvider = ({
         if (authConfig?.test === true) {
           return;
         }
+        /** A missing response means the request never reached the server (e.g. it's
+         *  mid-restart) - the session may still be perfectly valid, so this should
+         *  retry once the server's back, not throw away wherever the user was by
+         *  forcing them to /login over what's likely a transient outage. */
+        if (getResponseStatus(error) == null) {
+          silentRefreshRetryTimeoutRef.current = setTimeout(() => silentRefresh(), 3000);
+          return;
+        }
         navigate(buildLoginRedirectUrl());
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are stable at mount; adding refreshToken causes infinite re-fire
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (silentRefreshRetryTimeoutRef.current != null) {
+        clearTimeout(silentRefreshRetryTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -228,8 +246,12 @@ const AuthContextProvider = ({
     if (userQuery.data) {
       setUser(userQuery.data);
     } else if (userQuery.isError) {
-      doSetError((userQuery.error as Error).message);
-      navigate(buildLoginRedirectUrl(), { replace: true });
+      // Same reasoning as `silentRefresh`'s onError above: no response means the
+      // request never reached the server, not that the session is actually invalid.
+      if (getResponseStatus(userQuery.error) != null) {
+        doSetError((userQuery.error as Error).message);
+        navigate(buildLoginRedirectUrl(), { replace: true });
+      }
     }
     if (error != null && error && isAuthenticated) {
       doSetError(undefined);

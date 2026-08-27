@@ -12,7 +12,7 @@ import { fontSizeAtom } from '~/store/fontSize';
 import MultiMessage from './MultiMessage';
 import MessageNav from './MessageNav';
 import { cn } from '~/utils';
-import store from '~/store';
+import store, { isAudioTranscriberConvo } from '~/store';
 
 const intersectionThreshold = 0.85;
 const visibilityDebounceRate = 150;
@@ -101,6 +101,10 @@ function MessagesViewContent({
   } = useMessageScrolling(_messagesTree);
 
   const { conversationId } = conversation ?? {};
+  /** A fresh Audio Transcriber conversation has no chat messages until the
+   *  user actually asks the model something - that's the normal starting
+   *  state, not a failed search, so "Nothing found" doesn't apply here. */
+  const isTranscriberConvo = useRecoilValue(isAudioTranscriberConvo(conversationId ?? ''));
 
   /** The in-flight steer overlay floats above the composer over the bottom of
    *  the thread (see `InFlightSteers`); reserve an equal band here so the
@@ -132,7 +136,8 @@ function MessagesViewContent({
                   : undefined
               }
             >
-              {(_messagesTree && _messagesTree.length == 0) || _messagesTree === null ? (
+              {((_messagesTree && _messagesTree.length == 0) || _messagesTree === null) &&
+              !isTranscriberConvo ? (
                 <div
                   className={cn(
                     'flex w-full items-center justify-center p-3 text-text-secondary',
@@ -145,7 +150,7 @@ function MessagesViewContent({
                 <>
                   <div ref={screenshotTargetRef}>
                     <MultiMessage
-                      messagesTree={_messagesTree}
+                      messagesTree={_messagesTree ?? undefined}
                       messageId={conversationId ?? null}
                       setCurrentEditId={setCurrentEditId}
                       currentEditId={currentEditId ?? null}

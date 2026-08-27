@@ -38,9 +38,19 @@ export default function useContentHandler({ setMessages, getMessages }: TUseCont
       const { type, messageId, thread_id, conversationId, index } = data;
 
       const _messages = getMessages();
-      const messages =
-        _messages?.filter((m) => m.messageId !== messageId).map((msg) => ({ ...msg, thread_id })) ??
-        [];
+      const messages: TMessage[] = [];
+      if (_messages) {
+        for (let i = 0; i < _messages.length; i++) {
+          const msg = _messages[i];
+          if (msg.messageId === messageId) {
+            continue;
+          }
+          /* Only clone when `thread_id` actually changes - after the first token of a
+           * response, every message already carries the current thread_id, so this
+           * avoids re-allocating the entire message list on every streamed token. */
+          messages.push(msg.thread_id === thread_id ? msg : { ...msg, thread_id });
+        }
+      }
       const userMessage = messages[messages.length - 1] as TMessage | undefined;
 
       const { initialResponse } = submission;

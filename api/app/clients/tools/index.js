@@ -12,7 +12,6 @@ const TraversaalSearch = require('./structured/TraversaalSearch');
 const createOpenAIImageTools = require('./structured/OpenAIImageTools');
 const TavilySearchResults = require('./structured/TavilySearchResults');
 const createGeminiImageTool = require('./structured/GeminiImageGen');
-const createTranscribeAudioTool = require('./structured/TranscribeAudio');
 
 module.exports = {
   ...manifest,
@@ -28,5 +27,4 @@ module.exports = {
   TavilySearchResults,
   createOpenAIImageTools,
   createGeminiImageTool,
-  createTranscribeAudioTool,
 };

@@ -58,13 +58,15 @@ const deleteVectors = async (req, file) => {
  * @param {string} params.file_id - The file ID.
  * @param {string} [params.entity_id] - The entity ID for shared resources.
  * @param {Object} [params.storageMetadata] - Storage metadata for dual storage pattern.
+ * @param {string} [params.logLabel] - Log-line prefix identifying the calling feature
+ *   (e.g. `'TRANSCRIPTION'`); defaults to `'RAG'` for ordinary file-upload embedding.
  *
  * @returns {Promise<{ filepath: string, bytes: number }>}
  *          A promise that resolves to an object containing:
  *            - filepath: The path where the file is saved.
  *            - bytes: The size of the file in bytes.
  */
-async function uploadVectors({ req, file, file_id, entity_id, storageMetadata }) {
+async function uploadVectors({ req, file, file_id, entity_id, storageMetadata, logLabel = 'RAG' }) {
   if (!process.env.RAG_API_URL) {
     throw new Error('RAG_API_URL not defined');
   }
@@ -86,7 +88,7 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata })
     const formHeaders = formData.getHeaders();
 
     logger.info(
-      `[RAG] POST ${process.env.RAG_API_URL}/embed file="${file.originalname}" file_id=${file_id} entity=${entity_id || '-'}`,
+      `[${logLabel}] POST ${process.env.RAG_API_URL}/embed file="${file.originalname}" file_id=${file_id} entity=${entity_id || '-'}`,
     );
     const response = await axios.post(`${process.env.RAG_API_URL}/embed`, formData, {
       headers: {
@@ -94,11 +96,18 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata })
         accept: 'application/json',
         ...formHeaders,
       },
+      // Unlike the sibling call to `/transcribe` (which sets a 15-minute
+      // ceiling), this request had no timeout at all - a stalled embedding
+      // step on the RAG server would hang here indefinitely, holding open
+      // the Express connection and leaving the caller's temp files
+      // un-cleaned-up (cleanup runs after this settles) for as long as the
+      // RAG server stays unresponsive.
+      timeout: 15 * 60 * 1000,
     });
 
     const responseData = response.data;
     logger.info(
-      `[RAG] embed result file_id=${file_id} status=${responseData.status} known_type=${responseData.known_type} chunks=${responseData.chunks ?? 'n/a'}`,
+      `[${logLabel}] embed result file_id=${file_id} status=${responseData.status} known_type=${responseData.known_type} chunks=${responseData.chunks ?? 'n/a'}`,
     );
     logger.debug('Response from embedding file', responseData);
 

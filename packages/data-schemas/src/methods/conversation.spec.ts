@@ -78,6 +78,8 @@ const getConvoTitle = (...args: Parameters<ConversationMethods['getConvoTitle']>
   methods.getConvoTitle(...args);
 const getConvoFiles = (...args: Parameters<ConversationMethods['getConvoFiles']>) =>
   methods.getConvoFiles(...args);
+const addConvoFile = (...args: Parameters<ConversationMethods['addConvoFile']>) =>
+  methods.addConvoFile(...args);
 const deleteConvos = (...args: Parameters<ConversationMethods['deleteConvos']>) =>
   methods.deleteConvos(...args);
 const getConvosByCursor = (...args: Parameters<ConversationMethods['getConvosByCursor']>) =>
@@ -947,6 +949,53 @@ describe('Conversation Operations', () => {
     it('should return empty array if conversation not found', async () => {
       const result = await getConvoFiles('non-existent-id');
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('addConvoFile', () => {
+    it('adds a file id to a conversation with no files yet', async () => {
+      await Conversation.create({
+        conversationId: mockConversationData.conversationId,
+        user: 'user123',
+        endpoint: EModelEndpoint.openAI,
+      });
+
+      await addConvoFile(mockConversationData.conversationId, 'transcript-1');
+
+      const result = await getConvoFiles(mockConversationData.conversationId);
+      expect(result).toEqual(['transcript-1']);
+    });
+
+    it('appends to existing files rather than replacing them', async () => {
+      await Conversation.create({
+        conversationId: mockConversationData.conversationId,
+        user: 'user123',
+        endpoint: EModelEndpoint.openAI,
+        files: ['existing-file'],
+      });
+
+      await addConvoFile(mockConversationData.conversationId, 'transcript-1');
+
+      const result = await getConvoFiles(mockConversationData.conversationId);
+      expect(result.sort()).toEqual(['existing-file', 'transcript-1'].sort());
+    });
+
+    it('is idempotent - adding the same file id twice does not duplicate it', async () => {
+      await Conversation.create({
+        conversationId: mockConversationData.conversationId,
+        user: 'user123',
+        endpoint: EModelEndpoint.openAI,
+        files: ['transcript-1'],
+      });
+
+      await addConvoFile(mockConversationData.conversationId, 'transcript-1');
+
+      const result = await getConvoFiles(mockConversationData.conversationId);
+      expect(result).toEqual(['transcript-1']);
+    });
+
+    it('does not throw when the conversation does not exist', async () => {
+      await expect(addConvoFile('non-existent-id', 'transcript-1')).resolves.not.toThrow();
     });
   });
 

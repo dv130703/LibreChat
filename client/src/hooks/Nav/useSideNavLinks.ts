@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MCPIcon, AttachmentIcon, OpenAIMinimalIcon } from '@librechat/client';
 import {
   Bot,
+  Mic,
   Brain,
   Bookmark,
   NotebookPen,
@@ -92,9 +94,18 @@ export default function useSideNavLinks({
 
   const { agentsConfig } = useGetAgentsConfig({ endpointsConfig });
   const { skillsEnabled } = useAgentCapabilities(agentsConfig?.capabilities);
+  const navigate = useNavigate();
 
   const Links = useMemo(() => {
     const links: NavLink[] = [];
+
+    links.push({
+      title: 'com_ui_audio_transcriber',
+      label: '',
+      icon: Mic,
+      id: 'audio-transcriber',
+      onClick: () => navigate('/audio-transcriber'),
+    });
 
     if (
       endpointsConfig?.[EModelEndpoint.agents] &&
@@ -236,6 +247,7 @@ export default function useSideNavLinks({
     hasAccessToCreateMCP,
     includeHidePanel,
     hidePanel,
+    navigate,
   ]);
 
   return Links;

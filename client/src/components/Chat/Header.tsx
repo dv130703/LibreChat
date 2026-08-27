@@ -10,14 +10,22 @@ import BookmarkMenu from './Menus/BookmarkMenu';
 import { TemporaryChat } from './TemporaryChat';
 import AddMultiConvo from './AddMultiConvo';
 import { useHasAccess } from '~/hooks';
+import { useChatContext } from '~/Providers';
 import { cn } from '~/utils';
-import store from '~/store';
+import store, { isAudioTranscriberConvo } from '~/store';
 
 const defaultInterface = getConfigDefaults().interface;
 
 function Header() {
   const { data: startupConfig } = useGetStartupConfig();
   const navVisible = useRecoilValue(store.sidebarExpanded);
+  const { conversation } = useChatContext();
+  /** The Audio Transcriber puts its own model picker in the composer, right
+   *  next to the send button (matching Claude's placement) - it doesn't also
+   *  belong up here for those conversations. */
+  const isTranscriberConvo = useRecoilValue(
+    isAudioTranscriberConvo(conversation?.conversationId ?? ''),
+  );
 
   const interfaceConfig = useMemo(
     () => startupConfig?.interface ?? defaultInterface,
@@ -53,15 +61,19 @@ function Header() {
                 !isSmallScreen ? 'transition-all duration-200 ease-in-out' : '',
               )}
             >
-              <ModelSelector startupConfig={startupConfig} />
-              {interfaceConfig.presets === true && interfaceConfig.modelSelect && <PresetsMenu />}
-              {hasAccessToBookmarks === true && <BookmarkMenu />}
-              {hasAccessToMultiConvo === true && <AddMultiConvo />}
+              {!isTranscriberConvo && <ModelSelector startupConfig={startupConfig} />}
+              {!isTranscriberConvo &&
+                interfaceConfig.presets === true &&
+                interfaceConfig.modelSelect && <PresetsMenu />}
+              {!isTranscriberConvo && hasAccessToBookmarks === true && <BookmarkMenu />}
+              {!isTranscriberConvo && hasAccessToMultiConvo === true && <AddMultiConvo />}
               {isSmallScreen && (
                 <>
-                  <ExportAndShareMenu
-                    isSharedButtonEnabled={startupConfig?.sharedLinksEnabled ?? false}
-                  />
+                  {!isTranscriberConvo && (
+                    <ExportAndShareMenu
+                      isSharedButtonEnabled={startupConfig?.sharedLinksEnabled ?? false}
+                    />
+                  )}
                   {hasAccessToTemporaryChat === true && <TemporaryChat />}
                 </>
               )}
@@ -71,9 +83,11 @@ function Header() {
 
         {!isSmallScreen && (
           <div className="flex items-center gap-2">
-            <ExportAndShareMenu
-              isSharedButtonEnabled={startupConfig?.sharedLinksEnabled ?? false}
-            />
+            {!isTranscriberConvo && (
+              <ExportAndShareMenu
+                isSharedButtonEnabled={startupConfig?.sharedLinksEnabled ?? false}
+              />
+            )}
             {hasAccessToTemporaryChat === true && <TemporaryChat />}
           </div>
         )}

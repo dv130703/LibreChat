@@ -4,6 +4,7 @@ export * from './code';
 export * from './context';
 export * from './documents/crud';
 export * from './encode';
+export * from './extractAudio';
 export * from './filter';
 export * from './mistral/crud';
 export * from './ocr';

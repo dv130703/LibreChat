@@ -138,6 +138,15 @@ const HoverButtons = ({
     return conversation.endpointType ?? conversation.endpoint;
   }, [conversation]);
 
+  /* Only extracted when Text to Speech is on, and only recomputed when the
+   * message's own content actually changes - not on every unrelated re-render
+   * that gives `message` a new reference with the same content/text. */
+  const messageContent = useMemo(
+    () => (TextToSpeech ? extractMessageContent(message) : ''),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [TextToSpeech, message.content, message.text],
+  );
+
   const generationCapabilities = useGenerationsByLatest({
     isEditing,
     isSubmitting,
@@ -197,7 +206,7 @@ const HoverButtons = ({
           index={index}
           isLast={isLast}
           messageId={message.messageId}
-          content={extractMessageContent(message)}
+          content={messageContent}
           renderButton={(props) => (
             <HoverButton
               onClick={props.onClick}

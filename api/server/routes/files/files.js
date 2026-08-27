@@ -45,7 +45,6 @@ const AGENT_TOOL_RESOURCE_KEYS = new Set([
   EToolResources.image_edit,
   EToolResources.context,
   EToolResources.ocr,
-  EToolResources.transcribe_audio,
 ]);
 
 const isAgentToolResourceKey = (toolResource) =>

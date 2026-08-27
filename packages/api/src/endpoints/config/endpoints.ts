@@ -32,7 +32,17 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
     loadCustomEndpointsConfig = defaultLoadCustomEndpoints,
   } = deps;
 
-  async function getEndpointsConfig(req: ServerRequest): Promise<TEndpointsConfig> {
+  /** Per-request memoization - `getEndpointsConfig`/`checkCapability` are both
+   *  called multiple times per request (once per agent/tool load, once per
+   *  file in `Files/process.js`), and each call re-merges every endpoint
+   *  config from scratch and (when the google endpoint is enabled) re-reads
+   *  the service key file from disk. The result is a pure function of
+   *  `req.config`/`req.user`, which don't change within a request, so caching
+   *  the in-flight promise on the request object itself is safe and also
+   *  dedupes concurrent calls onto a single computation. */
+  const endpointsConfigCache = new WeakMap<ServerRequest, Promise<TEndpointsConfig>>();
+
+  async function computeEndpointsConfig(req: ServerRequest): Promise<TEndpointsConfig> {
     const appConfig = req.config ?? (await getAppConfig(getAppConfigOptionsFromUser(req.user)));
     const defaultEndpointsConfig = await loadDefaultEndpointsConfig(appConfig);
     const customEndpointsConfig = loadCustomEndpointsConfig(appConfig?.endpoints?.custom);
@@ -117,6 +127,17 @@ export function createEndpointsConfigService(deps: EndpointsConfigDeps): {
     }
 
     return orderEndpointsConfig(mergedConfig as TEndpointsConfig);
+  }
+
+  async function getEndpointsConfig(req: ServerRequest): Promise<TEndpointsConfig> {
+    const cached = endpointsConfigCache.get(req);
+    if (cached) {
+      return cached;
+    }
+
+    const promise = computeEndpointsConfig(req);
+    endpointsConfigCache.set(req, promise);
+    return promise;
   }
 
   async function checkCapability(

@@ -91,7 +91,14 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
   const isLandingPage =
     (!messagesTree || messagesTree.length === 0) &&
     (conversationId === Constants.NEW_CONVO || !conversationId);
-  const isNavigating = (!messagesTree || messagesTree.length === 0) && conversationId != null;
+  // `isFetching` distinguishes "still resolving, don't know the real tree yet"
+  // (e.g. mid-navigation, warm cache revalidating) from a conversation that has
+  // genuinely loaded with zero messages - the latter must fall through to
+  // `Landing` instead of spinning forever (a real, pre-existing conversation
+  // with no messages yet, e.g. one created directly via a REST action before
+  // any chat message, is a legitimate empty state, not a stale navigation).
+  const isNavigating =
+    isFetching && (!messagesTree || messagesTree.length === 0) && conversationId != null;
   const isProjectLandingPage = isLandingPage && project != null;
 
   if (isLoading && conversationId !== Constants.NEW_CONVO) {
