@@ -94,6 +94,7 @@
     "reset-terms": "node config/reset-terms.js",
     "migrate:terms-timestamp": "node config/migrate-terms-timestamp.js",
     "flush-cache": "node config/flush-cache.js",
+    "analyze-crash-log": "node config/analyze-crash-log.js",
     "migrate:agent-permissions:dry-run": "node config/migrate-agent-permissions.js --dry-run",
     "migrate:agent-permissions": "node config/migrate-agent-permissions.js",
     "migrate:agent-permissions:batch": "node config/migrate-agent-permissions.js --batch-size=50",

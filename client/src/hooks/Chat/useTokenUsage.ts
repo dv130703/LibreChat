@@ -187,7 +187,16 @@ export default function useTokenUsage({
         removeUsageAtoms(conversationKey);
       }
     };
-  }, [conversationKey, queryClient, setBranchTotals, setTotalUsage]);
+    /** `setBranchTotals`/`setTotalUsage` deliberately excluded: this cleanup calls
+     *  `removeUsageAtoms`, which evicts their backing atoms from the atomFamily -
+     *  the next render then mints fresh atoms (and fresh setter identities) for the
+     *  same `conversationKey`. Listing them here would make that eviction re-trigger
+     *  this very effect, which evicts again, forever - a self-sustaining loop that
+     *  produced thousands of renders/sec in practice ("Maximum update depth
+     *  exceeded"). `conversationKey` is already the correct re-run trigger; the
+     *  effect always calls whichever setter is current in its closure regardless. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationKey, queryClient]);
 
   useEffect(() => {
     /** Re-index from the cache on every tail change (created/finalize during a
@@ -205,7 +214,12 @@ export default function useTokenUsage({
     );
     setBranchTotals(sumBranch(conversationKey, tailId, anchorId));
     setTotalUsage(sumTotalUsage(conversationKey));
-  }, [conversationKey, tailId, anchorId, setBranchTotals, setTotalUsage, queryClient]);
+    /** `setBranchTotals`/`setTotalUsage` excluded for the same reason as the effect
+     *  above - their identity can churn when the other effect's cleanup evicts and
+     *  recreates their backing atoms, and listing them here would let that churn
+     *  re-trigger this effect too. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationKey, tailId, anchorId, queryClient]);
 
   return useMemo(() => {
     /** The granular snapshot is for one specific generation. Show the live one

@@ -1,5 +1,6 @@
 import './polyfills/regeneratorRuntime';
 import { createRoot } from 'react-dom/client';
+import { initBlackBox } from './blackBox';
 import { initializeI18n } from './locales/i18n';
 import App from './App';
 import '@librechat/client/style.css';
@@ -14,6 +15,10 @@ window.addEventListener('vite:preloadError', (event) => {
     event.preventDefault();
   }
 });
+
+// As early as possible, before i18n/render - a freeze during bootstrap is
+// exactly the kind of thing this needs to catch too.
+initBlackBox();
 
 const container = document.getElementById('root');
 const root = createRoot(container);

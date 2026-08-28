@@ -99,14 +99,29 @@ router.post('/', upload.single('file'), async (req, res) => {
     return res.status(400).json({ error: 'Invalid options payload' });
   }
 
+  // Tracks what's actually been persisted so a mid-way failure can be rolled
+  // back below - otherwise a failed transcription (diarization errors are
+  // common on short/quiet clips) leaves a broken, sidebar-visible
+  // conversation behind: no transcript file, so `RedirectGuard` never
+  // recognizes it as belonging to this feature, and revisiting it later
+  // renders as a plain chat (Presets/model-selector-in-header back, no
+  // audio player) - looking exactly like the feature "reverted."
+  let sourceFile = null;
+  let sourceFileSource = null;
+  let conversationCreated = false;
+
   try {
     // Must exist before `addConvoFile` (a bare, non-upserting update) can attach
     // the transcript to it - this is the very first write for a fresh session.
+    // `conversationId` is always a fresh `crypto.randomUUID()` minted by the
+    // Audio Transcriber upload flow (see `UploadStep.tsx`), never a
+    // pre-existing conversation, so it's always safe to fully delete on failure.
     await db.saveConvo(
       { userId: req.user.id },
       { conversationId, title: file.originalname, endpoint, agent_id },
       { context: 'POST /api/transcribe' },
     );
+    conversationCreated = true;
     logger.info(`[TRANSCRIPTION] conversation ready conversationId=${conversationId}`);
 
     // Video keyframes commonly sit several seconds apart, and browsers snap
@@ -123,18 +138,18 @@ router.post('/', upload.single('file'), async (req, res) => {
       size: (await fs.promises.stat(extractedAudioPath)).size,
     };
 
-    const source = getFileStrategy(req.config, { isImage: false });
+    sourceFileSource = getFileStrategy(req.config, { isImage: false });
     const filepath = await saveSourceFile({
       req,
       file: audioFile,
-      source,
+      source: sourceFileSource,
       fileName: `${req.file_id}-${audioFile.originalname}`,
     });
-    const storageMetadata = getStorageMetadata({ filepath, source });
-    const sourceFile = await db.createFile(
+    const storageMetadata = getStorageMetadata({ filepath, source: sourceFileSource });
+    sourceFile = await db.createFile(
       {
         type: audioFile.mimetype,
-        source,
+        source: sourceFileSource,
         context: FileContext.transcript_rag,
         file_id: req.file_id,
         filepath,
@@ -190,6 +205,24 @@ router.post('/', upload.single('file'), async (req, res) => {
   } catch (error) {
     logger.error('[POST /api/transcribe] Failed to transcribe file', error);
     res.status(500).json({ error: error.message || 'Failed to transcribe file' });
+
+    // Best-effort rollback so a failed attempt never leaves a broken,
+    // un-flaggable conversation sitting in the sidebar. Never let a cleanup
+    // failure surface - the 500 above has already been sent.
+    try {
+      if (sourceFile) {
+        const { deleteFile: deleteStoredFile } = getStrategyFunctions(sourceFileSource);
+        if (deleteStoredFile) {
+          await deleteStoredFile(req, sourceFile).catch(() => {});
+        }
+        await db.deleteFile(sourceFile.file_id);
+      }
+      if (conversationCreated) {
+        await db.deleteConvos(req.user.id, { conversationId });
+      }
+    } catch (cleanupError) {
+      logger.error('[POST /api/transcribe] Failed to roll back failed transcription', cleanupError);
+    }
   } finally {
     await cleanupTempFile();
   }

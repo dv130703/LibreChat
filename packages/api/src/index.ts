@@ -76,6 +76,8 @@ export * from './stream';
 export { memoryDiagnostics } from './utils/memory';
 /* RUM */
 export * from './rum/proxy';
+/* Black Box crash logging */
+export * from './blackBox/logger';
 /* types */
 export type * from './mcp/types';
 export type * from './flow/types';

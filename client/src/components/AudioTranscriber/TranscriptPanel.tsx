@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { isEqual } from 'lodash';
-import { FileText, Download, AlertCircle, MessageSquarePlus } from 'lucide-react';
+import { FileText, Download, AlertCircle, MessageSquarePlus, Mic } from 'lucide-react';
 import { Spinner } from '@librechat/client';
 import {
   useGetConvoIdQuery,
@@ -22,7 +22,7 @@ import { getSpeakerDotColor } from './speakerColors';
 import TranscriptHeader from './TranscriptHeader';
 import TranscriptRow from './TranscriptRow';
 import { splitFileIds } from './fileIds';
-import SpeakerLabel from './SpeakerLabel';
+import SpeakerRosterModal from './SpeakerRosterModal';
 
 /** Matches exactly what `formatLine` (api/server/services/Transcription/index.js)
  *  produces: an optional `[start-end]` (the end half is only present on
@@ -250,8 +250,17 @@ export default function TranscriptPanel({
         order.set(speaker, order.size);
       }
     }
+    // A speaker named ahead of any line being assigned to them (via the
+    // roster modal's "Add New Speaker") still belongs in the roster and the
+    // per-line picker - otherwise a name typed in there would have nowhere
+    // to attach to until some other line happened to get reassigned to it.
+    for (const speakerId of Object.keys(stableSpeakerNames)) {
+      if (!order.has(speakerId)) {
+        order.set(speakerId, order.size);
+      }
+    }
     return order;
-  }, [lines, stableSegmentReassignments, stableInsertedLines]);
+  }, [lines, stableSegmentReassignments, stableInsertedLines, stableSpeakerNames]);
 
   const getDisplayName = useCallback(
     (speakerId: string) => stableSpeakerNames[speakerId] ?? speakerId,
@@ -290,6 +299,31 @@ export default function TranscriptPanel({
       })),
     [uniqueSpeakerIds, speakerOrder, getDisplayName],
   );
+
+  const namedSpeakerCount = useMemo(
+    () => uniqueSpeakerIds.filter((id) => stableSpeakerNames[id] != null).length,
+    [uniqueSpeakerIds, stableSpeakerNames],
+  );
+
+  /** A representative clip for each speaker - their first line - so the
+   *  roster modal's play button can answer "whose voice is this" without
+   *  leaving the dialog. Keyed off `effectiveLines` (post-reassignment), so
+   *  the clip always belongs to whichever speaker id it's filed under now. */
+  const speakerPreview = useMemo(() => {
+    const map = new Map<string, { lineIndex: number; duration: number | null }>();
+    for (const line of effectiveLines) {
+      if (line.speaker == null || map.has(line.speaker) || line.seconds == null) {
+        continue;
+      }
+      map.set(line.speaker, {
+        lineIndex: line.lineIndex,
+        duration: line.endSeconds != null ? line.endSeconds - line.seconds : null,
+      });
+    }
+    return map;
+  }, [effectiveLines]);
+
+  const [rosterModalOpen, setRosterModalOpen] = useState(false);
 
   const audioQuery = useFileDownload(user?.id, sourceFileId);
   useEffect(() => {
@@ -832,15 +866,36 @@ export default function TranscriptPanel({
               </span>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleExportTxt}
-            className="flex shrink-0 items-center gap-1.5 rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
-          >
-            <Download className="h-3.5 w-3.5" aria-hidden="true" />
-            {localize('com_ui_transcript_export')}
-            <span className="text-text-secondary">{localize('com_ui_transcript_export_txt')}</span>
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {uniqueSpeakerIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setRosterModalOpen(true)}
+                className="flex items-center gap-1.5 rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+              >
+                <Mic className="h-3.5 w-3.5" aria-hidden="true" />
+                {namedSpeakerCount === 0
+                  ? localize('com_ui_transcript_roster_badge_unnamed', {
+                      count: uniqueSpeakerIds.length,
+                    })
+                  : localize('com_ui_transcript_roster_badge_named', {
+                      count: uniqueSpeakerIds.length,
+                      named: namedSpeakerCount,
+                    })}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleExportTxt}
+              className="flex items-center gap-1.5 rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              {localize('com_ui_transcript_export')}
+              <span className="text-text-secondary">
+                {localize('com_ui_transcript_export_txt')}
+              </span>
+            </button>
+          </div>
         </div>
       )}
       <div
@@ -910,24 +965,6 @@ export default function TranscriptPanel({
         )}
         {!isLoading && lines.length > 0 && (
           <>
-            {uniqueSpeakerIds.length > 0 && (
-              <div className="mb-4">
-                <h3 className="mb-1.5 px-0.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-                  {localize('com_ui_transcript_speakers_label')}
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {speakerOptions.map((option) => (
-                    <SpeakerLabel
-                      key={option.id}
-                      name={option.name}
-                      dotColorClass={option.dotColorClass}
-                      isNameTaken={(candidate) => isSpeakerNameTaken(candidate, option.id)}
-                      onRename={(newName) => renameSpeaker(option.id, newName)}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
             <div className="flex flex-col gap-1">
               {displayLines.map((line) => {
                 const isDraft = draftsRef.current.some(
@@ -992,6 +1029,20 @@ export default function TranscriptPanel({
           </div>,
           document.body,
         )}
+      <SpeakerRosterModal
+        open={rosterModalOpen}
+        onOpenChange={setRosterModalOpen}
+        speakerOptions={speakerOptions}
+        speakerNames={stableSpeakerNames}
+        isSpeakerNameTaken={isSpeakerNameTaken}
+        onRename={renameSpeaker}
+        onAddSpeaker={renameSpeaker}
+        preview={speakerPreview}
+        canPlay={audioQuery.data != null}
+        isPlaying={isPlaying}
+        followedLineIndex={followedLineIndex}
+        onTogglePreview={togglePlaySegment}
+      />
     </div>
   );
 }

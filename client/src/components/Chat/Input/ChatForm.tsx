@@ -628,15 +628,10 @@ const ChatForm = memo(function ChatForm({
               )}
               <div
                 className={cn(
-                  '@container items-between flex gap-2 pb-2',
+                  '@container flex items-center gap-2 pb-2',
                   isRTL ? 'flex-row-reverse' : 'flex-row',
                 )}
               >
-                {isTranscriberConvo && (
-                  <div className="max-w-[9rem]">
-                    <ModelSelector startupConfig={startupConfig} />
-                  </div>
-                )}
                 <div className={`${isRTL ? 'mr-2' : 'ml-2'}`}>
                   <AttachFileChat
                     conversation={conversation}
@@ -663,6 +658,20 @@ const ChatForm = memo(function ChatForm({
                 />
                 <div className="mx-auto flex" />
                 <TokenUsage index={index} conversation={conversation} isSubmitting={isSubmitting} />
+                {/* Right next to the send button, matching where Claude puts
+                 *  its own model picker - grouped with the transport controls
+                 *  on this side of the `mx-auto` spacer instead of the
+                 *  attach-file/badges group on the left, where a `max-w-[9rem]`
+                 *  box used to truncate "Transcript Assistant" down to
+                 *  "Transcript A…", easy to mistake for an attachment chip
+                 *  rather than the model picker it actually is. Ordered before
+                 *  the mic, not after - model choice comes first, then how
+                 *  you're sending the message, then send itself. */}
+                {isTranscriberConvo && (
+                  <div className="max-w-[13rem]">
+                    <ModelSelector startupConfig={startupConfig} />
+                  </div>
+                )}
                 {SpeechToText && (
                   <AudioRecorder
                     methods={methods}

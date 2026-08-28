@@ -68,8 +68,13 @@ export default function SpeakerDropdown({
     return speakerOptions.filter((option) => option.name.toLowerCase().includes(normalized));
   }, [speakerOptions, query]);
 
-  // The "Add speaker" row is the last option, so arrow keys walk onto it.
-  const addIndex = filteredOptions.length;
+  // The "Add speaker" row is the first option - pinned there rather than
+  // after every real speaker, so it's never something you have to scroll
+  // past a long roster to reach. Real speakers shift down one slot to make
+  // room for it (index 0 is always "Add speaker"; a filtered option at
+  // array position `i` sits at activeIndex `i + 1`).
+  const addIndex = 0;
+  const lastIndex = filteredOptions.length;
   const optionId = (index: number) => `${uid}-opt-${index}`;
 
   useLayoutEffect(() => {
@@ -106,7 +111,7 @@ export default function SpeakerDropdown({
     justOpenedRef.current = true;
     setQuery('');
     const index = speakerOptions.findIndex((option) => option.id === speakerId);
-    setActiveIndex(index < 0 ? 0 : index);
+    setActiveIndex(index < 0 ? addIndex : index + 1);
     setOpen(true);
   }
 
@@ -123,13 +128,13 @@ export default function SpeakerDropdown({
     triggerRef.current?.focus();
     if (index === addIndex) {
       onAddSpeaker();
-    } else if (filteredOptions[index]) {
-      onSelect(filteredOptions[index].id);
+    } else if (filteredOptions[index - 1]) {
+      onSelect(filteredOptions[index - 1].id);
     }
   }
 
   function step(delta: number) {
-    setActiveIndex((current) => Math.max(0, Math.min(addIndex, current + delta)));
+    setActiveIndex((current) => Math.max(addIndex, Math.min(lastIndex, current + delta)));
   }
 
   function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
@@ -249,38 +254,6 @@ export default function SpeakerDropdown({
               ref={markerRef}
               className="absolute inset-x-1 top-0 h-0 rounded-md bg-blue-500/10 opacity-0 transition-[transform,height,opacity] duration-200"
             />
-            {filteredOptions.length === 0 && (
-              <div className="px-2 py-3 text-center text-xs text-text-secondary">
-                {localize('com_ui_transcript_no_speakers_found')}
-              </div>
-            )}
-            {filteredOptions.map((option, index) => (
-              <div
-                key={option.id}
-                id={optionId(index)}
-                ref={(el) => {
-                  optionRefs.current[index] = el;
-                }}
-                role="option"
-                aria-selected={option.id === speakerId}
-                style={{ animationDelay: `${index * 18 + 20}ms` }}
-                className="relative z-[1] flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 duration-150 ease-out animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both"
-                onClick={() => choose(index)}
-                onMouseMove={() => activeIndex !== index && setActiveIndex(index)}
-              >
-                <span className={cn('h-2.5 w-2.5 shrink-0 rounded-sm', option.dotColorClass)} />
-                <span className="flex-1 truncate text-xs font-medium text-text-primary">
-                  {option.name}
-                </span>
-                <Check
-                  className={cn(
-                    'h-3.5 w-3.5 shrink-0 text-blue-600 transition-all dark:text-blue-400',
-                    option.id === speakerId ? 'scale-100 opacity-100' : 'scale-75 opacity-0',
-                  )}
-                />
-              </div>
-            ))}
-
             <div
               id={optionId(addIndex)}
               ref={(el) => {
@@ -288,8 +261,7 @@ export default function SpeakerDropdown({
               }}
               role="option"
               aria-selected={false}
-              style={{ animationDelay: `${addIndex * 18 + 20}ms` }}
-              className="relative z-[1] mt-1 flex cursor-pointer items-center gap-2 rounded-md border-t border-border-medium px-2 pb-1 pt-2 text-text-secondary duration-150 ease-out animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both"
+              className="relative z-[1] mb-1 flex cursor-pointer items-center gap-2 rounded-md border-b border-border-medium px-2 pb-1 pt-1.5 text-text-secondary duration-150 ease-out animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both"
               onClick={() => choose(addIndex)}
               onMouseMove={() => activeIndex !== addIndex && setActiveIndex(addIndex)}
             >
@@ -299,6 +271,41 @@ export default function SpeakerDropdown({
               </span>
               <span className="h-3.5 w-3.5 shrink-0" />
             </div>
+
+            {filteredOptions.length === 0 && (
+              <div className="px-2 py-3 text-center text-xs text-text-secondary">
+                {localize('com_ui_transcript_no_speakers_found')}
+              </div>
+            )}
+            {filteredOptions.map((option, arrayIndex) => {
+              const index = arrayIndex + 1;
+              return (
+                <div
+                  key={option.id}
+                  id={optionId(index)}
+                  ref={(el) => {
+                    optionRefs.current[index] = el;
+                  }}
+                  role="option"
+                  aria-selected={option.id === speakerId}
+                  style={{ animationDelay: `${index * 18 + 20}ms` }}
+                  className="relative z-[1] flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 duration-150 ease-out animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both"
+                  onClick={() => choose(index)}
+                  onMouseMove={() => activeIndex !== index && setActiveIndex(index)}
+                >
+                  <span className={cn('h-2.5 w-2.5 shrink-0 rounded-sm', option.dotColorClass)} />
+                  <span className="flex-1 truncate text-xs font-medium text-text-primary">
+                    {option.name}
+                  </span>
+                  <Check
+                    className={cn(
+                      'h-3.5 w-3.5 shrink-0 text-blue-600 transition-all dark:text-blue-400',
+                      option.id === speakerId ? 'scale-100 opacity-100' : 'scale-75 opacity-0',
+                    )}
+                  />
+                </div>
+              );
+            })}
           </div>
         </Popover.Content>
       </Popover.Portal>

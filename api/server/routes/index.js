@@ -31,6 +31,7 @@ const oauth = require('./oauth');
 const files = require('./files');
 const transcribe = require('./transcribe');
 const transcriptCorrections = require('./transcriptCorrections');
+const blackBox = require('./blackBox');
 const share = require('./share');
 const tags = require('./tags');
 const auth = require('./auth');
@@ -60,6 +61,7 @@ module.exports = {
   files,
   transcribe,
   transcriptCorrections,
+  blackBox,
   share,
   banner,
   agents,

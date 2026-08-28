@@ -23,7 +23,6 @@ import Presentation from './Presentation';
 import ChatForm from './Input/ChatForm';
 import Landing from './Landing';
 import Header from './Header';
-import Footer from './Footer';
 import { cn } from '~/utils';
 import store from '~/store';
 
@@ -142,10 +141,8 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                     {isProjectLandingPage && project && <ProjectLandingChip project={project} />}
                     {isLandingPage && <ConversationStarters />}
                     <ChatForm index={index} placeholder={chatFormPlaceholder} />
-                    {!isLandingPage && <Footer />}
                   </div>
                 </div>
-                {isLandingPage && <Footer />}
               </>
             </div>
           </Presentation>

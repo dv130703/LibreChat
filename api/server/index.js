@@ -289,6 +289,7 @@ const startServer = async () => {
   app.use('/api/files', await routes.files.initialize());
   app.use('/api/transcribe', routes.transcribe);
   app.use('/api/transcript-corrections', routes.transcriptCorrections);
+  app.use('/api/blackbox', routes.blackBox);
   app.use('/images/', createValidateImageRequest(appConfig.secureImageLinks), routes.staticRoute);
   app.use('/api/share', preAuthTenantMiddleware, routes.share);
   app.use('/api/roles', routes.roles);
