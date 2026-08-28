@@ -48,8 +48,8 @@ export default defineConfig(({ command }) => ({
   server: {
     allowedHosts:
       (process.env.VITE_ALLOWED_HOSTS && process.env.VITE_ALLOWED_HOSTS.split(',')) || [],
-    host: process.env.HOST || 'localhost',
-    port: (process.env.PORT && Number(process.env.PORT)) || 3090,
+    host: process.env.HOST || '0.0.0.0',
+    port: (process.env.FRONTEND_PORT && Number(process.env.FRONTEND_PORT)) || 3090,
     strictPort: false,
     proxy: {
       '/api': {

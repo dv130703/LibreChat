@@ -146,6 +146,55 @@ describe('POST /api/transcribe', () => {
     expect(convo.files).toHaveLength(2);
   });
 
+  it('does not persist the conversation until the transcription finishes', async () => {
+    const conversationId = `convo-${Date.now()}`;
+    let convoDuringTranscription;
+
+    // Snapshot the conversation collection from inside the transcription
+    // itself - the window that used to leave a titled, clickable, but
+    // un-openable row in the sidebar for the whole minutes-long run.
+    mockTranscribeAndEmbed.mockImplementation(async () => {
+      convoDuringTranscription = await mongoose.models.Conversation.findOne({
+        conversationId,
+      }).lean();
+      return {
+        segments: [{ start: 0, end: 1, speaker: 'Speaker 1', text: 'Hello' }],
+        language: 'en',
+        diagnostics: {},
+        text: 'Speaker 1: Hello',
+        transcriptFileId: 'source-file-transcript',
+        embedded: true,
+      };
+    });
+
+    const response = await request(app)
+      .post('/api/transcribe')
+      .field('conversationId', conversationId)
+      .attach('file', tinyAudioBuffer, { filename: 'meeting.mp3', contentType: 'audio/mpeg' });
+
+    expect(response.status).toBe(200);
+    expect(convoDuringTranscription).toBeNull();
+
+    // ...and exists, with both files attached, once the request is done.
+    const convo = await mongoose.models.Conversation.findOne({ conversationId }).lean();
+    expect(convo).not.toBeNull();
+    expect(convo.files).toHaveLength(2);
+  });
+
+  it('leaves no conversation behind when the transcription fails', async () => {
+    const conversationId = `convo-${Date.now()}`;
+    mockTranscribeAndEmbed.mockRejectedValue(new Error('diarization produced no segments'));
+
+    const response = await request(app)
+      .post('/api/transcribe')
+      .field('conversationId', conversationId)
+      .attach('file', tinyAudioBuffer, { filename: 'meeting.mp3', contentType: 'audio/mpeg' });
+
+    expect(response.status).toBe(500);
+    const convo = await mongoose.models.Conversation.findOne({ conversationId }).lean();
+    expect(convo).toBeNull();
+  });
+
   it('returns 400 when conversationId is missing', async () => {
     const response = await request(app)
       .post('/api/transcribe')

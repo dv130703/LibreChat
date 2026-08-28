@@ -19,8 +19,21 @@ export const useTranscribeAudioMutation = (): UseMutationResult<
   FormData,
   unknown
 > => {
+  const queryClient = useQueryClient();
   return useMutation([MutationKeys.transcribeAudio], {
     mutationFn: (body: FormData) => dataService.transcribeAudio(body),
+    onSuccess: (data) => {
+      // The conversation is created by the route only once the transcript
+      // exists, so the moment this resolves is the first moment it is real.
+      // Nothing else will go looking for it: the sidebar list is an infinite
+      // query that refetches on its own schedule, and `useGetConvoIdQuery`
+      // reads that same cache first and is configured `refetchOnMount: false`.
+      // Left uninvalidated, the finished conversation is simply absent from the
+      // sidebar, and the one query that decides whether this is a transcriber
+      // conversation at all answers from a cache written before it existed.
+      queryClient.invalidateQueries([QueryKeys.allConversations]);
+      queryClient.invalidateQueries([QueryKeys.conversation, data.conversationId]);
+    },
   });
 };
 

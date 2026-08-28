@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolved from this file's own location, not the process's current working
@@ -22,7 +23,18 @@ class Settings(BaseSettings):
     compute_type: str | None = None
     # Required for diarization: a Hugging Face token that has accepted the
     # gated model terms for whichever diarization_model below is configured.
-    hf_token: str | None = None
+    # Also read from HF_TOKEN/HUGGING_FACE_HUB_TOKEN - the names huggingface_hub
+    # itself uses, and so the ones a machine already set up to pull gated models
+    # will have. Without these aliases the WHISPERX_ prefix hides an otherwise
+    # perfectly good token and diarization fails as if none were configured.
+    hf_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "WHISPERX_HF_TOKEN",
+            "HF_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+        ),
+    )
     # None uses whisperx's default (pyannote/speaker-diarization-community-1).
     # The older, more battle-tested pyannote/speaker-diarization-3.1 is also
     # supported - it needs its own terms acceptance on huggingface.co.
@@ -67,7 +79,26 @@ class Settings(BaseSettings):
     # Per-recording names and terminology arrive on the request instead, and
     # override this. Terms only - Whisper echoes framing sentences into output.
     initial_prompt: str | None = None
-    # When true, only use WhisperX models that are already cached locally.
+    # "auto" | "on" | "off". Whether the whisper, alignment and diarization
+    # loaders are allowed to reach the Hugging Face hub at all.
+    #
+    # "auto" probes the hub once a minute and goes cache-only when it does not
+    # answer. This is not about whether the models load - they come from the
+    # same cache either way - but about how long that takes: left online with no
+    # network, every loader pays a DNS/connect timeout per file before falling
+    # back to the cache it would have used anyway, which across the whisper,
+    # wav2vec2 and pyannote checkpoints is the difference between seconds and
+    # minutes. "on" forces cache-only (nothing is ever downloaded, so a model
+    # that is not already cached fails instead of being fetched); "off" restores
+    # the plain online behaviour.
+    offline_mode: str = "auto"
+    # Seconds the "auto" probe waits for the hub before giving up on it. Paid at
+    # most once a minute, so it can afford to be generous: a name lookup that is
+    # merely slow (cold resolver cache, VPN coming up, a loaded machine) must not
+    # be mistaken for one that has no network behind it at all.
+    hub_probe_timeout_s: float = 3.0
+    # Forces offline_mode="on" when true. Kept as its own switch because it is
+    # the name the underlying loaders use.
     local_files_only: bool = False
     # Directory to cache WhisperX models. If unset, uses huggingface default.
     model_cache_dir: str | None = None

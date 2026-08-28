@@ -8,6 +8,7 @@ import whisperx
 from whisperx.diarize import DiarizationPipeline
 
 from .config import Settings, get_settings
+from .offline import ensure_offline_mode
 from .speaker_bounds import resolve_speaker_bounds
 from .transcription_prompt import (
     PromptBuild,
@@ -115,19 +116,24 @@ class WhisperXService:
                         # the default for calls that supply no context.
                         "initial_prompt": self.settings.initial_prompt,
                     }
+                    # Resolved per load, not once at startup: with no
+                    # network reachable this keeps every loader below on the
+                    # local cache instead of letting it time out its way there.
+                    offline = ensure_offline_mode(self.settings)
                     logger.info(
                         "Loading whisper model %s on %s/%s (cold start - this can take a "
-                        "while the first time a model is downloaded)",
+                        "while the first time a model is downloaded)%s",
                         self.settings.whisper_model,
                         self.device,
                         self.compute_type,
+                        " [offline: local cache only]" if offline else "",
                     )
                     self._model = whisperx.load_model(
                         self.settings.whisper_model,
                         self.device,
                         compute_type=self.compute_type,
                         language=self.settings.default_language,
-                        local_files_only=self.settings.local_files_only,
+                        local_files_only=offline,
                         download_root=self.settings.model_cache_dir,
                         vad_method=self.settings.vad_method,
                         vad_options=vad_options,
@@ -140,25 +146,47 @@ class WhisperXService:
         if language_code not in self._align_models:
             with self._lock:
                 if language_code not in self._align_models:
+                    offline = ensure_offline_mode(self.settings)
                     logger.info("Loading alignment model for language=%s", language_code)
+                    # The wav2vec2 defaults for en/fr/de/es/it come from
+                    # torchaudio, which reads its cache before the network
+                    # unprompted; every other language is a transformers
+                    # checkpoint, and model_cache_only is what keeps that one
+                    # off the hub.
                     self._align_models[language_code] = whisperx.load_align_model(
                         language_code=language_code,
                         device=self.device,
                         model_dir=self.settings.model_cache_dir,
+                        model_cache_only=offline,
                     )
                     logger.info("Alignment model for language=%s loaded", language_code)
         return self._align_models[language_code]
 
+    def _require_diarization_token(self) -> None:
+        """Diarization's one hard prerequisite, checkable without any compute.
+
+        Kept separate from `_get_diarize_model` so `transcribe` can check it
+        before loading audio: the diarizer is only reached after ASR and
+        alignment, so a missing token would otherwise surface a minute of GPU
+        work too late, and the caller discards the whole result on the raise.
+        """
+        if not self.settings.hf_token:
+            raise RuntimeError(
+                "Diarization requires a Hugging Face token. Set WHISPERX_HF_TOKEN in "
+                "rag_server/.env after accepting the pyannote/speaker-diarization-community-1 "
+                "model terms on huggingface.co."
+            )
+
     def _get_diarize_model(self):
         if self._diarize_model is None:
-            if not self.settings.hf_token:
-                raise RuntimeError(
-                    "Diarization requires a Hugging Face token. Set WHISPERX_HF_TOKEN in "
-                    "rag_server/.env after accepting the pyannote/speaker-diarization-community-1 "
-                    "model terms on huggingface.co."
-                )
+            self._require_diarization_token()
             with self._lock:
                 if self._diarize_model is None:
+                    # pyannote's Pipeline.from_pretrained takes no
+                    # local_files_only of its own, so the process-wide flag that
+                    # ensure_offline_mode sets is the only thing keeping its
+                    # config, segmentation and embedding fetches off the network.
+                    ensure_offline_mode(self.settings)
                     logger.info("Loading diarization model %s", self.settings.diarization_model)
                     self._diarize_model = DiarizationPipeline(
                         model_name=self.settings.diarization_model,
@@ -259,6 +287,9 @@ class WhisperXService:
         bounds = resolve_speaker_bounds(min_speakers, max_speakers)
         for adjustment in bounds.adjustments:
             logger.warning("Speaker-count hint adjusted: %s", adjustment)
+
+        if diarize:
+            self._require_diarization_token()
 
         model = self._get_model()
         # Load and resample audio to 16kHz (WhisperX standard)

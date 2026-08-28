@@ -1,10 +1,10 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { useNavigate } from 'react-router-dom';
 import { Spinner } from '@librechat/client';
 import { useLocalize } from '~/hooks';
-import { useTranscribeAudioMutation } from '~/data-provider';
-import { useGetEndpointsQuery } from '~/data-provider';
-import { useUpdateEphemeralAgent } from '~/store';
+import { useTranscribeAudioMutation, useGetEndpointsQuery } from '~/data-provider';
+import { useUpdateEphemeralAgent, useFlagAudioTranscriberConvo } from '~/store';
 import { getLocalStorageItems } from '~/utils';
 import getDefaultEndpoint from '~/utils/getDefaultEndpoint';
 import TranscribeOptionsDialog from './TranscribeOptionsDialog';
@@ -22,6 +22,7 @@ export default function UploadStep() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const { data: endpointsConfig } = useGetEndpointsQuery();
   const updateEphemeralAgent = useUpdateEphemeralAgent();
+  const flagAudioTranscriberConvo = useFlagAudioTranscriberConvo();
   const mutation = useTranscribeAudioMutation();
 
   useEffect(() => {
@@ -59,7 +60,7 @@ export default function UploadStep() {
     if (!pendingFile) {
       return;
     }
-    const conversationId = crypto.randomUUID();
+    const conversationId = uuidv4();
     const { lastConversationSetup } = getLocalStorageItems();
     const endpoint =
       lastConversationSetup?.endpoint ??
@@ -78,6 +79,12 @@ export default function UploadStep() {
 
     mutation.mutate(formData, {
       onSuccess: () => {
+        // Both facts set before the navigate, not after: `ChatRoute` (mounted
+        // by `Workspace`) hydrates by calling `newConversation()`, which
+        // navigates straight to `/c/:conversationId`. `RedirectGuard` is what
+        // snaps that back, and it answers from this flag first - so setting it
+        // here is what keeps the plain chat view from showing up in between.
+        flagAudioTranscriberConvo(conversationId);
         updateEphemeralAgent(conversationId, { file_search: true });
         navigate(`/audio-transcriber/${conversationId}`, { replace: true });
       },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useSetRecoilState } from 'recoil';
 import {
   ResizableHandleAlt,
@@ -7,6 +7,7 @@ import {
   useMediaQuery,
 } from '@librechat/client';
 import ChatRoute from '~/routes/ChatRoute';
+import { useSetConvoContext } from '~/Providers';
 import { useUpdateEphemeralAgent, isAudioTranscriberConvo } from '~/store';
 import TranscriptPanel from './TranscriptPanel';
 
@@ -31,6 +32,33 @@ const TRANSCRIPT_MAX_WIDTH = '70%';
 export default function Workspace({ conversationId }: { conversationId: string }) {
   const updateEphemeralAgent = useUpdateEphemeralAgent();
   const setIsAudioTranscriberConvo = useSetRecoilState(isAudioTranscriberConvo(conversationId));
+
+  /* `hasSetConversation` is one ref, held by `SetConvoProvider` at the app root.
+   * `ChatRoute` sets it true the first time it hydrates anything and nothing
+   * ever sets it back. The normal way into a conversation doesn't care:
+   * `useNavigateToConvo` (the sidebar) writes the conversation into the atom
+   * itself and only marks the flag afterwards. This route can't do that - it
+   * arrives holding an id and nothing else, and depends on `ChatRoute`'s own
+   * first-load fetch to hydrate from it. With the flag left standing from any
+   * earlier chat in the session, that fetch is disabled and the hydration
+   * effect early-returns, so the chat pane quietly keeps the previous
+   * conversation - usually the empty `new` draft - while the URL and the
+   * transcript beside it show this one. The next message then posts under
+   * `new`, the server mints a different conversation for it, and the user lands
+   * in a fresh chat with no transcript attached and no `file_search`: the
+   * transcript is right there on screen and the assistant says it has never
+   * seen it.
+   *
+   * Cleared during render rather than in an effect. Children's effects run
+   * before the parent's, so an effect here would fire after `ChatRoute` had
+   * already decided to skip hydration - and writing a ref wouldn't re-render it
+   * to reconsider. */
+  const hasSetConversation = useSetConvoContext();
+  const hydratedFor = useRef<string | null>(null);
+  if (hydratedFor.current !== conversationId) {
+    hydratedFor.current = conversationId;
+    hasSetConversation.current = false;
+  }
   const isSmallScreen = useMediaQuery('(max-width: 767px)');
 
   /* The audio player portals into this node (see `TranscriptPanel`/

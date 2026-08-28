@@ -100,30 +100,20 @@ router.post('/', upload.single('file'), async (req, res) => {
   }
 
   // Tracks what's actually been persisted so a mid-way failure can be rolled
-  // back below - otherwise a failed transcription (diarization errors are
-  // common on short/quiet clips) leaves a broken, sidebar-visible
-  // conversation behind: no transcript file, so `RedirectGuard` never
-  // recognizes it as belonging to this feature, and revisiting it later
-  // renders as a plain chat (Presets/model-selector-in-header back, no
-  // audio player) - looking exactly like the feature "reverted."
+  // back below. The conversation is now only written once the transcript
+  // exists (see `saveConvo` further down), so the common failures - diarization
+  // errors on short or quiet clips - can no longer strand one. What remains is
+  // the narrow window after that write: a conversation whose transcript file
+  // failed to save is one `RedirectGuard` can't recognize as belonging to this
+  // feature, and revisiting it renders as a plain chat (Presets and the
+  // model-selector back in the header, no audio player) - looking exactly like
+  // the feature "reverted." The source file is rolled back for its own sake,
+  // being a stored upload nothing would ever reference again.
   let sourceFile = null;
   let sourceFileSource = null;
   let conversationCreated = false;
 
   try {
-    // Must exist before `addConvoFile` (a bare, non-upserting update) can attach
-    // the transcript to it - this is the very first write for a fresh session.
-    // `conversationId` is always a fresh `crypto.randomUUID()` minted by the
-    // Audio Transcriber upload flow (see `UploadStep.tsx`), never a
-    // pre-existing conversation, so it's always safe to fully delete on failure.
-    await db.saveConvo(
-      { userId: req.user.id },
-      { conversationId, title: file.originalname, endpoint, agent_id },
-      { context: 'POST /api/transcribe' },
-    );
-    conversationCreated = true;
-    logger.info(`[TRANSCRIPTION] conversation ready conversationId=${conversationId}`);
-
     // Video keyframes commonly sit several seconds apart, and browsers snap
     // seeks to the nearest one - fine for scrubbing a movie, but far too
     // imprecise for jumping to one transcript line. Extracting just the
@@ -163,7 +153,6 @@ router.post('/', upload.single('file'), async (req, res) => {
       },
       true,
     );
-    await db.addConvoFile(conversationId, sourceFile.file_id);
     logger.info(`[TRANSCRIPTION] source file stored file_id=${sourceFile.file_id}`);
 
     const result = await transcribeAndEmbed({
@@ -175,6 +164,32 @@ router.post('/', upload.single('file'), async (req, res) => {
     logger.info(
       `[TRANSCRIPTION] transcribeAndEmbed done segments=${result.segments.length} embedded=${result.embedded}`,
     );
+
+    // Deliberately the first conversation write, and deliberately *after* the
+    // transcription rather than before it. A conversation saved up front is
+    // sidebar-visible for the entire minutes-long transcription while carrying
+    // nothing that can be opened: no transcript file yet, so `RedirectGuard`
+    // can't tell it belongs to this feature, and clicking it lands on a plain,
+    // empty chat window instead of the transcriber. Nothing between here and
+    // the upload needs the conversation to exist - `transcribeAndEmbed` works
+    // off the temp file and `req.file_id` alone - so the row is simply not
+    // written until there is something behind it.
+    //
+    // Still ahead of both `addConvoFile` calls below: those are bare,
+    // non-upserting updates with nothing to attach to until this row exists.
+    //
+    // `conversationId` is always a fresh `crypto.randomUUID()` minted by the
+    // Audio Transcriber upload flow (see `UploadStep.tsx`), never a
+    // pre-existing conversation, so it's always safe to fully delete on failure.
+    await db.saveConvo(
+      { userId: req.user.id },
+      { conversationId, title: file.originalname, endpoint, agent_id },
+      { context: 'POST /api/transcribe' },
+    );
+    conversationCreated = true;
+    logger.info(`[TRANSCRIPTION] conversation ready conversationId=${conversationId}`);
+
+    await db.addConvoFile(conversationId, sourceFile.file_id);
 
     let transcriptFile = null;
     if (result.transcriptFileId) {
