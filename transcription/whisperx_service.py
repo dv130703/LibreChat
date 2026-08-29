@@ -36,6 +36,12 @@ class WhisperXService:
         # shared pipeline's options (see transcribe), and nothing else.
         self._options_lock = Lock()
         self._model = None
+        # Which size string `_model` currently is - None until first load.
+        # Exactly one ASR model is ever resident (see _get_model): the whole
+        # request path is already serialised through _lock for a single
+        # shared pipeline, and holding several loaded large-v3-class models
+        # in GPU memory at once is not something this service is sized for.
+        self._loaded_model_name: str | None = None
         self._align_models: dict[str, tuple] = {}
         self._diarize_model = None
 
@@ -54,10 +60,25 @@ class WhisperXService:
         beam_multiplier = max(1, self.settings.beam_size // 5)  # baseline is beam_size=5
         return max(1, self.settings.batch_size // beam_multiplier)
 
-    def _get_model(self):
-        if self._model is None:
+    def _get_model(self, model_name: str | None = None):
+        resolved_name = model_name or self.settings.whisper_model
+        if self._model is None or self._loaded_model_name != resolved_name:
             with self._lock:
-                if self._model is None:
+                if self._model is None or self._loaded_model_name != resolved_name:
+                    if self._model is not None:
+                        # Switching sizes: this service holds exactly one ASR
+                        # model at a time (see _loaded_model_name), so the
+                        # previous one is dropped - not kept alongside - before
+                        # loading the new one, freeing its GPU/CPU memory first
+                        # rather than risking both resident simultaneously.
+                        logger.info(
+                            "Releasing whisper model %s to load %s instead",
+                            self._loaded_model_name,
+                            resolved_name,
+                        )
+                        self._model = None
+                        if self.device == "cuda":
+                            torch.cuda.empty_cache()
                     # VAD options from settings (Tier 3a: VAD as shared stage)
                     vad_options = {
                         "chunk_size": 30,  # standard VAD chunk size for silero
@@ -123,13 +144,13 @@ class WhisperXService:
                     logger.info(
                         "Loading whisper model %s on %s/%s (cold start - this can take a "
                         "while the first time a model is downloaded)%s",
-                        self.settings.whisper_model,
+                        resolved_name,
                         self.device,
                         self.compute_type,
                         " [offline: local cache only]" if offline else "",
                     )
                     self._model = whisperx.load_model(
-                        self.settings.whisper_model,
+                        resolved_name,
                         self.device,
                         compute_type=self.compute_type,
                         language=self.settings.default_language,
@@ -139,7 +160,8 @@ class WhisperXService:
                         vad_options=vad_options,
                         asr_options=asr_options,
                     )
-                    logger.info("Whisper model %s loaded", self.settings.whisper_model)
+                    self._loaded_model_name = resolved_name
+                    logger.info("Whisper model %s loaded", resolved_name)
         return self._model
 
     def _get_align_model(self, language_code: str):
@@ -215,17 +237,24 @@ class WhisperXService:
 
         return count
 
-    def build_prompt(self, context_terms: str | None, context: str | None = None) -> PromptBuild:
+    def build_prompt(
+        self, context_terms: str | None, context: str | None = None, model_name: str | None = None
+    ) -> PromptBuild:
         """Budget and assemble the per-recording prompt.
 
         Lives here rather than in the router because the budget depends on two
         things only the service knows: the loaded model's tokenizer, and how
         much of the window the deployment-wide glossary has already claimed.
+
+        `model_name` must match whatever `transcribe()` is about to request for
+        the same call - passing a different (or no) name would tokenize the
+        budget against the wrong model, and worse, load it just to immediately
+        evict it in favor of the real one (see `_get_model`).
         """
         if not (context_terms or "").strip() and not (context or "").strip():
             return PromptBuild(prompt=None)
 
-        model = self._get_model()
+        model = self._get_model(model_name)
         count_tokens = self._token_counter(model)
 
         hotwords = normalize_hotwords(self.settings.hotwords)
@@ -277,8 +306,9 @@ class WhisperXService:
         max_speakers: int | None = None,
         context_terms: str | None = None,
         context: str | None = None,
+        model: str | None = None,
     ) -> tuple[list[dict], str, dict]:
-        prompt_build = self.build_prompt(context_terms, context)
+        prompt_build = self.build_prompt(context_terms, context, model_name=model)
         initial_prompt = prompt_build.prompt or self.settings.initial_prompt
 
         # Put the hint in range and the right way round before any diarizer sees
@@ -291,12 +321,12 @@ class WhisperXService:
         if diarize:
             self._require_diarization_token()
 
-        model = self._get_model()
+        whisper_model = self._get_model(model)
         # Load and resample audio to 16kHz (WhisperX standard)
         # whisperx.load_audio() automatically resamples to 16kHz using librosa
         audio = whisperx.load_audio(audio_path)
 
-        result = self._transcribe_batched(model, audio, language, initial_prompt)
+        result = self._transcribe_batched(whisper_model, audio, language, initial_prompt)
         language_code = result["language"]
 
         alignment_gap_count = 0

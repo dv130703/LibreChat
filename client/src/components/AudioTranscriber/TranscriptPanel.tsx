@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { isEqual } from 'lodash';
-import { FileText, Download, AlertCircle, MessageSquarePlus, Mic } from 'lucide-react';
+import { Mic, FileText, Download, AlertCircle, ArrowUpToLine, ArrowDownToLine } from 'lucide-react';
 import { Spinner } from '@librechat/client';
 import {
   useGetConvoIdQuery,
@@ -39,10 +39,10 @@ const LINE_PATTERN = /^(?:\[([0-9:.]+)(?:-([0-9:.]+))?\] )?(?:(Speaker \d+): )?(
 const BOUNDARY_BACKOFF_SECONDS = 0.15;
 
 /** Rough, fixed estimate of the row context menu's own footprint rather than
- *  measuring it - it's one line of text, so the size barely varies, and this
+ *  measuring it - two lines of text, so the size barely varies, and this
  *  only needs to keep it from hanging off the viewport edge, not be exact. */
 const CONTEXT_MENU_WIDTH = 192;
-const CONTEXT_MENU_HEIGHT = 44;
+const CONTEXT_MENU_HEIGHT = 76;
 
 /** "02:05.3" or "1:02:05.0" -> seconds, for seeking the `<audio>` element and
  *  for comparing against its `currentTime` to find the active line.
@@ -731,16 +731,16 @@ export default function TranscriptPanel({
   );
 
   /* Inserting a line the pipeline missed entirely - right-click a row for a
-   * one-item context menu ("insert dialogue here"), which drops a new,
-   * immediately-editable draft row directly below it, in place - not a
-   * dialog, since filling one in is meant to happen while re-listening to
-   * the audio right there, not after closing something that took it away.
-   * The browser's own context menu is suppressed for the whole transcript
-   * panel, not just rows, so there's never a jarring "menu sometimes
-   * appears, sometimes doesn't" depending on exactly where the right-click
-   * landed. Right-clicking a draft itself works the same way and inserts
-   * right after it, which is how another missing line gets added below one
-   * just created. */
+   * two-item context menu ("insert dialogue above/below"), which drops a new,
+   * immediately-editable draft row right there, in place - not a dialog,
+   * since filling one in is meant to happen while re-listening to the audio
+   * right there, not after closing something that took it away. The
+   * browser's own context menu is suppressed for the whole transcript panel,
+   * not just rows, so there's never a jarring "menu sometimes appears,
+   * sometimes doesn't" depending on exactly where the right-click landed.
+   * Right-clicking a draft itself works the same way and inserts above/below
+   * it, which is how another missing line gets added next to one just
+   * created. */
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -762,38 +762,43 @@ export default function TranscriptPanel({
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
-  /** Drops one new draft row into the gap right after whichever row the
-   *  context menu was opened on - a real `ParsedLine` (computed via the same
-   *  slot-splitting a real correction uses), just not sent anywhere until
-   *  its text is actually committed. Right-clicking a draft targets the gap
-   *  after *it*, so repeating this against the row just created is what adds
-   *  another missing line below it. */
-  const handleInsertDraftLine = useCallback(() => {
-    const anchorLineIndex = contextMenu?.lineIndex;
-    closeContextMenu();
-    if (anchorLineIndex == null) {
-      return;
-    }
-    const currentLines = displayLinesRef.current;
-    const position = currentLines.findIndex((line) => line.lineIndex === anchorLineIndex);
-    const prevLine = position === -1 ? undefined : currentLines[position];
-    if (!prevLine) {
-      return;
-    }
-    const nextLine = currentLines[position + 1] ?? null;
-    const [slot] = computeInsertionSlots(prevLine, nextLine, 1);
-    setDrafts((current) => [
-      ...current,
-      {
-        lineIndex: slot.lineIndex,
-        timestamp: formatSlotTimestamp(slot.seconds),
-        seconds: slot.seconds,
-        endSeconds: slot.endSeconds,
-        speaker: undefined,
-        text: '',
-      },
-    ]);
-  }, [contextMenu, closeContextMenu]);
+  /** Drops one new draft row into the gap directly above or below whichever
+   *  row the context menu was opened on - a real `ParsedLine` (computed via
+   *  the same slot-splitting a real correction uses), just not sent anywhere
+   *  until its text is actually committed. "Above" the very first line or
+   *  "below" the very last has no real neighbor on that side;
+   *  `computeInsertionSlots` falls back to a fixed duration there instead of
+   *  an unbounded range. */
+  const handleInsertDraftLine = useCallback(
+    (direction: 'above' | 'below') => {
+      const anchorLineIndex = contextMenu?.lineIndex;
+      closeContextMenu();
+      if (anchorLineIndex == null) {
+        return;
+      }
+      const currentLines = displayLinesRef.current;
+      const position = currentLines.findIndex((line) => line.lineIndex === anchorLineIndex);
+      if (position === -1) {
+        return;
+      }
+      const anchorLine = currentLines[position];
+      const prevLine = direction === 'below' ? anchorLine : (currentLines[position - 1] ?? null);
+      const nextLine = direction === 'below' ? (currentLines[position + 1] ?? null) : anchorLine;
+      const [slot] = computeInsertionSlots(prevLine, nextLine, 1);
+      setDrafts((current) => [
+        ...current,
+        {
+          lineIndex: slot.lineIndex,
+          timestamp: formatSlotTimestamp(slot.seconds),
+          seconds: slot.seconds,
+          endSeconds: slot.endSeconds,
+          speaker: undefined,
+          text: '',
+        },
+      ]);
+    },
+    [contextMenu, closeContextMenu],
+  );
 
   useEffect(() => {
     if (!contextMenu) {
@@ -1017,14 +1022,23 @@ export default function TranscriptPanel({
             <button
               type="button"
               role="menuitem"
-              onClick={handleInsertDraftLine}
+              onClick={() => handleInsertDraftLine('above')}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-text-primary transition-colors hover:bg-surface-hover"
             >
-              <MessageSquarePlus
+              <ArrowUpToLine className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+              {localize('com_ui_transcript_context_menu_insert_above')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => handleInsertDraftLine('below')}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-text-primary transition-colors hover:bg-surface-hover"
+            >
+              <ArrowDownToLine
                 className="h-4 w-4 shrink-0 text-text-secondary"
                 aria-hidden="true"
               />
-              {localize('com_ui_transcript_context_menu_insert')}
+              {localize('com_ui_transcript_context_menu_insert_below')}
             </button>
           </div>,
           document.body,

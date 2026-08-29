@@ -236,7 +236,7 @@ export default function SpeakerRosterModal({
                               updateName(row.id, event.target.value)
                             }
                             className={cn(
-                              'placeholder:text-text-secondary/70 h-9 min-w-0 flex-1 rounded-md border bg-transparent px-3 text-sm text-text-primary outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:focus:border-blue-400',
+                              'placeholder:text-text-secondary/70 h-9 min-w-0 flex-1 rounded-md border bg-transparent px-3 text-sm text-text-primary outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus-visible:!outline-none dark:focus:border-blue-400',
                               duplicate ? 'border-red-500' : 'border-border-medium',
                             )}
                           />

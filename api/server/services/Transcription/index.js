@@ -97,7 +97,7 @@ async function embedTranscript({ req, file_id, filename, text }) {
  * @param {string} params.sourceFileId - id of the persisted source file; the transcript's
  *   own id is derived from it (`${sourceFileId}-transcript`) so re-transcribing the same
  *   source overwrites its transcript instead of leaking a duplicate.
- * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; language?: string}} [params.options]
+ * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; language?: string; contextTerms?: string; context?: string; model?: string}} [params.options]
  * @returns {Promise<{
  *   segments: Array<{start: number; end: number; speaker: string; text: string}>,
  *   language: string | undefined,
@@ -114,7 +114,16 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
     );
   }
 
-  const { includeTimestamps = true, diarize = true, minSpeakers, maxSpeakers, language } = options;
+  const {
+    includeTimestamps = true,
+    diarize = true,
+    minSpeakers,
+    maxSpeakers,
+    language,
+    contextTerms,
+    context,
+    model,
+  } = options;
 
   const jwtToken = generateShortLivedToken(req.user.id);
   const formData = new FormData();
@@ -131,6 +140,23 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
   }
   if (language) {
     formData.append('language', language);
+  }
+  // Per-recording accuracy hints - see `build_prompt` in the RAG server's
+  // WhisperX service. `contextTerms` is packed into the ASR prompt directly;
+  // `context` (free-text prose) is only mined for proper nouns, never sent
+  // to the model verbatim.
+  if (contextTerms && contextTerms.trim()) {
+    formData.append('context_terms', contextTerms.trim());
+  }
+  if (context && context.trim()) {
+    formData.append('context', context.trim());
+  }
+  // Undefined/omitted uses the RAG server's own configured default
+  // (WHISPERX_WHISPER_MODEL) - the server is also the one place that
+  // validates this against its allow-list (see `rag_server/app.py`), so
+  // nothing here needs to duplicate that check.
+  if (model) {
+    formData.append('model', model);
   }
 
   logger.info(
@@ -175,4 +201,4 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
   return { segments, language: detectedLanguage, diagnostics, text, transcriptFileId, embedded };
 }
 
-module.exports = { transcribeAndEmbed, formatTimestamp, formatLine };
+module.exports = { transcribeAndEmbed, embedTranscript, formatTimestamp, formatLine };

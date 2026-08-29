@@ -66,6 +66,27 @@ const upload = multer({
 });
 
 /**
+ * When `transcribeAndEmbed`'s call to the RAG/WhisperX service fails, the
+ * thrown error is an Axios error whose own `.message` is just the generic
+ * "Request failed with status code 500" - the actually useful diagnosis
+ * (e.g. "Diarization produced no speaker segments...") lives one level
+ * deeper, in the response body the service sent back. Surfacing that instead
+ * is the difference between a client error card that says something
+ * genuinely actionable and one that just repeats an HTTP status code.
+ */
+function getTranscribeErrorMessage(error) {
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === 'string' && detail) {
+    return detail;
+  }
+  const nestedError = error?.response?.data?.error;
+  if (typeof nestedError === 'string' && nestedError) {
+    return nestedError;
+  }
+  return error?.message || 'Failed to transcribe file';
+}
+
+/**
  * Transcribes an uploaded audio/video file and embeds the transcript into RAG,
  * scoped to a single conversation - a direct REST action the user triggers from
  * the Audio Transcriber page, not a tool the model decides to call. Because this
@@ -219,7 +240,7 @@ router.post('/', upload.single('file'), async (req, res) => {
     });
   } catch (error) {
     logger.error('[POST /api/transcribe] Failed to transcribe file', error);
-    res.status(500).json({ error: error.message || 'Failed to transcribe file' });
+    res.status(500).json({ error: getTranscribeErrorMessage(error) });
 
     // Best-effort rollback so a failed attempt never leaves a broken,
     // un-flaggable conversation sitting in the sidebar. Never let a cleanup

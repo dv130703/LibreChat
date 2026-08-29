@@ -1,6 +1,8 @@
 const express = require('express');
 const { logger } = require('@librechat/data-schemas');
+const { applyTranscriptCorrections } = require('@librechat/api');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
+const { embedTranscript } = require('~/server/services/Transcription');
 const db = require('~/models');
 
 const router = express.Router();
@@ -30,6 +32,83 @@ async function assertOwnsConversation(req, res, conversationId) {
     return false;
   }
   return true;
+}
+
+/**
+ * One in-flight re-embed per transcript at a time. The roster modal's "Save
+ * Changes" fires several corrections back-to-back (one `speaker_rename` per
+ * edited row) without waiting for each to land - without this, their
+ * `reembedCorrectedTranscript` calls run concurrently, and each reads
+ * `getTranscriptCorrections` at its OWN start time. Whichever POST to the RAG
+ * server happens to finish last wins (`/embed` replaces all chunks for the
+ * file_id), which is not necessarily the one with the freshest snapshot -
+ * a real, if narrow, way for a rename made in that batch to silently vanish
+ * from what `file_search` actually retrieves. Chaining each call after the
+ * previous one's promise settles guarantees strict in-order execution, so by
+ * the time call N reads the correction log, call N-1's write has already
+ * landed.
+ */
+const reembedQueues = new Map();
+
+/**
+ * Re-embeds the transcript's RAG index from its full correction history -
+ * called after every correction lands, so `file_search` (what the model
+ * actually retrieves from) reflects renamed speakers, reassigned lines,
+ * edited text, and inserted lines instead of the original pipeline output
+ * forever. Re-uploading under the SAME `file_id` replaces its RAG chunks
+ * rather than duplicating them (see `rag_server/app.py`'s `/embed`), so this
+ * is safe to call after every single edit, not just batched.
+ *
+ * Deliberately not awaited by callers: a correction is a small, interactive
+ * edit and should feel instant, not wait on a network round-trip to the RAG
+ * server. The Mongo-stored base transcript text is left untouched either way
+ * - "original pipeline output stays recoverable" - only the RAG index catches
+ * up to the corrected version.
+ */
+function reembedCorrectedTranscript(req, transcriptFileId, conversationId) {
+  const previous = reembedQueues.get(transcriptFileId) ?? Promise.resolve();
+  const next = previous
+    .catch(() => {})
+    .then(() => performReembed(req, transcriptFileId, conversationId));
+  reembedQueues.set(transcriptFileId, next);
+  next.finally(() => {
+    // Only clear the entry if nothing queued behind this one - otherwise a
+    // newer call's own cleanup would already be responsible for it.
+    if (reembedQueues.get(transcriptFileId) === next) {
+      reembedQueues.delete(transcriptFileId);
+    }
+  });
+}
+
+async function performReembed(req, transcriptFileId, conversationId) {
+  try {
+    const baseFile = await db.findFileById(transcriptFileId);
+    if (!baseFile?.text) {
+      return;
+    }
+    const corrections = await db.getTranscriptCorrections(transcriptFileId);
+    const correctedText = applyTranscriptCorrections(baseFile.text, corrections);
+    const embedded = await embedTranscript({
+      req,
+      file_id: transcriptFileId,
+      filename: baseFile.filename ?? `${transcriptFileId}.md`,
+      text: correctedText,
+    });
+    // Only ever upgrades `embedded` false -> true, never the reverse: a
+    // transient failure here (RAG server hiccup) shouldn't retroactively mark
+    // a previously-successful embed as gone, which would make the full raw
+    // text start riding along in every future prompt as `extractFileContext`'s
+    // fallback for anything not embedded - a much bigger regression than one
+    // correction's RAG index lagging behind by a turn.
+    if (embedded && !baseFile.embedded) {
+      await db.updateFile({ file_id: transcriptFileId, embedded: true });
+    }
+    logger.info(
+      `[TRANSCRIPTION] re-embedded corrected transcript file_id=${transcriptFileId} conversationId=${conversationId} embedded=${embedded}`,
+    );
+  } catch (error) {
+    logger.error('[transcriptCorrections] Failed to re-embed corrected transcript', error);
+  }
 }
 
 /** All correction events for a transcript, chronological - the client
@@ -72,6 +151,7 @@ router.post('/:transcriptFileId/speaker-rename', async (req, res) => {
       toName,
       tenantId: req.user.tenantId,
     });
+    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
     res.json(correction);
   } catch (error) {
     logger.error(
@@ -105,6 +185,7 @@ router.post('/:transcriptFileId/segment-reassign', async (req, res) => {
       toSpeakerId,
       tenantId: req.user.tenantId,
     });
+    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
     res.json(correction);
   } catch (error) {
     logger.error(
@@ -140,6 +221,7 @@ router.post('/:transcriptFileId/text-edit', async (req, res) => {
       toText,
       tenantId: req.user.tenantId,
     });
+    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
     res.json(correction);
   } catch (error) {
     logger.error('[POST /api/transcript-corrections/:transcriptFileId/text-edit] Failed', error);
@@ -179,6 +261,7 @@ router.post('/:transcriptFileId/line-insert', async (req, res) => {
       endSeconds,
       tenantId: req.user.tenantId,
     });
+    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
     res.json(correction);
   } catch (error) {
     logger.error('[POST /api/transcript-corrections/:transcriptFileId/line-insert] Failed', error);

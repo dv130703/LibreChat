@@ -78,6 +78,8 @@ export { memoryDiagnostics } from './utils/memory';
 export * from './rum/proxy';
 /* Black Box crash logging */
 export * from './blackBox/logger';
+/* Audio Transcriber */
+export * from './transcription/corrections';
 /* types */
 export type * from './mcp/types';
 export type * from './flow/types';

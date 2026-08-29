@@ -528,7 +528,10 @@ function TranscriptHeader({
                       aria-label={localize('com_ui_transcript_playback_speed', {
                         speed: String(speed),
                       })}
-                      className="flex items-center gap-0.5 rounded-lg border border-border-medium px-2 py-1 text-xs font-semibold tabular-nums text-text-secondary transition-colors hover:border-border-heavy hover:text-text-primary"
+                      className={cn(
+                        'flex items-center gap-0.5 rounded-lg border border-border-medium px-2 py-1 text-xs font-semibold tabular-nums text-text-secondary transition-colors hover:border-border-heavy hover:text-text-primary',
+                        speedOpen && 'border-blue-500 ring-2 ring-blue-500/20 dark:border-blue-400',
+                      )}
                     >
                       {speed}×
                       <ChevronDown
@@ -542,7 +545,7 @@ function TranscriptHeader({
                       align="end"
                       sideOffset={8}
                       collisionPadding={8}
-                      className="z-50 w-24 rounded-lg border border-border-medium bg-surface-primary p-1 shadow-lg"
+                      className="z-50 w-24 rounded-lg border border-border-medium bg-surface-primary p-1 shadow-lg duration-150 animate-in fade-in-0 zoom-in-95"
                     >
                       {/* Ties the panel back to the button it belongs to - without
                        *  it, a panel this much wider than its trigger (needed to
@@ -550,20 +553,21 @@ function TranscriptHeader({
                        *  separate floating element rather than clearly this
                        *  button's own dropdown. */}
                       <Popover.Arrow className="fill-surface-primary" />
-                      {SPEEDS.map((rate) => (
+                      {SPEEDS.map((rate, index) => (
                         <button
                           key={rate}
                           type="button"
                           role="menuitemradio"
                           aria-checked={rate === speed}
                           onClick={() => pickSpeed(rate)}
+                          style={{ animationDelay: `${index * 18 + 20}ms` }}
                           className={cn(
                             // Left-aligned, not centered: a stacked list of
                             // different-length numbers ("2×" vs "1.25×") reads
                             // fastest when every row starts at the same x - scanning
                             // down a shared left edge, not one that wanders with
                             // each label's width.
-                            'flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm tabular-nums',
+                            'flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm tabular-nums transition-colors duration-150 ease-out animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both',
                             rate === speed
                               ? 'bg-blue-500/10 font-bold text-blue-600 dark:text-blue-300'
                               : 'text-text-primary hover:bg-surface-hover',
@@ -573,7 +577,13 @@ function TranscriptHeader({
                           {/* A checkmark backs up the color-coded selection state -
                            *  blue-on-highlight vs. white-on-black isn't a reliable
                            *  enough distinction on its own for everyone. */}
-                          {rate === speed && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
+                          <Check
+                            className={cn(
+                              'h-3.5 w-3.5 shrink-0 transition-all',
+                              rate === speed ? 'scale-100 opacity-100' : 'scale-75 opacity-0',
+                            )}
+                            aria-hidden="true"
+                          />
                         </button>
                       ))}
                     </Popover.Content>

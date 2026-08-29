@@ -282,6 +282,14 @@ async def extract_file_text(
 
 _TRANSCRIBE_CONTENT_PREFIXES = ("audio/", "video/")
 
+# The only sizes this deployment will ever load on request. `model` reaches
+# `whisperx.load_model()` -> faster-whisper, which otherwise accepts *any*
+# string as a Hugging Face repo id and will attempt to download it - letting
+# an API caller name an arbitrary model would turn a transcription request
+# into an unbounded, uncontrolled download from an untrusted source. Keep in
+# sync with the frontend's own model list (`TranscribeOptionsDialog.tsx`).
+_ALLOWED_WHISPER_MODELS = frozenset({"tiny", "small", "medium", "large-v3", "large-v3-turbo"})
+
 
 @app.post("/transcribe", tags=["Transcription"], response_model=TranscriptionResponse)
 async def transcribe_audio(
@@ -290,6 +298,15 @@ async def transcribe_audio(
     min_speakers: int | None = Form(None),
     max_speakers: int | None = Form(None),
     language: str | None = Form(None),
+    # Per-recording accuracy hints - see `WhisperXService.build_prompt`.
+    # `context_terms` (names/jargon the caller confirms) is packed into
+    # Whisper's initial_prompt first and always wins; `context` (free prose)
+    # is never sent to the model verbatim - only mined for proper nouns to
+    # fill whatever budget the confirmed terms didn't need.
+    context_terms: str | None = Form(None),
+    context: str | None = Form(None),
+    # None uses this deployment's configured default (WHISPERX_WHISPER_MODEL).
+    model: str | None = Form(None),
     user_id: str = Depends(get_user_id),
 ) -> TranscriptionResponse:
     """Speaker-labelled transcript via WhisperX (model set by WHISPERX_WHISPER_MODEL).
@@ -300,6 +317,11 @@ async def transcribe_audio(
     """
     if file.content_type and not file.content_type.startswith(_TRANSCRIBE_CONTENT_PREFIXES):
         raise HTTPException(status_code=400, detail="File must be an audio or video file")
+    if model is not None and model not in _ALLOWED_WHISPER_MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported model '{model}'. Choose one of: {', '.join(sorted(_ALLOWED_WHISPER_MODELS))}.",
+        )
 
     suffix = os.path.splitext(file.filename or "")[1] or ".wav"
     data = await file.read()
@@ -316,6 +338,9 @@ async def transcribe_audio(
             diarize=diarize,
             min_speakers=min_speakers,
             max_speakers=max_speakers,
+            context_terms=context_terms,
+            context=context,
+            model=model,
         )
     except Exception as error:
         logger.exception("Transcription failed for %s", file.filename)

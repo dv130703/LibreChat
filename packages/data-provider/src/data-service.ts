@@ -1,4 +1,4 @@
-import type { AxiosResponse } from 'axios';
+import type { AxiosResponse, AxiosProgressEvent } from 'axios';
 import type { TFileConfig } from './file-config';
 import type * as t from './types';
 import * as permissions from './accessPermissions';
@@ -485,8 +485,25 @@ export const uploadFile = (
 export const transcribeAudio = (
   data: FormData,
   signal?: AbortSignal | null,
+  /** Real, byte-level progress for the upload leg only - the server has no
+   *  progress signal at all for transcription/embedding once the upload
+   *  completes, so callers should treat 100% here as "uploaded, now
+   *  processing," not "done." */
+  onUploadProgress?: (percent: number) => void,
 ): Promise<f.TTranscribeResponse> => {
-  const requestConfig = signal ? { signal, timeout: 20 * 60 * 1000 } : { timeout: 20 * 60 * 1000 };
+  const requestConfig = {
+    ...(signal ? { signal } : {}),
+    timeout: 20 * 60 * 1000,
+    ...(onUploadProgress
+      ? {
+          onUploadProgress: (event: AxiosProgressEvent) => {
+            if (event.total) {
+              onUploadProgress(Math.round((event.loaded / event.total) * 100));
+            }
+          },
+        }
+      : {}),
+  };
   return request.postMultiPart(endpoints.transcribe(), data, requestConfig);
 };
 

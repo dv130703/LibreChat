@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useGetModelsQuery } from 'librechat-data-provider/react-query';
 import { useRecoilState, useRecoilValue, useSetRecoilState, useRecoilCallback } from 'recoil';
 import {
@@ -46,6 +46,7 @@ import store from '~/store';
 
 const useNewConvo = (index = 0) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { data: startupConfig } = useGetStartupConfig();
   const getConversation = useGetConversation(index);
@@ -272,6 +273,21 @@ const useNewConvo = (index = 0) => {
           return;
         }
 
+        /** Skip the forced `/c/:id` navigate when we're already on the Audio
+         *  Transcriber's own URL for this exact conversation - `/audio-transcriber/:id`
+         *  embeds this same `ChatRoute` inside `Workspace` (see `AudioTranscriberPage`),
+         *  so it's the same conversation, just a different route. Navigating anyway
+         *  (e.g. from picking a different model) would unmount that whole two-pane
+         *  workspace - audio player, transcript, playback position, all of it - only
+         *  for `RedirectGuard` to bounce the URL right back, which reads as the
+         *  entire window reloading for what should be an in-place model change.
+         *  `setConversation` above already applied the change to state, so nothing
+         *  is lost by staying put. A conversation switch to a genuinely different id
+         *  (fork/regenerate) still falls through to the normal navigate below. */
+        if (location.pathname === `/audio-transcriber/${conversation.conversationId}`) {
+          return;
+        }
+
         const path = `/c/${conversation.conversationId}${getParams(conversation)}`;
         if (!disableFocus) {
           requestChatFocus();
@@ -285,6 +301,7 @@ const useNewConvo = (index = 0) => {
       modelsQuery.data,
       hasAgentAccess,
       searchParams,
+      location.pathname,
     ],
   );
 

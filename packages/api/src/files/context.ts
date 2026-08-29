@@ -39,7 +39,14 @@ export async function extractFileContext({
 
   for (const file of attachments) {
     const source = file.source ?? FileSources.local;
-    if (source === FileSources.text && file.text) {
+    // A file that's already embedded is retrieved through `file_search`, not
+    // blind inclusion - baking its full text into every prompt on top of that
+    // would double-deliver it (once via the tool, once unconditionally here)
+    // and, for something the size of a full transcript, can alone overflow the
+    // context window before the user has typed anything. Only text extracted
+    // for files that were NOT embedded (too small to warrant RAG, or embedding
+    // failed) is meant to ride along in context this way.
+    if (source === FileSources.text && file.text && !file.embedded) {
       const { text: limitedText, wasTruncated } = await processTextWithTokenLimit({
         text: file.text,
         tokenLimit: fileTokenLimit,

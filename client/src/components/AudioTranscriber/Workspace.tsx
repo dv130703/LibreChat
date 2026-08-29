@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSetRecoilState } from 'recoil';
 import {
   ResizableHandleAlt,
@@ -16,6 +16,18 @@ import TranscriptPanel from './TranscriptPanel';
  * keeps a majority share of the screen. */
 const MIN_PANE_WIDTH = '320px';
 const TRANSCRIPT_MAX_WIDTH = '70%';
+
+/** Module-level, not a ref on the component: `Workspace` itself unmounts and
+ *  remounts as a normal side effect of the redirect dance documented below
+ *  (`RedirectGuard` bouncing `/c/:id` back to `/audio-transcriber/:id`), and a
+ *  `useRef` would restart at `null` on every one of those remounts - making
+ *  the "did the conversation actually change" check below true every single
+ *  time, permanently re-triggering the reset and the navigate it causes.
+ *  Surviving those remounts (resetting only on a real page load, same as
+ *  `hasSetConversation` itself) is what makes the check mean "did *this
+ *  conversation* actually change" instead of "did this component happen to
+ *  remount." */
+let lastHydratedConversationId: string | null = null;
 
 /**
  * Two-pane layout: the real, unmodified chat page on the left (reused wholesale
@@ -54,9 +66,8 @@ export default function Workspace({ conversationId }: { conversationId: string }
    * already decided to skip hydration - and writing a ref wouldn't re-render it
    * to reconsider. */
   const hasSetConversation = useSetConvoContext();
-  const hydratedFor = useRef<string | null>(null);
-  if (hydratedFor.current !== conversationId) {
-    hydratedFor.current = conversationId;
+  if (lastHydratedConversationId !== conversationId) {
+    lastHydratedConversationId = conversationId;
     hasSetConversation.current = false;
   }
   const isSmallScreen = useMediaQuery('(max-width: 767px)');

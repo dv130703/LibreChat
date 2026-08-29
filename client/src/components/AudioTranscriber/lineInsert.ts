@@ -34,25 +34,45 @@ const FALLBACK_SLOT_DURATION_SECONDS = 3;
  * happened" comes from the transcript's own surrounding timestamps rather
  * than a guess.
  *
- * `nextLine` is `null` for an insert after the last line - there's no real
- * bound on that side, so a fallback duration is used instead of an unbounded
- * range. Calling this again later with a previously-inserted line as one of
- * the two neighbors (a second insert landing between an original line and
- * one just added) subdivides the same gap further - nothing here treats an
- * inserted line differently from an original one.
+ * Either bound may be `null` - `nextLine` for an insert after the last line,
+ * `prevLine` for an insert before the first one - since neither side has a
+ * real neighbor to anchor to there; a fallback duration is used instead of an
+ * unbounded range. At least one of the two is always a real line in practice
+ * (the context menu is always opened on one), so both being `null` is not a
+ * case this needs to produce a meaningful result for. Calling this again
+ * later with a previously-inserted line as one of the two neighbors (a
+ * second insert landing between an original line and one just added)
+ * subdivides the same gap further - nothing here treats an inserted line
+ * differently from an original one.
  */
 export function computeInsertionSlots(
-  prevLine: ParsedLine,
+  prevLine: ParsedLine | null,
   nextLine: ParsedLine | null,
   count: number,
 ): GapSlot[] {
-  const prevIndex = prevLine.lineIndex;
-  const nextIndex = nextLine?.lineIndex ?? prevIndex + count + 1;
+  const nextIndex = nextLine?.lineIndex ?? (prevLine?.lineIndex ?? 0) + count + 1;
+  const prevIndex = prevLine?.lineIndex ?? nextIndex - count - 1;
 
-  const start = prevLine.endSeconds ?? prevLine.seconds ?? 0;
   const rawEnd = nextLine?.seconds;
-  const totalDuration =
-    rawEnd != null && rawEnd > start ? rawEnd - start : FALLBACK_SLOT_DURATION_SECONDS * count;
+  let start: number;
+  let totalDuration: number;
+  if (prevLine != null) {
+    start = prevLine.endSeconds ?? prevLine.seconds ?? 0;
+    totalDuration =
+      rawEnd != null && rawEnd > start ? rawEnd - start : FALLBACK_SLOT_DURATION_SECONDS * count;
+  } else if (rawEnd != null) {
+    // No real line before this one (inserting above the very first line) -
+    // anchor to a fixed-size window ending exactly where `nextLine` starts,
+    // clamped so it never starts before the recording itself does. When
+    // `nextLine` starts within that window of 0 (a recording with
+    // essentially no lead-in), this degrades to a zero-length slot rather
+    // than overlapping into `nextLine`'s own time range.
+    start = Math.max(0, rawEnd - FALLBACK_SLOT_DURATION_SECONDS * count);
+    totalDuration = rawEnd - start;
+  } else {
+    start = 0;
+    totalDuration = FALLBACK_SLOT_DURATION_SECONDS * count;
+  }
 
   const indexStep = (nextIndex - prevIndex) / (count + 1);
   const sliceDuration = totalDuration / count;

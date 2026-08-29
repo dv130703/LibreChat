@@ -10,18 +10,27 @@ import type {
   TLineInsertRequest,
 } from 'librechat-data-provider';
 
+export interface TranscribeAudioVariables {
+  formData: FormData;
+  /** Real, byte-level progress for the upload leg only - see `transcribeAudio`
+   *  in `data-service.ts`. There's no signal at all for the transcription/
+   *  embedding leg that follows; callers show an indeterminate state for that. */
+  onUploadProgress?: (percent: number) => void;
+}
+
 /** Uploads an audio/video file for transcription and RAG embedding, scoped to
  *  one conversation. A direct REST action (see `POST /api/transcribe`), not an
  *  agent tool call - real transcriptions take 30-90s+. */
 export const useTranscribeAudioMutation = (): UseMutationResult<
   TTranscribeResponse,
   unknown,
-  FormData,
+  TranscribeAudioVariables,
   unknown
 > => {
   const queryClient = useQueryClient();
   return useMutation([MutationKeys.transcribeAudio], {
-    mutationFn: (body: FormData) => dataService.transcribeAudio(body),
+    mutationFn: ({ formData, onUploadProgress }: TranscribeAudioVariables) =>
+      dataService.transcribeAudio(formData, null, onUploadProgress),
     onSuccess: (data) => {
       // The conversation is created by the route only once the transcript
       // exists, so the moment this resolves is the first moment it is real.
