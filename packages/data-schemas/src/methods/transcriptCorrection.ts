@@ -19,6 +19,8 @@ export type CreateTranscriptCorrectionInput = Pick<
   | 'text'
   | 'seconds'
   | 'endSeconds'
+  | 'fromSeconds'
+  | 'fromEndSeconds'
   | 'tenantId'
 >;
 

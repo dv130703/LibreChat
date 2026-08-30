@@ -79,7 +79,7 @@ export function TranscriptionOptionsPanel({ options, onChange, disabled }: Trans
           onChange={(event: ChangeEvent<HTMLInputElement>) => onChange({ diarize: event.target.checked })}
         />
         <span>
-          <strong>Speaker diarization</strong>
+          <strong>Include Speaker Labels</strong>
           <small>Detect and label different speakers in the recording.</small>
         </span>
       </label>

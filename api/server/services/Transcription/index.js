@@ -97,7 +97,7 @@ async function embedTranscript({ req, file_id, filename, text }) {
  * @param {string} params.sourceFileId - id of the persisted source file; the transcript's
  *   own id is derived from it (`${sourceFileId}-transcript`) so re-transcribing the same
  *   source overwrites its transcript instead of leaking a duplicate.
- * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; language?: string; contextTerms?: string; context?: string; model?: string}} [params.options]
+ * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; clusteringThreshold?: number; language?: string; contextTerms?: string; context?: string; model?: string}} [params.options]
  * @returns {Promise<{
  *   segments: Array<{start: number; end: number; speaker: string; text: string}>,
  *   language: string | undefined,
@@ -119,6 +119,7 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
     diarize = true,
     minSpeakers,
     maxSpeakers,
+    clusteringThreshold,
     language,
     contextTerms,
     context,
@@ -137,6 +138,9 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
   }
   if (diarize && maxSpeakers != null) {
     formData.append('max_speakers', String(maxSpeakers));
+  }
+  if (diarize && clusteringThreshold != null) {
+    formData.append('clustering_threshold', String(clusteringThreshold));
   }
   if (language) {
     formData.append('language', language);

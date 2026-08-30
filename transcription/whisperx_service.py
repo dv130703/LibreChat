@@ -1,7 +1,20 @@
 import logging
+import warnings
 from dataclasses import replace
 from functools import lru_cache
 from threading import Lock
+
+from pyannote.audio.utils.reproducibility import ReproducibilityWarning
+
+# Both fire on effectively every diarization run and don't indicate a real
+# problem (see the RAG server logs): pyannote's own notice that it disabled
+# TF32 for reproducibility, and a PyTorch std() warning from pooling over a
+# single-sample edge window. Silenced before `import whisperx` below, since
+# that's what pulls in pyannote and triggers the first one at import time.
+warnings.filterwarnings("ignore", category=ReproducibilityWarning)
+warnings.filterwarnings(
+    "ignore", message=r".*degrees of freedom is <= 0.*", category=UserWarning
+)
 
 import torch
 import whisperx
@@ -35,6 +48,12 @@ class WhisperXService:
         # model would deadlock. This one guards the per-request mutation of the
         # shared pipeline's options (see transcribe), and nothing else.
         self._options_lock = Lock()
+        # Separate from _options_lock: guards the shared diarization pipeline's
+        # own runtime mutation (instantiate()) and inference call (see
+        # transcribe) - a different shared resource than the ASR model, so a
+        # request only waits on another request actually touching diarization,
+        # not on an unrelated ASR prompt swap.
+        self._diarize_lock = Lock()
         self._model = None
         # Which size string `_model` currently is - None until first load.
         # Exactly one ASR model is ever resident (see _get_model): the whole
@@ -45,18 +64,8 @@ class WhisperXService:
         self._align_models: dict[str, tuple] = {}
         self._diarize_model = None
 
-    @property
-    def is_model_loaded(self) -> bool:
-        return self._model is not None
-
     def _calculate_batch_size(self) -> int:
-        """Reduce batch_size as beam_size grows, to stay within memory limits.
-
-        Only beam_size, not best_of - despite both being "beam search"
-        settings, best_of never reaches ctranslate2 under whisperx's batched
-        decoder (see the asr_options comment in `_get_model`), so scaling
-        this by it would shrink the batch for a setting that costs nothing.
-        """
+        """Reduce batch_size as beam_size grows, to stay within memory limits."""
         beam_multiplier = max(1, self.settings.beam_size // 5)  # baseline is beam_size=5
         return max(1, self.settings.batch_size // beam_multiplier)
 
@@ -85,13 +94,6 @@ class WhisperXService:
                         "vad_onset": self.settings.vad_onset,
                         "vad_offset": self.settings.vad_offset,
                     }
-                    # Parse temperature fallback ladder
-                    temperature_values = [
-                        float(t.strip())
-                        for t in self.settings.temperature_fallback.split(",")
-                        if t.strip()
-                    ] if self.settings.temperature_fallback else [0.0]
-
                     # The deployment-wide glossary. faster-whisper types this
                     # Optional[str] and calls .strip() on it, so it has to be
                     # flattened to one string - a list or dict raises there.
@@ -103,34 +105,27 @@ class WhisperXService:
                     # These are consumed by faster-whisper's TranscriptionOptions at
                     # load time, not accepted as kwargs on transcribe() itself.
                     #
-                    # Caveat worth knowing before tuning any of these: whisperx's
-                    # batched pipeline decodes via WhisperModel.generate_segment_batched,
-                    # which forwards only beam_size, patience, length_penalty,
-                    # suppress_blank, suppress_tokens, no_repeat_ngram_size and
-                    # repetition_penalty to ctranslate2 (plus initial_prompt/hotwords via
-                    # the prompt, and suppress_numerals, which load_model folds into
+                    # Only what whisperx's batched pipeline actually reads:
+                    # WhisperModel.generate_segment_batched forwards beam_size,
+                    # patience, length_penalty, suppress_blank, suppress_tokens,
+                    # no_repeat_ngram_size and repetition_penalty to ctranslate2
+                    # (plus initial_prompt/hotwords via the prompt, and
+                    # suppress_numerals, which load_model folds into
                     # suppress_tokens). It never runs faster-whisper's own
                     # transcribe() fallback loop, so best_of, temperatures,
                     # condition_on_previous_text, compression_ratio_threshold,
-                    # log_prob_threshold and no_speech_threshold below have no effect
-                    # on this path - they are kept because they are the right values
-                    # if the pipeline is ever swapped for the unbatched one. That
-                    # leaves repetition_penalty and no_repeat_ngram_size as the only
-                    # live guards against a decoder repetition loop, which is why
-                    # they are set rather than left at whisperx's off-by-default.
-                    # word_timestamps is likewise moot: timings come from the
-                    # separate alignment stage, not from this decode.
+                    # log_prob_threshold and no_speech_threshold configured nothing
+                    # on this path and were removed rather than left as dead
+                    # settings someone would reasonably expect to do something.
+                    # If the pipeline is ever swapped for the unbatched one,
+                    # they're worth reintroducing with faster-whisper's own
+                    # defaults. word_timestamps is likewise moot here: timings
+                    # come from the separate alignment stage, not this decode.
                     asr_options = {
                         "suppress_numerals": self.settings.suppress_numerals,
                         "beam_size": self.settings.beam_size,
-                        "best_of": self.settings.best_of,
                         "repetition_penalty": self.settings.repetition_penalty,
                         "no_repeat_ngram_size": self.settings.no_repeat_ngram_size,
-                        "temperatures": temperature_values,
-                        "condition_on_previous_text": self.settings.condition_on_previous_text,
-                        "compression_ratio_threshold": self.settings.compression_ratio_threshold,
-                        "log_prob_threshold": self.settings.log_prob_threshold,
-                        "no_speech_threshold": self.settings.no_speech_threshold,
                         "word_timestamps": True,
                         "hotwords": hotwords_arg,
                         # Overridden per request in transcribe(); this is only
@@ -278,16 +273,26 @@ class WhisperXService:
         which serialises ASR. That costs nothing today: this is a single model on
         a single device, and the call already blocks the caller.
 
+        The lock is held for every call here, not only ones that set their own
+        prompt: a request with no prompt of its own used to skip it entirely and
+        read model.options straight off the shared model - which, mid-mutation
+        by a concurrent request that DOES have a prompt, could hand this request
+        someone else's prompt (names, jargon, whatever that other recording's
+        context carried) contaminating a transcript that asked for none of it.
+        Skipping straight to model.transcribe() is only actually safe when
+        nothing else can be touching model.options at the same moment, which the
+        previous fast path didn't establish.
+
         The prompt reaches every chunk, not just the first: the batched decoder
         prepends it inside generate_segment_batched (whisperx/asr.py:47-50).
         """
         effective_batch_size = self._calculate_batch_size()
         resolved_language = language or self.settings.default_language
 
-        if not initial_prompt:
-            return model.transcribe(audio, batch_size=effective_batch_size, language=resolved_language)
-
         with self._options_lock:
+            if not initial_prompt:
+                return model.transcribe(audio, batch_size=effective_batch_size, language=resolved_language)
+
             previous_options = model.options
             model.options = replace(previous_options, initial_prompt=initial_prompt)
             try:
@@ -304,6 +309,7 @@ class WhisperXService:
         diarize: bool = True,
         min_speakers: int | None = None,
         max_speakers: int | None = None,
+        clustering_threshold: float | None = None,
         context_terms: str | None = None,
         context: str | None = None,
         model: str | None = None,
@@ -367,34 +373,70 @@ class WhisperXService:
         if diarize:
             diarize_model = self._get_diarize_model()
 
-            if (
-                hasattr(diarize_model, "model")
-                and self.settings.diarization_clustering_threshold is not None
-            ):
-                try:
-                    hyper_params = {
-                        "clustering": {
-                            "method": "average",
-                            "threshold": self.settings.diarization_clustering_threshold,
-                        }
-                    }
-                    if self.settings.diarization_min_cluster_size is not None:
-                        hyper_params["clustering"]["min_cluster_size"] = (
-                            self.settings.diarization_min_cluster_size
+            # Serialises every use of the shared diarization pipeline the same
+            # way _options_lock serialises the shared ASR model: instantiate()
+            # below mutates the pipeline's clustering hyperparameters in place,
+            # and the inference call right after reads them - two concurrent
+            # /transcribe requests interleaving those two steps on the same
+            # cached pipeline object (see _get_diarize_model) would otherwise
+            # run one request's diarization under hyperparameters meant for a
+            # different request, or race the underlying model's internal state
+            # outright. Nothing upstream of this serialises it: FastAPI runs
+            # each /transcribe call in its own threadpool thread.
+            with self._diarize_lock:
+                if hasattr(diarize_model, "model"):
+                    # A per-request value (the "speaker grouping" control in
+                    # the upload dialog) overrides this deployment's own
+                    # configured default for just this call.
+                    requested_threshold = (
+                        clustering_threshold
+                        if clustering_threshold is not None
+                        else self.settings.diarization_clustering_threshold
+                    )
+                    try:
+                        # Re-instantiated on every call, even to the pipeline's
+                        # own default, rather than only when a threshold is
+                        # configured: diarize_model is one cached pipeline
+                        # shared across every request (see _get_diarize_model),
+                        # so skipping this when the current request wants the
+                        # default would silently leave a *previous* request's
+                        # custom threshold in effect instead of resetting it.
+                        #
+                        # pyannote.audio 4.x's clustering step is VBx-based, not
+                        # the AgglomerativeClustering it was pre-4.0: `method`
+                        # and `min_cluster_size` (this pipeline's parameter tree
+                        # exposes only `threshold`, plus fixed `Fa`/`Fb`) were
+                        # never valid parameter names on this version, for
+                        # either supported diarization_model - passing them (as
+                        # this used to) made instantiate() raise on every call,
+                        # silently caught below, so this tuning knob was a
+                        # guaranteed no-op regardless of what was configured.
+                        # Confirmed against the installed pipeline's own
+                        # model.default_parameters().
+                        threshold_to_apply = (
+                            requested_threshold
+                            if requested_threshold is not None
+                            else diarize_model.model.default_parameters()["clustering"]["threshold"]
                         )
-                    diarize_model.model.instantiate(hyper_params)
-                    logger.info(
-                        "Applied clustering threshold %s",
-                        self.settings.diarization_clustering_threshold,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Could not apply clustering hyperparameters; using pipeline defaults"
-                    )
+                        diarize_model.model.instantiate({"clustering": {"threshold": threshold_to_apply}})
+                        if requested_threshold is not None:
+                            logger.info("Applied clustering threshold %s", requested_threshold)
+                    except Exception:
+                        logger.exception(
+                            "Could not apply clustering hyperparameters; using pipeline defaults"
+                        )
 
-            diarize_segments = diarize_model(
-                audio, min_speakers=bounds.min_speakers, max_speakers=bounds.max_speakers
-            )
+                if bounds.min_speakers is not None and bounds.min_speakers == bounds.max_speakers:
+                    # An exact count forces pyannote's clustering to cut into
+                    # precisely that many groups. An equal min/max pair instead
+                    # still runs its threshold-based count *estimation* and only
+                    # clamps the result afterward - a different, less direct path
+                    # even though the number given is identical.
+                    diarize_segments = diarize_model(audio, num_speakers=bounds.min_speakers)
+                else:
+                    diarize_segments = diarize_model(
+                        audio, min_speakers=bounds.min_speakers, max_speakers=bounds.max_speakers
+                    )
             speaker_hint_applied = bounds.is_set
 
             if len(diarize_segments) == 0:
@@ -405,7 +447,13 @@ class WhisperXService:
                     "the speaker-diarization-community-1 model terms on huggingface.co."
                 )
 
-            result = whisperx.assign_word_speakers(diarize_segments, result)
+            # fill_nearest=True: a word whose timing falls in a gap between
+            # diarization segments (a brief VAD miss, alignment slop) would
+            # otherwise get no speaker at all and fall through to this
+            # service's hardcoded "Speaker 1" default regardless of who's
+            # actually talking - this assigns it to the nearest real speaker
+            # instead.
+            result = whisperx.assign_word_speakers(diarize_segments, result, fill_nearest=True)
             diarization_speaker_count = int(diarize_segments["speaker"].nunique()) if "speaker" in diarize_segments else 0
 
             # A hint is a hint, not a constraint - clustering can still land

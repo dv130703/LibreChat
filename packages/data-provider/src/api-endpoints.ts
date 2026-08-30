@@ -313,6 +313,8 @@ export const reassignTranscriptSegment = (transcriptFileId: string) =>
   `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/segment-reassign`;
 export const editTranscriptText = (transcriptFileId: string) =>
   `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/text-edit`;
+export const editTranscriptTime = (transcriptFileId: string) =>
+  `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/time-edit`;
 export const insertTranscriptLine = (transcriptFileId: string) =>
   `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/line-insert`;
 export const files = () => `${BASE_URL}/api/files`;

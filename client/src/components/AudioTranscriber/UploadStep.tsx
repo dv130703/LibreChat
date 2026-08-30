@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useNavigate } from 'react-router-dom';
-import { Upload, FolderOpen, FileAudio, FileVideo, AlertTriangle } from 'lucide-react';
+import { Upload, FileAudio, FileVideo, AlertTriangle } from 'lucide-react';
 import { useLocalize } from '~/hooks';
 import type { TranslationKeys } from '~/hooks/useLocalize';
 import { useTranscribeAudioMutation, useGetEndpointsQuery } from '~/data-provider';
@@ -319,16 +319,7 @@ export default function UploadStep() {
           </div>
 
           {dragState === 'none' && (
-            <>
-              <span className="text-[11px] text-text-secondary">
-                {localize('com_ui_audio_transcriber_or')}
-              </span>
-              <span className="flex items-center gap-1.5 rounded-md border border-border-medium bg-surface-primary px-3 py-1.5 text-xs font-medium text-text-primary transition-colors duration-150 hover:bg-surface-hover motion-reduce:transition-none">
-                <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
-                {localize('com_ui_audio_transcriber_browse')}
-              </span>
-              <p className="mt-1 text-[11px] text-text-secondary">{FORMAT_HINTS.join(' · ')}</p>
-            </>
+            <p className="text-[11px] text-text-secondary">{FORMAT_HINTS.join(' · ')}</p>
           )}
         </div>
       )}

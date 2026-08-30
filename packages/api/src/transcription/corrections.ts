@@ -78,6 +78,7 @@ function applyCorrectionsToLines(
   const segmentReassignments: Record<number, string> = {};
   const textEdits: Record<number, string> = {};
   const insertedLines: Record<number, ParsedTranscriptLine> = {};
+  const timeEdits: Record<number, { seconds: number; endSeconds: number }> = {};
 
   for (const correction of corrections) {
     if (
@@ -106,16 +107,44 @@ function applyCorrectionsToLines(
         speaker: correction.speaker,
         text: correction.text,
       };
+    } else if (
+      correction.type === 'time_edit' &&
+      correction.lineIndex != null &&
+      correction.seconds != null &&
+      correction.endSeconds != null
+    ) {
+      timeEdits[correction.lineIndex] = {
+        seconds: correction.seconds,
+        endSeconds: correction.endSeconds,
+      };
+    }
+  }
+
+  // A time_edit against a line `line_insert` also touched in this same log
+  // replays onto the already-inserted line, the same way a `text_edit` does -
+  // both are just further corrections layered onto whatever `insertedLines`
+  // already produced for that lineIndex.
+  for (const [lineIndex, edit] of Object.entries(timeEdits)) {
+    const inserted = insertedLines[Number(lineIndex)];
+    if (inserted) {
+      insertedLines[Number(lineIndex)] = { ...inserted, ...edit };
     }
   }
 
   const merged = baseLines.map((line) => {
     const reassignedTo = segmentReassignments[line.lineIndex];
     const editedText = textEdits[line.lineIndex];
-    if (reassignedTo == null && editedText == null) {
+    const editedTime = timeEdits[line.lineIndex];
+    if (reassignedTo == null && editedText == null && editedTime == null) {
       return line;
     }
-    return { ...line, speaker: reassignedTo ?? line.speaker, text: editedText ?? line.text };
+    return {
+      ...line,
+      speaker: reassignedTo ?? line.speaker,
+      text: editedText ?? line.text,
+      seconds: editedTime?.seconds ?? line.seconds,
+      endSeconds: editedTime?.endSeconds ?? line.endSeconds,
+    };
   });
 
   const inserted = Object.values(insertedLines);

@@ -58,6 +58,65 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
 }
 
+/** The 120 waveform bars, split out and memoized so they only re-render when
+ *  `playedBars`/`hoverBars` actually change - which, since those are
+ *  quantized to whole bars rather than the raw playback ratio, is far less
+ *  often than the 4-10 `timeupdate` events/sec `TranscriptHeader` gets
+ *  during playback. Inlined in the parent, this was diffing 120 elements
+ *  (each with a freshly-allocated style object and transition string) on
+ *  every one of those ticks, continuously, for as long as anything played -
+ *  main-thread work competing with everything else in the player, including
+ *  the click that opens the speed dropdown or toggles the collapse, for
+ *  time on every single tick. */
+const WaveformBars = memo(function WaveformBars({
+  peaks,
+  isLoadingPeaks,
+  playedBars,
+  hoverBars,
+}: {
+  peaks: number[];
+  isLoadingPeaks: boolean;
+  playedBars: number;
+  hoverBars: number | null;
+}) {
+  return (
+    <div className="flex h-full items-center gap-px">
+      {peaks.map((amplitude, index) => {
+        const isPlayed = index < playedBars;
+        // Previews how far a click would seek - only meaningful ahead of
+        // where playback actually is; behind it, the bars are already the
+        // solid "played" color, so there's nothing extra to show.
+        const isHoverPreview = !isPlayed && hoverBars != null && index < hoverBars;
+        return (
+          <div
+            key={index}
+            className={cn(
+              'min-h-[3px] flex-1 rounded-full',
+              isLoadingPeaks && 'animate-pulse',
+              isPlayed && 'bg-blue-500 dark:bg-blue-400',
+              !isPlayed && isHoverPreview && 'bg-blue-500/35 dark:bg-blue-400/35',
+              !isPlayed && !isHoverPreview && 'bg-border-medium',
+            )}
+            style={{
+              height: `${Math.max(6, amplitude * 100)}%`,
+              // The height transition (with its per-bar stagger) is only for
+              // the one-time reveal when real peaks replace the flat
+              // placeholder. Color, which flips constantly during normal
+              // playback and dragging, stays on its own fast, undelayed
+              // transition - giving both a staggered height transition would
+              // make the played/unplayed indicator visibly lag behind the
+              // actual position on every move.
+              transition: isLoadingPeaks
+                ? undefined
+                : `height 300ms ease-out ${index * 2}ms, background-color 100ms ease-out`,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+});
+
 /** The audio player, split out from `TranscriptPanel` into its own memoized
  *  component so `TranscriptPanel`'s frequent internal re-renders (every
  *  playback tick, every scroll) don't force React to re-evaluate it.
@@ -321,6 +380,13 @@ function TranscriptHeader({
   const displayPeaks = peaks ?? FLAT_PEAKS;
   const isLoadingPeaks = peaks == null;
   const hoverTime = hoverRatio != null ? hoverRatio * duration : null;
+  // Quantized to whole bars, not the raw ratio - passed to the memoized
+  // `WaveformBars` below so it only re-renders on the ~120 ticks where a bar
+  // actually flips, not on every one of the 4-10 `timeupdate` events/sec that
+  // fire throughout playback (see the note on that component for why this
+  // was worth doing).
+  const playedBars = Math.round(playedRatio * displayPeaks.length);
+  const hoverBars = hoverRatio != null ? Math.round(hoverRatio * displayPeaks.length) : null;
 
   if (!audioSrc) {
     return null;
@@ -417,45 +483,12 @@ function TranscriptHeader({
                   style={{ left: `${(hoverRatio ?? 0) * 100}%` }}
                 />
               )}
-              <div className="flex h-full items-center gap-px">
-                {displayPeaks.map((amplitude, index) => {
-                  const barRatio = index / (displayPeaks.length - 1 || 1);
-                  const isPlayed = duration > 0 && barRatio <= playedRatio;
-                  // Previews how far a click would seek - only meaningful ahead of
-                  // where playback actually is; behind it, the bars are already
-                  // the solid "played" color, so there's nothing extra to show.
-                  const isHoverPreview =
-                    !isPlayed &&
-                    hoverRatio != null &&
-                    barRatio <= hoverRatio &&
-                    barRatio > playedRatio;
-                  return (
-                    <div
-                      key={index}
-                      className={cn(
-                        'min-h-[3px] flex-1 rounded-full',
-                        isLoadingPeaks && 'animate-pulse',
-                        isPlayed && 'bg-blue-500 dark:bg-blue-400',
-                        !isPlayed && isHoverPreview && 'bg-blue-500/35 dark:bg-blue-400/35',
-                        !isPlayed && !isHoverPreview && 'bg-border-medium',
-                      )}
-                      style={{
-                        height: `${Math.max(6, amplitude * 100)}%`,
-                        // The height transition (with its per-bar stagger) is only
-                        // for the one-time reveal when real peaks replace the flat
-                        // placeholder. Color, which flips constantly during normal
-                        // playback and dragging, stays on its own fast, undelayed
-                        // transition - giving both a staggered height transition
-                        // would make the played/unplayed indicator visibly lag
-                        // behind the actual position on every move.
-                        transition: isLoadingPeaks
-                          ? undefined
-                          : `height 300ms ease-out ${index * 2}ms, background-color 100ms ease-out`,
-                      }}
-                    />
-                  );
-                })}
-              </div>
+              <WaveformBars
+                peaks={displayPeaks}
+                isLoadingPeaks={isLoadingPeaks}
+                playedBars={playedBars}
+                hoverBars={hoverBars}
+              />
               <input
                 type="range"
                 min={0}

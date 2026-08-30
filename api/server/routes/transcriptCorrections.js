@@ -10,8 +10,9 @@ router.use(requireJwtAuth);
 
 /**
  * Corrections a forensic reviewer makes to an Audio Transcriber transcript -
- * renaming a speaker, reassigning a misattributed line, editing text, or
- * inserting a line the pipeline missed entirely - stored as an
+ * renaming a speaker, reassigning a misattributed line, editing text,
+ * inserting a line the pipeline missed entirely, or correcting a line's
+ * timing - stored as an
  * append-only event log (see `packages/data-schemas/src/schema/transcriptCorrection.ts`)
  * rather than an edit to the transcript text itself, so the original pipeline
  * output stays recoverable and every change carries real user attribution.
@@ -226,6 +227,44 @@ router.post('/:transcriptFileId/text-edit', async (req, res) => {
   } catch (error) {
     logger.error('[POST /api/transcript-corrections/:transcriptFileId/text-edit] Failed', error);
     res.status(500).json({ error: 'Failed to edit transcript text' });
+  }
+});
+
+/** Corrects one line's start/end time - the pipeline's automatic alignment can
+ *  drift or land on the wrong stretch of audio entirely (most often when a
+ *  word or two went unrecognized nearby), and there's no way to fix that
+ *  short of the reviewer setting it by hand. Only this line's timing changes;
+ *  its text and speaker attribution are untouched. */
+router.post('/:transcriptFileId/time-edit', async (req, res) => {
+  const { transcriptFileId } = req.params;
+  const { conversationId, lineIndex, fromSeconds, fromEndSeconds, seconds, endSeconds } = req.body;
+  try {
+    if (!(await assertOwnsConversation(req, res, conversationId))) {
+      return;
+    }
+    if (lineIndex == null || seconds == null || endSeconds == null) {
+      return res.status(400).json({ error: 'lineIndex, seconds, and endSeconds are required' });
+    }
+    if (typeof seconds !== 'number' || typeof endSeconds !== 'number' || endSeconds <= seconds) {
+      return res.status(400).json({ error: 'endSeconds must be greater than seconds' });
+    }
+    const correction = await db.createTranscriptCorrection({
+      transcriptFileId,
+      conversationId,
+      user: req.user.id,
+      type: 'time_edit',
+      lineIndex,
+      fromSeconds,
+      fromEndSeconds,
+      seconds,
+      endSeconds,
+      tenantId: req.user.tenantId,
+    });
+    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
+    res.json(correction);
+  } catch (error) {
+    logger.error('[POST /api/transcript-corrections/:transcriptFileId/time-edit] Failed', error);
+    res.status(500).json({ error: 'Failed to edit transcript time' });
   }
 });
 

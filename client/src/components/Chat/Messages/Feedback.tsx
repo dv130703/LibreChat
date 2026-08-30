@@ -221,7 +221,7 @@ function buttonClasses(isActive: boolean, isLast: boolean) {
     'group-hover:visible group-focus-within:visible group-[.final-completion]:visible',
     !isLast &&
       'group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:hover)]:opacity-0',
-    'focus-visible:ring-2 focus-visible:ring-black dark:focus-visible:ring-white focus-visible:outline-none',
+    'focus-visible:ring-2 focus-visible:ring-blue-500/70 dark:focus-visible:ring-blue-400/70 focus-visible:outline-none',
     isActive && 'active text-text-primary bg-surface-hover',
   );
 }

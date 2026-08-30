@@ -224,7 +224,7 @@ export type TTranscriptCorrection = {
   transcriptFileId: string;
   conversationId: string;
   user: string;
-  type: 'speaker_rename' | 'segment_reassign' | 'text_edit' | 'line_insert';
+  type: 'speaker_rename' | 'segment_reassign' | 'text_edit' | 'line_insert' | 'time_edit';
   speakerId?: string;
   fromName?: string;
   toName?: string;
@@ -237,8 +237,15 @@ export type TTranscriptCorrection = {
    *  `TLineInsertRequest`. */
   speaker?: string;
   text?: string;
+  /** line_insert: the new line's start/end time. time_edit: this line's
+   *  corrected start/end time - see `TLineInsertRequest`/`TTimeEditRequest`. */
   seconds?: number;
   endSeconds?: number;
+  /** time_edit: this line's start/end time before this event, for audit
+   *  context only - the canonical current value is still whichever time_edit
+   *  event is latest. */
+  fromSeconds?: number;
+  fromEndSeconds?: number;
   createdAt: string;
 };
 
@@ -261,6 +268,18 @@ export type TTextEditRequest = {
   lineIndex: number;
   fromText?: string;
   toText: string;
+};
+
+/** Corrects a line's start/end time - the pipeline's automatic alignment can
+ *  drift or land on the wrong words entirely, and there's no way to fix that
+ *  except by hand. `endSeconds` must be strictly greater than `seconds`. */
+export type TTimeEditRequest = {
+  conversationId: string;
+  lineIndex: number;
+  fromSeconds?: number;
+  fromEndSeconds?: number;
+  seconds: number;
+  endSeconds: number;
 };
 
 /** A line the pipeline missed entirely, not a correction to an existing one.

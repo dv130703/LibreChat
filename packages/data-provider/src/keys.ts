@@ -103,6 +103,7 @@ export enum MutationKeys {
   reassignTranscriptSegment = 'reassignTranscriptSegment',
   editTranscriptText = 'editTranscriptText',
   insertTranscriptLine = 'insertTranscriptLine',
+  editTranscriptTime = 'editTranscriptTime',
   fileUsage = 'fileUsage',
   updatePreset = 'updatePreset',
   deletePreset = 'deletePreset',

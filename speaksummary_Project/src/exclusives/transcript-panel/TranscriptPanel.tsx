@@ -50,7 +50,7 @@ interface TranscriptPanelProps {
 type GenerationStatus = 'idle' | 'processing' | 'done' | 'error'
 
 const TRANSCRIBING_MESSAGES = [
-  'Longer recordings and speaker diarization both take a few extra minutes.',
+  'Longer recordings and speaker labelling both take a few extra minutes.',
   'Still working — WhisperX is aligning speech to timestamps.',
   'This can take a while on CPU; a GPU backend runs much faster.',
   'Almost every recording finishes within a few minutes — hang tight.',

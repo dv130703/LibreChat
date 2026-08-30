@@ -2688,12 +2688,12 @@ html {
 }
 
 :focus-visible {
-  outline: 2px solid #000;
+  outline: 2px solid #3b82f6;
   outline-offset: 2px;
 }
 
 .dark :focus-visible {
-  outline: 2px solid #fff;
+  outline: 2px solid #60a5fa;
   outline-offset: 2px;
 }
 

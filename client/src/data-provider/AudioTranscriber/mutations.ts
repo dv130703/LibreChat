@@ -8,6 +8,7 @@ import type {
   TSegmentReassignRequest,
   TTextEditRequest,
   TLineInsertRequest,
+  TTimeEditRequest,
 } from 'librechat-data-provider';
 
 export interface TranscribeAudioVariables {
@@ -83,6 +84,19 @@ export const useEditTranscriptTextMutation = (
   const queryClient = useQueryClient();
   return useMutation([MutationKeys.editTranscriptText, transcriptFileId], {
     mutationFn: (body: TTextEditRequest) => dataService.editTranscriptText(transcriptFileId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries([QueryKeys.transcriptCorrections, transcriptFileId]);
+    },
+  });
+};
+
+/** Corrects one line's start/end time. Only that line's timing changes. */
+export const useEditTranscriptTimeMutation = (
+  transcriptFileId: string,
+): UseMutationResult<TTranscriptCorrection, unknown, TTimeEditRequest, unknown> => {
+  const queryClient = useQueryClient();
+  return useMutation([MutationKeys.editTranscriptTime, transcriptFileId], {
+    mutationFn: (body: TTimeEditRequest) => dataService.editTranscriptTime(transcriptFileId, body),
     onSuccess: () => {
       queryClient.invalidateQueries([QueryKeys.transcriptCorrections, transcriptFileId]);
     },

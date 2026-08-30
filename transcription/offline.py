@@ -206,14 +206,3 @@ def ensure_offline_mode(settings: Settings) -> bool:
 
     _apply(offline)
     return offline
-
-
-def reset_probe_cache() -> None:
-    """Drop the cached reachability verdict, forcing the next call to re-probe."""
-    global _offline, _probed_at, _probe_conclusive, _pending_probe
-    with _lock:
-        _offline = None
-        _probed_at = 0.0
-        _probe_conclusive = True
-        _pending_probe = None
-        _pending_result.clear()

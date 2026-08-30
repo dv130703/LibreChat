@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Play, Pause, Trash2 } from 'lucide-react';
-import type { ChangeEvent, KeyboardEvent } from 'react';
+import type { ChangeEvent, KeyboardEvent, RefObject } from 'react';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 import SpeakerDropdown from './SpeakerDropdown';
@@ -18,6 +18,7 @@ interface TranscriptRowProps {
   newSpeakerName: string;
   onPlaySegment: (lineIndex: number) => void;
   onTextCommit: (lineIndex: number, text: string) => void;
+  onTimeCommit: (lineIndex: number, seconds: number, endSeconds: number) => void;
   onSpeakerSelect: (lineIndex: number, speakerId: string) => void;
   onStartAddSpeaker: (lineIndex: number) => void;
   onNewSpeakerNameChange: (value: string) => void;
@@ -51,6 +52,7 @@ function TranscriptRow({
   newSpeakerName,
   onPlaySegment,
   onTextCommit,
+  onTimeCommit,
   onSpeakerSelect,
   onStartAddSpeaker,
   onNewSpeakerNameChange,
@@ -63,6 +65,22 @@ function TranscriptRow({
   const [text, setText] = useState(line.text);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const [isEditingTime, setIsEditingTime] = useState(false);
+  const [startInput, setStartInput] = useState(
+    line.seconds != null ? formatSeconds(line.seconds) : '',
+  );
+  const [endInput, setEndInput] = useState(
+    line.endSeconds != null ? formatSeconds(line.endSeconds) : '',
+  );
+  const startInputRef = useRef<HTMLInputElement>(null);
+  /** Guards a single edit session against firing `onTimeCommit` more than
+   *  once - Enter commits directly, and the blur that follows (native, once
+   *  the input it fired from unmounts) would otherwise commit a second time;
+   *  Escape/an invalid value need the same guard so that trailing blur is a
+   *  no-op too. Reset to `'editing'` only by `openTimeEditor`, so it's scoped
+   *  to exactly one open-to-close cycle. */
+  const timeEditSessionRef = useRef<'editing' | 'settled'>('settled');
+
   const autoResize = (el: HTMLTextAreaElement | null) => {
     if (!el) {
       return;
@@ -70,7 +88,12 @@ function TranscriptRow({
     // Grows with content instead of exposing the browser's own resize grip,
     // which looks like stray chrome next to the rest of this styled row.
     el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
+    // `scrollHeight` is border-exclusive; `height` isn't, under this
+    // element's (Tailwind preflight default) `box-sizing: border-box`.
+    // Assigning scrollHeight straight to height under-sizes the box by
+    // exactly the border width, clipping a sliver off the last line.
+    const borderHeight = el.offsetHeight - el.clientHeight;
+    el.style.height = `${el.scrollHeight + borderHeight}px`;
   };
 
   useEffect(() => {
@@ -78,8 +101,30 @@ function TranscriptRow({
   }, [line.text]);
 
   useEffect(() => {
+    setStartInput(line.seconds != null ? formatSeconds(line.seconds) : '');
+    setEndInput(line.endSeconds != null ? formatSeconds(line.endSeconds) : '');
+  }, [line.seconds, line.endSeconds]);
+
+  useEffect(() => {
     autoResize(textareaRef.current);
   }, [text]);
+
+  useEffect(() => {
+    if (isEditingTime) {
+      startInputRef.current?.focus();
+      startInputRef.current?.select();
+    }
+  }, [isEditingTime]);
+
+  // Resizing the transcript panel is handled one level up, in
+  // `TranscriptPanel` - not here. A `ResizeObserver` per row (one was tried)
+  // means every row does its own read-write-read-write height dance on
+  // every resize tick; with a transcript of any real length, that's
+  // hundreds of forced synchronous reflows per frame while dragging, which
+  // is exactly the kind of layout thrashing that tanks frame rate. The
+  // panel-level observer instead resets every row's height in one pass,
+  // reads every scrollHeight in a second pass, then writes every final
+  // height in a third - one reflow total instead of one per row.
 
   // A draft appears with nothing to type over yet - jump straight into it
   // instead of making the user click first, since the whole point is typing
@@ -97,6 +142,43 @@ function TranscriptRow({
       return;
     }
     onTextCommit(line.lineIndex, trimmed);
+  };
+
+  const openTimeEditor = () => {
+    if (line.seconds == null || line.endSeconds == null) {
+      return;
+    }
+    timeEditSessionRef.current = 'editing';
+    setStartInput(formatSeconds(line.seconds));
+    setEndInput(formatSeconds(line.endSeconds));
+    setIsEditingTime(true);
+  };
+
+  const commitTime = () => {
+    if (timeEditSessionRef.current !== 'editing') {
+      return;
+    }
+    timeEditSessionRef.current = 'settled';
+    setIsEditingTime(false);
+    const seconds = parseTimeInput(startInput);
+    const endSeconds = parseTimeInput(endInput);
+    if (seconds == null || endSeconds == null || endSeconds <= seconds) {
+      // Unusable input - just revert rather than leaving a bad value hanging.
+      setStartInput(line.seconds != null ? formatSeconds(line.seconds) : '');
+      setEndInput(line.endSeconds != null ? formatSeconds(line.endSeconds) : '');
+      return;
+    }
+    if (seconds === line.seconds && endSeconds === line.endSeconds) {
+      return;
+    }
+    onTimeCommit(line.lineIndex, seconds, endSeconds);
+  };
+
+  const cancelTimeEdit = () => {
+    timeEditSessionRef.current = 'settled';
+    setStartInput(line.seconds != null ? formatSeconds(line.seconds) : '');
+    setEndInput(line.endSeconds != null ? formatSeconds(line.endSeconds) : '');
+    setIsEditingTime(false);
   };
 
   return (
@@ -134,11 +216,50 @@ function TranscriptRow({
           )}
         </button>
 
-        {line.timestamp && (
-          <span className="whitespace-nowrap text-xs tabular-nums text-text-secondary">
-            {line.timestamp}
-            {line.endSeconds != null && '–' + formatSeconds(line.endSeconds)}
+        {isEditingTime ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-md border border-blue-500 bg-surface-primary px-1.5 py-0.5 text-xs tabular-nums ring-2 ring-blue-500/20 dark:border-blue-400"
+            onBlur={(event) => {
+              // Tabbing/clicking from the start field to the end field blurs
+              // the first without the edit actually being done - only commit
+              // once focus leaves both fields, not on every hop between them.
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                commitTime();
+              }
+            }}
+          >
+            <TimeInput
+              inputRef={startInputRef}
+              value={startInput}
+              onChange={setStartInput}
+              onCommit={commitTime}
+              onCancel={cancelTimeEdit}
+              ariaLabel={localize('com_ui_transcript_edit_time_start')}
+            />
+            <span aria-hidden="true" className="text-text-secondary">
+              –
+            </span>
+            <TimeInput
+              value={endInput}
+              onChange={setEndInput}
+              onCommit={commitTime}
+              onCancel={cancelTimeEdit}
+              ariaLabel={localize('com_ui_transcript_edit_time_end')}
+            />
           </span>
+        ) : (
+          line.timestamp && (
+            <button
+              type="button"
+              onClick={openTimeEditor}
+              disabled={line.seconds == null || line.endSeconds == null}
+              aria-label={localize('com_ui_transcript_edit_time')}
+              className="-mx-1 whitespace-nowrap rounded px-1 text-xs tabular-nums text-text-secondary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 enabled:hover:bg-surface-hover enabled:hover:text-text-primary disabled:cursor-default dark:focus-visible:ring-blue-400/40"
+            >
+              {line.timestamp}
+              {line.endSeconds != null && '–' + formatSeconds(line.endSeconds)}
+            </button>
+          )
         )}
 
         {isAddingSpeaker ? (
@@ -200,6 +321,60 @@ function formatSeconds(totalSeconds: number): string {
   return `${minutes}:${seconds}`;
 }
 
+/** Inverts `formatSeconds` - "m:ss.s" (or plain seconds, "h:mm:ss.s", etc.) ->
+ *  seconds. `undefined` for anything that isn't a clean run of `:`-separated
+ *  numbers, so a still-mid-edit or garbled value never reaches a commit. */
+function parseTimeInput(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const parts = trimmed.split(':');
+  const numbers = parts.map(Number);
+  if (numbers.some((part) => Number.isNaN(part))) {
+    return undefined;
+  }
+  return numbers.reduce((total, part) => total * 60 + part, 0);
+}
+
+/** One half (start or end) of the inline timestamp editor - small, borderless,
+ *  sized to its content rather than a fixed width, since "1:02.3" and
+ *  "12:34.5" are meaningfully different lengths. */
+function TimeInput({
+  inputRef,
+  value,
+  onChange,
+  onCommit,
+  onCancel,
+  ariaLabel,
+}: {
+  inputRef?: RefObject<HTMLInputElement>;
+  value: string;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+  ariaLabel: string;
+}) {
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      inputMode="decimal"
+      value={value}
+      aria-label={ariaLabel}
+      onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value)}
+      onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+        if (event.key === 'Enter') {
+          onCommit();
+        } else if (event.key === 'Escape') {
+          onCancel();
+        }
+      }}
+      className="w-12 min-w-0 border-none bg-transparent p-0 text-xs tabular-nums text-text-primary focus-visible:outline-none"
+    />
+  );
+}
+
 /** Swaps in for the dropdown while naming a brand-new speaker - same chip
  *  shell, so the row doesn't jump when the two trade places. */
 export function NewSpeakerField({
@@ -239,7 +414,7 @@ export function NewSpeakerField({
             onCancel();
           }
         }}
-        className="w-28 min-w-0 border-none bg-transparent p-0 text-xs font-semibold tracking-tight text-text-primary outline-none"
+        className="w-28 min-w-0 border-none bg-transparent p-0 text-xs font-semibold tracking-tight text-text-primary focus-visible:outline-none"
       />
     </span>
   );

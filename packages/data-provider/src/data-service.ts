@@ -548,6 +548,14 @@ export const insertTranscriptLine = (
   return request.post(endpoints.insertTranscriptLine(transcriptFileId), data);
 };
 
+/** Corrects one line's start/end time. */
+export const editTranscriptTime = (
+  transcriptFileId: string,
+  data: f.TTimeEditRequest,
+): Promise<f.TTranscriptCorrection> => {
+  return request.post(endpoints.editTranscriptTime(transcriptFileId), data);
+};
+
 /**
  * Marks uploaded files as used (owner-scoped TTL touch) so the upload-window
  * TTL cannot reap attachments held in a client-side queue during a long run.

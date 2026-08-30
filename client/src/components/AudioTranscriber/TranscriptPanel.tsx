@@ -11,6 +11,7 @@ import {
   useRenameTranscriptSpeakerMutation,
   useReassignTranscriptSegmentMutation,
   useEditTranscriptTextMutation,
+  useEditTranscriptTimeMutation,
   useInsertTranscriptLineMutation,
 } from '~/data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
@@ -89,6 +90,117 @@ function downloadTextFile(text: string, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+/** Below this width, hide a button's text label - always leaving its icon
+ *  and `aria-label` behind, so the action stays both visible and
+ *  screen-reader-identifiable with no visible text at all. */
+const SPEAKERS_LABEL_MIN_WIDTH = 340;
+const EXPORT_LABEL_MIN_WIDTH = 280;
+const EXPORT_EXT_MIN_WIDTH = 420;
+
+/** This header lives in a user-resizable split pane (`Workspace.tsx`,
+ *  minSize 320px with no upper bound), not a fixed viewport, so a CSS media
+ *  query would never fire just from the user dragging the divider - it
+ *  needs to answer to its own measured width instead. A `ResizeObserver` on
+ *  the row itself stands in for a container query (the Tailwind version
+ *  here doesn't have that plugin installed), and button labels shed
+ *  least-essential-first as the row narrows.
+ */
+function TranscriptPanelHeader({
+  lineCount,
+  speakerCount,
+  namedSpeakerCount,
+  onOpenRoster,
+  onExport,
+}: {
+  lineCount: number;
+  speakerCount: number;
+  namedSpeakerCount: number;
+  onOpenRoster: () => void;
+  onExport: () => void;
+}) {
+  const localize = useLocalize();
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!el) {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Full labels until the first real measurement lands, rather than
+  // collapsing to icons for one frame on every mount.
+  const showSpeakersLabel = width === null || width >= SPEAKERS_LABEL_MIN_WIDTH;
+  const showExportLabel = width === null || width >= EXPORT_LABEL_MIN_WIDTH;
+  const showExportExt = width === null || width >= EXPORT_EXT_MIN_WIDTH;
+
+  const speakersLabel =
+    namedSpeakerCount === 0
+      ? localize('com_ui_transcript_roster_badge_unnamed', { count: speakerCount })
+      : localize('com_ui_transcript_roster_badge_named', {
+          count: speakerCount,
+          named: namedSpeakerCount,
+        });
+
+  return (
+    <div
+      ref={rowRef}
+      className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-border-medium px-4 py-3"
+    >
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span
+          aria-hidden="true"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400"
+        >
+          <FileText className="h-4 w-4" />
+        </span>
+        <div className="flex min-w-0 flex-col">
+          <h2 className="truncate text-sm font-semibold leading-tight text-text-primary">
+            {localize('com_ui_transcript')}
+          </h2>
+          <span className="truncate text-xs text-text-secondary">
+            {localize('com_ui_transcript_line_count', { count: lineCount })}
+          </span>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {speakerCount > 0 && (
+          <button
+            type="button"
+            onClick={onOpenRoster}
+            aria-label={speakersLabel}
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+          >
+            <Mic className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {showSpeakersLabel && <span>{speakersLabel}</span>}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onExport}
+          aria-label={`${localize('com_ui_transcript_export')} ${localize('com_ui_transcript_export_txt')}`}
+          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+        >
+          <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {showExportLabel && <span>{localize('com_ui_transcript_export')}</span>}
+          {showExportExt && (
+            <span className="text-text-secondary">{localize('com_ui_transcript_export_txt')}</span>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function TranscriptPanel({
   conversationId,
   headerContainer,
@@ -120,7 +232,7 @@ export default function TranscriptPanel({
   );
 
   const { data: corrections } = useTranscriptCorrectionsQuery(transcriptFileId, conversationId);
-  const { speakerNames, segmentReassignments, textEdits, insertedLines } = useMemo(
+  const { speakerNames, segmentReassignments, textEdits, timeEdits, insertedLines } = useMemo(
     () => reduceCorrections(corrections ?? []),
     [corrections],
   );
@@ -152,19 +264,25 @@ export default function TranscriptPanel({
     const insertedList = Object.values(stableInsertedLines);
     const baseLines = insertedList.length === 0 ? lines : [...lines, ...insertedList];
     const hasOverlay =
-      Object.keys(stableSegmentReassignments).length > 0 || Object.keys(textEdits).length > 0;
+      Object.keys(stableSegmentReassignments).length > 0 ||
+      Object.keys(textEdits).length > 0 ||
+      Object.keys(timeEdits).length > 0;
     const overlaid = !hasOverlay
       ? baseLines
       : baseLines.map((line) => {
           const reassignedTo = stableSegmentReassignments[line.lineIndex];
           const editedText = textEdits[line.lineIndex];
-          if (reassignedTo == null && editedText == null) {
+          const editedTime = timeEdits[line.lineIndex];
+          if (reassignedTo == null && editedText == null && editedTime == null) {
             return line;
           }
           return {
             ...line,
             speaker: reassignedTo ?? line.speaker,
             text: editedText ?? line.text,
+            timestamp: editedTime ? formatSlotTimestamp(editedTime.seconds) : line.timestamp,
+            seconds: editedTime?.seconds ?? line.seconds,
+            endSeconds: editedTime?.endSeconds ?? line.endSeconds,
           };
         });
     // Original lines already come out of `parseTranscript` in time order;
@@ -172,7 +290,7 @@ export default function TranscriptPanel({
     return insertedList.length === 0
       ? overlaid
       : overlaid.sort((a, b) => a.lineIndex - b.lineIndex);
-  }, [lines, stableSegmentReassignments, textEdits, stableInsertedLines]);
+  }, [lines, stableSegmentReassignments, textEdits, timeEdits, stableInsertedLines]);
 
   /** `effectiveLines` gets a new array reference on every single correction
    *  (any edit, on any line, of any type) - the fast path a few lines up
@@ -349,6 +467,7 @@ export default function TranscriptPanel({
   }, [sourceFileId, user?.id]);
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  const rowsContainerRef = useRef<HTMLDivElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -452,8 +571,23 @@ export default function TranscriptPanel({
     if (followedLineIndex < 0) {
       return;
     }
+    const container = rowsContainerRef.current;
     const row = document.querySelector(`[data-line-index="${followedLineIndex}"]`);
-    row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!container || !row) {
+      return;
+    }
+    // Only follow the playhead when it's actually leaving view - re-centering
+    // on every single line, including ones already comfortably on screen,
+    // would yank whatever's under the mouse (often the play/pause button just
+    // clicked) away on every line change, forcing a hunt for it mid-playback.
+    const containerRect = container.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const isFullyVisible =
+      rowRect.top >= containerRect.top && rowRect.bottom <= containerRect.bottom;
+    if (isFullyVisible) {
+      return;
+    }
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [followedLineIndex]);
 
   const startBoundaryWatch = useCallback(() => {
@@ -577,6 +711,7 @@ export default function TranscriptPanel({
   const renameSpeakerMutation = useRenameTranscriptSpeakerMutation(transcriptFileId ?? '');
   const reassignSegmentMutation = useReassignTranscriptSegmentMutation(transcriptFileId ?? '');
   const editTextMutation = useEditTranscriptTextMutation(transcriptFileId ?? '');
+  const editTimeMutation = useEditTranscriptTimeMutation(transcriptFileId ?? '');
   const insertLineMutation = useInsertTranscriptLineMutation(transcriptFileId ?? '');
 
   const renameSpeaker = useCallback(
@@ -660,6 +795,40 @@ export default function TranscriptPanel({
     // See the eslint-disable note on `renameSpeaker` above - same reasoning.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [conversationId, findEffectiveLine, editTextMutation.mutate, insertLineMutation.mutate],
+  );
+
+  const onTimeCommit = useCallback(
+    (lineIndex: number, seconds: number, endSeconds: number) => {
+      // A draft's timing hasn't been committed as a correction yet either -
+      // same local-only treatment as `reassignSegment` gives a draft's speaker,
+      // so retiming a not-yet-saved line never fires a network request for a
+      // correction that doesn't exist.
+      if (draftsRef.current.some((draft) => draft.lineIndex === lineIndex)) {
+        setDrafts((current) =>
+          current.map((draft) =>
+            draft.lineIndex === lineIndex
+              ? { ...draft, timestamp: formatSlotTimestamp(seconds), seconds, endSeconds }
+              : draft,
+          ),
+        );
+        return;
+      }
+      if (!conversationId) {
+        return;
+      }
+      const effective = findEffectiveLine(lineIndex);
+      editTimeMutation.mutate({
+        conversationId,
+        lineIndex,
+        fromSeconds: effective?.seconds,
+        fromEndSeconds: effective?.endSeconds,
+        seconds,
+        endSeconds,
+      });
+    },
+    // See the eslint-disable note on `renameSpeaker` above - same reasoning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [conversationId, findEffectiveLine, editTimeMutation.mutate],
   );
 
   /* Adding a brand-new speaker the pipeline missed - the naming field lives
@@ -747,6 +916,33 @@ export default function TranscriptPanel({
     lineIndex: number;
   } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // One observer for the whole list, not one per row (that was tried - see
+  // the note in TranscriptRow - and thrashes badly on a real transcript):
+  // resetting every row's height before reading any of them, and reading
+  // every scrollHeight before writing any of them, means the browser only
+  // has to recompute layout once per resize tick instead of once per row.
+  useEffect(() => {
+    const container = rowsContainerRef.current;
+    if (!container) {
+      return;
+    }
+    const resizeAllRows = () => {
+      const textareas = Array.from(container.querySelectorAll('textarea'));
+      textareas.forEach((el) => {
+        el.style.height = 'auto';
+      });
+      const targetHeights = textareas.map(
+        (el) => el.scrollHeight + (el.offsetHeight - el.clientHeight),
+      );
+      textareas.forEach((el, index) => {
+        el.style.height = `${targetHeights[index]}px`;
+      });
+    };
+    const observer = new ResizeObserver(resizeAllRows);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   const handleRowContextMenu = useCallback((event: MouseEvent<HTMLDivElement>) => {
     const rowEl = (event.target as HTMLElement).closest<HTMLElement>('[data-line-index]');
@@ -854,56 +1050,16 @@ export default function TranscriptPanel({
           headerContainer,
         )}
       {!isLoading && lines.length > 0 && (
-        <div className="flex flex-shrink-0 items-center justify-between gap-3 border-b border-border-medium px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span
-              aria-hidden="true"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400"
-            >
-              <FileText className="h-4 w-4" />
-            </span>
-            <div className="flex min-w-0 flex-col">
-              <h2 className="truncate text-sm font-semibold leading-tight text-text-primary">
-                {localize('com_ui_transcript')}
-              </h2>
-              <span className="text-xs text-text-secondary">
-                {localize('com_ui_transcript_line_count', { count: lines.length })}
-              </span>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {uniqueSpeakerIds.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setRosterModalOpen(true)}
-                className="flex items-center gap-1.5 rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
-              >
-                <Mic className="h-3.5 w-3.5" aria-hidden="true" />
-                {namedSpeakerCount === 0
-                  ? localize('com_ui_transcript_roster_badge_unnamed', {
-                      count: uniqueSpeakerIds.length,
-                    })
-                  : localize('com_ui_transcript_roster_badge_named', {
-                      count: uniqueSpeakerIds.length,
-                      named: namedSpeakerCount,
-                    })}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleExportTxt}
-              className="flex items-center gap-1.5 rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
-            >
-              <Download className="h-3.5 w-3.5" aria-hidden="true" />
-              {localize('com_ui_transcript_export')}
-              <span className="text-text-secondary">
-                {localize('com_ui_transcript_export_txt')}
-              </span>
-            </button>
-          </div>
-        </div>
+        <TranscriptPanelHeader
+          lineCount={lines.length}
+          speakerCount={uniqueSpeakerIds.length}
+          namedSpeakerCount={namedSpeakerCount}
+          onOpenRoster={() => setRosterModalOpen(true)}
+          onExport={handleExportTxt}
+        />
       )}
       <div
+        ref={rowsContainerRef}
         className="flex-1 overflow-y-auto p-3"
         onContextMenu={(event) => {
           // Suppressed everywhere in this pane, not just on rows - a native
@@ -997,6 +1153,7 @@ export default function TranscriptPanel({
                     newSpeakerName={newSpeakerName}
                     onPlaySegment={togglePlaySegment}
                     onTextCommit={onTextCommit}
+                    onTimeCommit={onTimeCommit}
                     onSpeakerSelect={reassignSegment}
                     onStartAddSpeaker={startAddSpeaker}
                     onNewSpeakerNameChange={setNewSpeakerName}

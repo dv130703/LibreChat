@@ -12,7 +12,7 @@ export interface ITranscriptCorrection extends Document {
   transcriptFileId: string;
   conversationId: string;
   user: Types.ObjectId;
-  type: 'speaker_rename' | 'segment_reassign' | 'text_edit' | 'line_insert';
+  type: 'speaker_rename' | 'segment_reassign' | 'text_edit' | 'line_insert' | 'time_edit';
   /** speaker_rename: the pipeline/custom speaker id being renamed. */
   speakerId?: string;
   /** speaker_rename: display name before this event, for audit context only -
@@ -43,10 +43,17 @@ export interface ITranscriptCorrection extends Document {
   /** line_insert: the new line's dialogue text. */
   text?: string;
   /** line_insert: the new line's start time, in seconds - computed client-side
-   *  from its position within the gap between its two neighbors. */
+   *  from its position within the gap between its two neighbors. time_edit:
+   *  this line's corrected start time. */
   seconds?: number;
-  /** line_insert: the new line's end time, in seconds. */
+  /** line_insert / time_edit: the new/corrected end time, in seconds. */
   endSeconds?: number;
+  /** time_edit: this line's start time before this event, for audit context
+   *  only - the canonical current value is still whichever time_edit event
+   *  is latest. */
+  fromSeconds?: number;
+  /** time_edit: this line's end time before this event. */
+  fromEndSeconds?: number;
   tenantId?: string;
   createdAt?: Date;
   updatedAt?: Date;
@@ -69,7 +76,7 @@ const transcriptCorrectionSchema: Schema<ITranscriptCorrection> = new Schema(
     },
     type: {
       type: String,
-      enum: ['speaker_rename', 'segment_reassign', 'text_edit', 'line_insert'],
+      enum: ['speaker_rename', 'segment_reassign', 'text_edit', 'line_insert', 'time_edit'],
       required: true,
     },
     speakerId: {
@@ -106,6 +113,12 @@ const transcriptCorrectionSchema: Schema<ITranscriptCorrection> = new Schema(
       type: Number,
     },
     endSeconds: {
+      type: Number,
+    },
+    fromSeconds: {
+      type: Number,
+    },
+    fromEndSeconds: {
       type: Number,
     },
     tenantId: {

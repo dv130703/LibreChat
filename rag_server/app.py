@@ -297,6 +297,10 @@ async def transcribe_audio(
     diarize: bool = Form(True),
     min_speakers: int | None = Form(None),
     max_speakers: int | None = Form(None),
+    # None uses this deployment's configured default
+    # (WHISPERX_DIARIZATION_CLUSTERING_THRESHOLD, itself pipeline-default when
+    # unset) - see WhisperXService.transcribe for what this actually tunes.
+    clustering_threshold: float | None = Form(None),
     language: str | None = Form(None),
     # Per-recording accuracy hints - see `WhisperXService.build_prompt`.
     # `context_terms` (names/jargon the caller confirms) is packed into
@@ -338,6 +342,7 @@ async def transcribe_audio(
             diarize=diarize,
             min_speakers=min_speakers,
             max_speakers=max_speakers,
+            clustering_threshold=clustering_threshold,
             context_terms=context_terms,
             context=context,
             model=model,

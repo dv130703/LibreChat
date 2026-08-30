@@ -127,13 +127,31 @@ if (useFileLogging) {
   }
 }
 
+interface ConsoleTransformableInfo extends winston.Logform.TransformableInfo {
+  isTranscription?: boolean;
+}
+
+// [TRANSCRIPTION]-tagged lines are frequent, expected progress notices, not
+// diagnostics - the timestamp/level prefix that every other line needs is
+// just noise for these, so this flag (set before colorize touches
+// `info.message`, since checking the prefix after colorize would be
+// matching against its own ANSI codes) lets printf skip it for these alone.
+const flagTranscriptionLines = winston.format((info: ConsoleTransformableInfo) => {
+  info.isTranscription =
+    typeof info.message === 'string' && info.message.startsWith('[TRANSCRIPTION]');
+  return info;
+});
+
 const consoleFormat = winston.format.combine(
   redactFormat(),
   requestContextFormat(),
+  flagTranscriptionLines(),
   winston.format.colorize({ all: true }),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.printf((info) => {
-    const message = `${info.timestamp} ${info.level}: ${info.message}`;
+  winston.format.printf((info: ConsoleTransformableInfo) => {
+    const message = info.isTranscription
+      ? `${info.message}`
+      : `${info.timestamp} ${info.level}: ${info.message}`;
     const line = appendRequestContext(message, info);
     return info.level.includes('error') ? redactMessage(line) : line;
   }),

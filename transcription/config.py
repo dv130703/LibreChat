@@ -44,16 +44,13 @@ class Settings(BaseSettings):
     # Batch size for transcription. Auto-reduced when using beam search to prevent OOM.
     batch_size: int = 16
     # Beam search width. Higher values improve accuracy but increase latency.
+    # The one real accuracy/latency knob here - see the asr_options comment in
+    # whisperx_service.py for why its former neighbors (best_of, temperature
+    # fallback, condition_on_previous_text, compression_ratio_threshold,
+    # log_prob_threshold, no_speech_threshold) were removed rather than tuned:
+    # whisperx's batched decoder never reads them, on this faster-whisper
+    # version, so they configured nothing.
     beam_size: int = 5
-    # Number of candidates to generate. Increases robustness at the cost of computation.
-    best_of: int = 5
-    # Temperature values for fallback ladder (comma-separated). Improves reliability
-    # when initial temperature fails. Set to empty string to disable fallback.
-    temperature_fallback: str = "0.0,0.2,0.4,0.6,0.8,1.0"
-    # When false, prevents condition_on_previous_text from causing repetition loops.
-    # NOTE: inert under whisperx's batched pipeline - see the asr_options comment
-    # in whisperx_service.py for which of these actually reach the decoder.
-    condition_on_previous_text: bool = False
     # Penalty applied to already-emitted tokens. 1.0 = off (whisperx's default),
     # which leaves nothing standing between the decoder and a repetition loop
     # ("...in the year of the monarch in the year of the monarch..."). Above ~1.3
@@ -65,12 +62,6 @@ class Settings(BaseSettings):
     # Lower it to 4 if loops persist; raise it or set 0 if real speech is being
     # mangled to avoid a repeat.
     no_repeat_ngram_size: int = 5
-    # Compression ratio threshold (lower = stricter). Filters repetitive/garbled sequences.
-    compression_ratio_threshold: float = 2.4
-    # Log probability threshold. Lower = stricter quality threshold.
-    log_prob_threshold: float = -1.0
-    # Silence detection threshold (0-1). Higher = less aggressive silence detection.
-    no_speech_threshold: float = 0.6
     # Deployment-wide glossary applied to every recording (comma-separated terms;
     # a JSON list or object is accepted and flattened to its items/keys, since
     # faster-whisper only takes a single string here).
@@ -112,10 +103,15 @@ class Settings(BaseSettings):
     vad_method: str = "silero"
 
     # --- Diarization tuning ---
-    # Clustering threshold for speaker merging. None uses pipeline default.
+    # Clustering threshold for speaker merging. None uses pipeline default
+    # (0.6). Lower merges more aggressively (fewer, larger speaker clusters);
+    # higher splits more readily (more, smaller ones). The only clustering
+    # hyperparameter pyannote.audio 4.x's VBx-based clustering actually
+    # exposes on either supported diarization_model - there is no
+    # `min_cluster_size` (or a `method` choice) on this pyannote version, so
+    # neither is offered here as a setting someone would reasonably expect to
+    # do something.
     diarization_clustering_threshold: float | None = None
-    # Minimum cluster size for speaker detection
-    diarization_min_cluster_size: int | None = None
 
     # --- ASR preprocessing and language ---
     # Force numerals to be spelled out (e.g. "2014" → "twenty fourteen")

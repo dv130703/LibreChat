@@ -627,12 +627,14 @@ const ChatForm = memo(function ChatForm({
                 </div>
               )}
               <div
-                className={cn(
-                  '@container flex items-center gap-2 pb-2',
-                  isRTL ? 'flex-row-reverse' : 'flex-row',
-                )}
+                // Fixed regardless of `isRTL`: this toolbar is icon controls,
+                // not text content, so it doesn't mirror for RTL languages -
+                // attach/tools stay left, send stays right, same as Claude's
+                // own input bar. `isRTL` still governs the textarea above,
+                // where it's genuinely about text direction.
+                className="@container flex flex-row items-center gap-2 pb-2"
               >
-                <div className={`${isRTL ? 'mr-2' : 'ml-2'}`}>
+                <div className="ml-2">
                   <AttachFileChat
                     conversation={conversation}
                     disableInputs={disableInputs}
@@ -680,7 +682,7 @@ const ChatForm = memo(function ChatForm({
                     isSubmitting={isSubmitting}
                   />
                 )}
-                <div className={`${isRTL ? 'ml-2' : 'mr-2'}`}>
+                <div className="mr-2">
                   {isSubmitting && showStopButton && !answerMode.active
                     ? duringRunSlot
                     : endpoint && (

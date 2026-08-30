@@ -113,7 +113,7 @@ const SummaryButton = memo(
                 ? 'opacity-0 group-focus-within/summary-container:opacity-100 group-hover/summary-container:opacity-100'
                 : 'opacity-0',
               'hover:bg-surface-hover hover:text-text-primary',
-              'focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black dark:focus-visible:ring-white',
+              'focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70 dark:focus-visible:ring-blue-400/70',
             )}
           >
             <span className="sr-only">
