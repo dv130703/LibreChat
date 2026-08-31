@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { QueryKeys, MutationKeys, dataService } from 'librechat-data-provider';
 import type { UseMutationResult } from '@tanstack/react-query';
 import type {
+  TTranscribeOptions,
   TTranscribeResponse,
   TTranscriptCorrection,
   TSpeakerRenameRequest,
@@ -43,6 +44,36 @@ export const useTranscribeAudioMutation = (): UseMutationResult<
       // conversation at all answers from a cache written before it existed.
       queryClient.invalidateQueries([QueryKeys.allConversations]);
       queryClient.invalidateQueries([QueryKeys.conversation, data.conversationId]);
+    },
+  });
+};
+
+export interface RetranscribeAudioVariables {
+  conversationId: string;
+  options: TTranscribeOptions;
+}
+
+/** Re-runs transcription on the audio already stored for a conversation,
+ *  replacing that transcript in place. There is no upload leg and no progress
+ *  signal, so callers show an indeterminate state for the whole run. */
+export const useRetranscribeAudioMutation = (): UseMutationResult<
+  TTranscribeResponse,
+  unknown,
+  RetranscribeAudioVariables,
+  unknown
+> => {
+  const queryClient = useQueryClient();
+  return useMutation([MutationKeys.retranscribeAudio], {
+    mutationFn: ({ conversationId, options }: RetranscribeAudioVariables) =>
+      dataService.retranscribeAudio(conversationId, options),
+    onSuccess: (data) => {
+      // The transcript file keeps its id but its content is wholly replaced,
+      // so the preview cache is the one thing guaranteed to be wrong here.
+      // Corrections are cleared server-side (their line indices address text
+      // that no longer exists), and the conversation carries the new model.
+      queryClient.invalidateQueries([QueryKeys.conversation, data.conversationId]);
+      queryClient.invalidateQueries([QueryKeys.filePreview, data.transcriptFile?.file_id]);
+      queryClient.invalidateQueries([QueryKeys.transcriptCorrections, data.transcriptFile?.file_id]);
     },
   });
 };

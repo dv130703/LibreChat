@@ -1,5 +1,19 @@
 import type { Document, Types } from 'mongoose';
 
+export interface ITranscriptionMeta {
+  model?: string;
+  requestedModel?: string;
+  language?: string;
+  diarize?: boolean;
+  minSpeakers?: number;
+  maxSpeakers?: number;
+  clusteringThreshold?: number;
+  includeTimestamps?: boolean;
+  contextTerms?: string;
+  context?: string;
+  suppressNumerals?: boolean;
+}
+
 // @ts-ignore
 export interface IConversation extends Document {
   conversationId: string;
@@ -60,6 +74,7 @@ export interface IConversation extends Document {
   fileTokenLimit?: number;
   // Additional fields
   files?: string[];
+  transcription?: ITranscriptionMeta;
   expiredAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;

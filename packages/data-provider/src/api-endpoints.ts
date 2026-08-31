@@ -304,6 +304,11 @@ export const mcpServer = (serverName: string) => `${BASE_URL}/api/mcp/servers/${
 export const revertAgentVersion = (agent_id: string) => `${agents({ path: `${agent_id}/revert` })}`;
 
 export const transcribe = () => `${BASE_URL}/api/transcribe`;
+
+export const transcribeConfig = () => `${BASE_URL}/api/transcribe/config`;
+
+export const retranscribe = (conversationId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(conversationId)}/retranscribe`;
 const transcriptCorrectionsRoot = `${BASE_URL}/api/transcript-corrections`;
 export const transcriptCorrections = (transcriptFileId: string, conversationId: string) =>
   `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}${buildQuery({ conversationId })}`;

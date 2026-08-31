@@ -205,6 +205,38 @@ export type TTranscriptSegment = {
   text: string;
 };
 
+/** Per-recording transcription settings sent by the Audio Transcriber. Every
+ *  field is optional: an absent one means "use the server's configured
+ *  default", which is why the response reports the model that actually ran. */
+export type TTranscribeOptions = {
+  includeTimestamps?: boolean;
+  diarize?: boolean;
+  minSpeakers?: number;
+  maxSpeakers?: number;
+  clusteringThreshold?: number;
+  language?: string;
+  contextTerms?: string;
+  context?: string;
+  model?: string;
+  /** Whether digits are suppressed at the decoder. Absent takes the server's
+   *  configured default; `false` is a real instruction, not an absent option. */
+  suppressNumerals?: boolean;
+};
+
+/** This deployment's effective transcription defaults - what each "auto"
+ *  option actually resolves to, so the UI can name it rather than hide it. */
+export type TTranscribeConfig = {
+  models: string[];
+  default_model: string;
+  default_language?: string | null;
+  default_suppress_numerals: boolean;
+  default_clustering_threshold?: number | null;
+  hotwords_configured: boolean;
+  /** Vocabulary offered as one-click suggestions. Never sent on its own - a
+   *  suggestion only reaches the decoder once the user confirms it. */
+  suggested_terms: string[];
+};
+
 /** Response shape for `POST /api/transcribe` (Audio Transcriber section). */
 export type TTranscribeResponse = {
   conversationId: string;

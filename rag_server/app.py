@@ -36,15 +36,21 @@ from starlette.concurrency import run_in_threadpool
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import db
+import logs
 import guidance
 from auth import get_user_id
 from config import LOG_REQUESTS, embed_documents, embed_query
 from extract import UnsupportedFileType, chunk_text, extract_pages, is_supported
-from transcription.schemas import TranscriptionResponse
+from transcription.config import get_settings
+from transcription.vocabulary import SUGGESTED_TERMS
+from transcription.schemas import TranscriptionConfig, TranscriptionResponse
 from transcription.whisperx_service import get_whisperx_service
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logs.configure()
 logger = logging.getLogger("rag_server")
+# Request lines cross both services; tagging them with either one would be a lie
+# for half the traffic (see logs.py).
+request_logger = logging.getLogger("http")
 
 app = FastAPI(title="RAG Server", description="A server for RAG operations", version="1.0.0")
 
@@ -60,11 +66,11 @@ async def log_requests(request: Request, call_next):
     if not LOG_REQUESTS or request.url.path == "/health":
         return await call_next(request)
 
-    logger.info("-> %s %s", request.method, request.url.path)
+    request_logger.info("-> %s %s", request.method, request.url.path)
     started = time.perf_counter()
     response = await call_next(request)
     elapsed = (time.perf_counter() - started) * 1000
-    logger.info(
+    request_logger.info(
         "<- %s %s %s (%.0fms)",
         request.method,
         request.url.path,
@@ -288,7 +294,30 @@ _TRANSCRIBE_CONTENT_PREFIXES = ("audio/", "video/")
 # an API caller name an arbitrary model would turn a transcription request
 # into an unbounded, uncontrolled download from an untrusted source. Keep in
 # sync with the frontend's own model list (`TranscribeOptionsDialog.tsx`).
-_ALLOWED_WHISPER_MODELS = frozenset({"tiny", "small", "medium", "large-v3", "large-v3-turbo"})
+_ALLOWED_WHISPER_MODELS = frozenset(
+    {"tiny", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"}
+)
+
+
+@app.get("/transcribe/config", tags=["Transcription"], response_model=TranscriptionConfig)
+async def transcribe_config(user_id: str = Depends(get_user_id)) -> TranscriptionConfig:
+    """What this deployment's "auto" actually resolves to.
+
+    Read straight off Settings rather than the service, so it costs nothing and
+    never loads a model. The client uses it to name the defaults in its own UI:
+    an option labelled only "auto" hides which model ran, which is exactly how a
+    recording ends up transcribed by something the operator never chose.
+    """
+    settings = get_settings()
+    return TranscriptionConfig(
+        models=sorted(_ALLOWED_WHISPER_MODELS),
+        default_model=settings.whisper_model,
+        default_language=settings.default_language,
+        default_suppress_numerals=settings.suppress_numerals,
+        default_clustering_threshold=settings.diarization_clustering_threshold,
+        hotwords_configured=bool(settings.hotwords),
+        suggested_terms=list(SUGGESTED_TERMS),
+    )
 
 
 @app.post("/transcribe", tags=["Transcription"], response_model=TranscriptionResponse)
@@ -311,6 +340,10 @@ async def transcribe_audio(
     context: str | None = Form(None),
     # None uses this deployment's configured default (WHISPERX_WHISPER_MODEL).
     model: str | None = Form(None),
+    # None uses WHISPERX_SUPPRESS_NUMERALS. Digits are suppressed at the decoder
+    # (whisperx/asr.py:256-262), so this is the only point at which a caller who
+    # needs numerals in the transcript can ask for them.
+    suppress_numerals: bool | None = Form(None),
     user_id: str = Depends(get_user_id),
 ) -> TranscriptionResponse:
     """Speaker-labelled transcript via WhisperX (model set by WHISPERX_WHISPER_MODEL).
@@ -346,6 +379,7 @@ async def transcribe_audio(
             context_terms=context_terms,
             context=context,
             model=model,
+            suppress_numerals=suppress_numerals,
         )
     except Exception as error:
         logger.exception("Transcription failed for %s", file.filename)

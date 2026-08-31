@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { QueryKeys, dataService } from 'librechat-data-provider';
 import type { QueryObserverResult, UseQueryOptions } from '@tanstack/react-query';
-import type { TTranscriptCorrection } from 'librechat-data-provider';
+import type { TTranscribeConfig, TTranscriptCorrection } from 'librechat-data-provider';
 
 /** Every correction event recorded against a transcript, chronological - the
  *  component replays them (last write per key wins) to derive current
@@ -17,6 +17,24 @@ export const useTranscriptCorrectionsQuery = (
     {
       ...config,
       enabled: !!transcriptFileId && !!conversationId && (config?.enabled ?? true),
+    },
+  );
+};
+
+/** This deployment's effective transcription defaults. Cached indefinitely -
+ *  it only changes when the server is reconfigured and restarted - so the
+ *  options dialog can name what each "auto" resolves to instead of hiding it. */
+export const useTranscribeConfigQuery = (
+  config?: UseQueryOptions<TTranscribeConfig>,
+): QueryObserverResult<TTranscribeConfig> => {
+  return useQuery<TTranscribeConfig>(
+    [QueryKeys.transcribeConfig],
+    () => dataService.getTranscribeConfig(),
+    {
+      staleTime: Infinity,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      ...config,
     },
   );
 };

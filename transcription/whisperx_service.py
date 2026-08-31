@@ -262,7 +262,14 @@ class WhisperXService:
             budget=prompt_budget(hotwords_tokens=hotwords_tokens),
         )
 
-    def _transcribe_batched(self, model, audio, language: str | None, initial_prompt: str | None) -> dict:
+    def _transcribe_batched(
+        self,
+        model,
+        audio,
+        language: str | None,
+        initial_prompt: str | None,
+        suppress_numerals: bool,
+    ) -> dict:
         """Run the ASR pass, optionally under a per-request initial_prompt.
 
         WhisperX bakes ASR options into the pipeline at load time and its
@@ -290,17 +297,23 @@ class WhisperXService:
         resolved_language = language or self.settings.default_language
 
         with self._options_lock:
-            if not initial_prompt:
-                return model.transcribe(audio, batch_size=effective_batch_size, language=resolved_language)
-
             previous_options = model.options
-            model.options = replace(previous_options, initial_prompt=initial_prompt)
+            # A plain pipeline attribute (whisperx/asr.py:131), read by both the
+            # apply and revert branches inside transcribe() - so it is only safe
+            # to move around the whole call, never during it.
+            previous_suppress = model.suppress_numerals
+            if initial_prompt:
+                model.options = replace(previous_options, initial_prompt=initial_prompt)
+            model.suppress_numerals = suppress_numerals
             try:
                 return model.transcribe(audio, batch_size=effective_batch_size, language=resolved_language)
             finally:
                 # Restored even on failure - a leaked prompt would silently
-                # condition every later recording on this one's terminology.
+                # condition every later recording on this one's terminology,
+                # and a leaked numeral setting would silently spell out digits
+                # in a recording that asked for them.
                 model.options = previous_options
+                model.suppress_numerals = previous_suppress
 
     def transcribe(
         self,
@@ -313,6 +326,7 @@ class WhisperXService:
         context_terms: str | None = None,
         context: str | None = None,
         model: str | None = None,
+        suppress_numerals: bool | None = None,
     ) -> tuple[list[dict], str, dict]:
         prompt_build = self.build_prompt(context_terms, context, model_name=model)
         initial_prompt = prompt_build.prompt or self.settings.initial_prompt
@@ -327,12 +341,30 @@ class WhisperXService:
         if diarize:
             self._require_diarization_token()
 
+        # Resolved the same way _get_model resolves it, so the diagnostics
+        # report the model that actually ran rather than the caller's
+        # possibly-absent request.
+        resolved_model = model or self.settings.whisper_model
+        # Digits are suppressed at the decoder, not merely discouraged
+        # (whisperx/asr.py:256-262), so a caller that needs numerals in the
+        # transcript has to say so before the decode - nothing downstream can
+        # recover a token the decoder was forbidden to emit.
+        resolved_suppress_numerals = (
+            self.settings.suppress_numerals if suppress_numerals is None else suppress_numerals
+        )
+        logger.info(
+            "Transcribing with whisper model %s (requested: %s)",
+            resolved_model,
+            model or "auto",
+        )
         whisper_model = self._get_model(model)
         # Load and resample audio to 16kHz (WhisperX standard)
         # whisperx.load_audio() automatically resamples to 16kHz using librosa
         audio = whisperx.load_audio(audio_path)
 
-        result = self._transcribe_batched(whisper_model, audio, language, initial_prompt)
+        result = self._transcribe_batched(
+            whisper_model, audio, language, initial_prompt, resolved_suppress_numerals
+        )
         language_code = result["language"]
 
         alignment_gap_count = 0
@@ -487,6 +519,9 @@ class WhisperXService:
             "alignment_failed": alignment_failed,
             "diarization_backend": "pyannote",
             "diarization_speaker_count": diarization_speaker_count,
+            "model_requested": model,
+            "model_used": resolved_model,
+            "suppress_numerals": resolved_suppress_numerals,
             # What the prompt window actually took. Reported rather than
             # guessed at: a term the user typed and that never reached the
             # model is worth saying out loud.

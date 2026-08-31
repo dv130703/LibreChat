@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { isEqual } from 'lodash';
-import { Mic, FileText, Download, AlertCircle, ArrowUpToLine, ArrowDownToLine } from 'lucide-react';
+import {
+  Mic,
+  FileText,
+  Download,
+  RotateCcw,
+  AlertCircle,
+  ArrowUpToLine,
+  ArrowDownToLine,
+} from 'lucide-react';
 import { Spinner } from '@librechat/client';
 import {
   useGetConvoIdQuery,
@@ -13,6 +21,7 @@ import {
   useEditTranscriptTextMutation,
   useEditTranscriptTimeMutation,
   useInsertTranscriptLineMutation,
+  useRetranscribeAudioMutation,
 } from '~/data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
 import type { MouseEvent } from 'react';
@@ -20,6 +29,8 @@ import type { ParsedLine, SpeakerOption } from './types';
 import { computeInsertionSlots, formatSlotTimestamp } from './lineInsert';
 import { reduceCorrections, createCustomSpeakerId } from './corrections';
 import { getSpeakerDotColor } from './speakerColors';
+import TranscribeOptionsDialog from './TranscribeOptionsDialog';
+import type { TranscribeAudioOptions } from './TranscribeOptionsDialog';
 import TranscriptHeader from './TranscriptHeader';
 import TranscriptRow from './TranscriptRow';
 import { splitFileIds } from './fileIds';
@@ -92,10 +103,18 @@ function downloadTextFile(text: string, filename: string): void {
 
 /** Below this width, hide a button's text label - always leaving its icon
  *  and `aria-label` behind, so the action stays both visible and
- *  screen-reader-identifiable with no visible text at all. */
-const SPEAKERS_LABEL_MIN_WIDTH = 340;
-const EXPORT_LABEL_MIN_WIDTH = 280;
-const EXPORT_EXT_MIN_WIDTH = 420;
+ *  screen-reader-identifiable with no visible text at all.
+ *
+ *  Read as a shed order, widest threshold first: the `.txt` suffix is pure
+ *  decoration and goes first, then Re-transcribe (occasional, and the longest
+ *  label), then the speaker roster, and Export keeps its label longest because
+ *  it is the most-used action here. Values allow for three labelled buttons -
+ *  they were originally tuned for two, so adding Re-transcribe raised them
+ *  all rather than just adding a fourth constant. */
+const EXPORT_EXT_MIN_WIDTH = 540;
+const RETRANSCRIBE_LABEL_MIN_WIDTH = 470;
+const SPEAKERS_LABEL_MIN_WIDTH = 400;
+const EXPORT_LABEL_MIN_WIDTH = 330;
 
 /** This header lives in a user-resizable split pane (`Workspace.tsx`,
  *  minSize 320px with no upper bound), not a fixed viewport, so a CSS media
@@ -109,14 +128,20 @@ function TranscriptPanelHeader({
   lineCount,
   speakerCount,
   namedSpeakerCount,
+  modelUsed,
+  isRetranscribing,
   onOpenRoster,
   onExport,
+  onRetranscribe,
 }: {
   lineCount: number;
   speakerCount: number;
   namedSpeakerCount: number;
+  modelUsed?: string;
+  isRetranscribing: boolean;
   onOpenRoster: () => void;
   onExport: () => void;
+  onRetranscribe: () => void;
 }) {
   const localize = useLocalize();
   const rowRef = useRef<HTMLDivElement>(null);
@@ -142,6 +167,7 @@ function TranscriptPanelHeader({
   const showSpeakersLabel = width === null || width >= SPEAKERS_LABEL_MIN_WIDTH;
   const showExportLabel = width === null || width >= EXPORT_LABEL_MIN_WIDTH;
   const showExportExt = width === null || width >= EXPORT_EXT_MIN_WIDTH;
+  const showRetranscribeLabel = width === null || width >= RETRANSCRIBE_LABEL_MIN_WIDTH;
 
   const speakersLabel =
     namedSpeakerCount === 0
@@ -167,9 +193,20 @@ function TranscriptPanelHeader({
           <h2 className="truncate text-sm font-semibold leading-tight text-text-primary">
             {localize('com_ui_transcript')}
           </h2>
-          <span className="truncate text-xs text-text-secondary">
-            {localize('com_ui_transcript_line_count', { count: lineCount })}
-          </span>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-xs text-text-secondary">
+              {localize('com_ui_transcript_line_count', { count: lineCount })}
+            </span>
+            {modelUsed != null && modelUsed !== '' && (
+              <span
+                title={localize('com_ui_transcript_model', { 0: modelUsed })}
+                aria-label={localize('com_ui_transcript_model', { 0: modelUsed })}
+                className="shrink-0 whitespace-nowrap rounded border border-border-medium px-1.5 py-px font-mono text-[10px] leading-4 text-text-secondary"
+              >
+                {modelUsed}
+              </span>
+            )}
+          </div>
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
@@ -184,6 +221,21 @@ function TranscriptPanelHeader({
             {showSpeakersLabel && <span>{speakersLabel}</span>}
           </button>
         )}
+        <button
+          type="button"
+          onClick={onRetranscribe}
+          disabled={isRetranscribing}
+          aria-label={localize('com_ui_transcript_retranscribe')}
+          title={localize('com_ui_transcript_retranscribe_hint')}
+          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isRetranscribing ? (
+            <Spinner className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          )}
+          {showRetranscribeLabel && <span>{localize('com_ui_transcript_retranscribe')}</span>}
+        </button>
         <button
           type="button"
           onClick={onExport}
@@ -232,6 +284,36 @@ export default function TranscriptPanel({
   );
 
   const { data: corrections } = useTranscriptCorrectionsQuery(transcriptFileId, conversationId);
+  const [retranscribeOpen, setRetranscribeOpen] = useState(false);
+  const retranscribe = useRetranscribeAudioMutation();
+
+  /** The option set that produced the current transcript, so re-running starts
+   *  from what was actually used rather than from the dialog's defaults. */
+  const previousOptions = useMemo<TranscribeAudioOptions | undefined>(() => {
+    const meta = conversation?.transcription;
+    if (!meta) {
+      return undefined;
+    }
+    return {
+      includeTimestamps: meta.includeTimestamps ?? true,
+      diarize: meta.diarize ?? true,
+      minSpeakers: meta.minSpeakers,
+      maxSpeakers: meta.maxSpeakers,
+      clusteringThreshold: meta.clusteringThreshold,
+      contextTerms: meta.contextTerms,
+      context: meta.context,
+      model: meta.requestedModel,
+      language: meta.language,
+      suppressNumerals: meta.suppressNumerals,
+    };
+  }, [conversation?.transcription]);
+
+  const handleRetranscribe = useCallback(
+    (options: TranscribeAudioOptions) => {
+      retranscribe.mutate({ conversationId, options });
+    },
+    [conversationId, retranscribe],
+  );
   const { speakerNames, segmentReassignments, textEdits, timeEdits, insertedLines } = useMemo(
     () => reduceCorrections(corrections ?? []),
     [corrections],
@@ -1054,8 +1136,11 @@ export default function TranscriptPanel({
           lineCount={lines.length}
           speakerCount={uniqueSpeakerIds.length}
           namedSpeakerCount={namedSpeakerCount}
+          modelUsed={conversation?.transcription?.model}
+          isRetranscribing={retranscribe.isLoading}
           onOpenRoster={() => setRosterModalOpen(true)}
           onExport={handleExportTxt}
+          onRetranscribe={() => setRetranscribeOpen(true)}
         />
       )}
       <div
@@ -1200,6 +1285,12 @@ export default function TranscriptPanel({
           </div>,
           document.body,
         )}
+      <TranscribeOptionsDialog
+        isOpen={retranscribeOpen}
+        onOpenChange={setRetranscribeOpen}
+        onConfirm={handleRetranscribe}
+        initialOptions={previousOptions}
+      />
       <SpeakerRosterModal
         open={rosterModalOpen}
         onOpenChange={setRosterModalOpen}

@@ -507,6 +507,24 @@ export const transcribeAudio = (
   return request.postMultiPart(endpoints.transcribe(), data, requestConfig);
 };
 
+/** Re-runs transcription on the audio already stored for a conversation,
+ *  replacing that conversation's transcript in place - same conversation, same
+ *  URL, one transcript. No upload leg, so there is no progress signal at all:
+ *  callers show an indeterminate state for the whole run. */
+/** This deployment's effective transcription defaults - see
+ *  `GET /api/transcribe/config`. Read once and reused; it changes only when the
+ *  server is reconfigured. */
+export const getTranscribeConfig = (): Promise<f.TTranscribeConfig> => {
+  return request.get(endpoints.transcribeConfig());
+};
+
+export const retranscribeAudio = (
+  conversationId: string,
+  options: f.TTranscribeOptions,
+): Promise<f.TTranscribeResponse> => {
+  return request.post(endpoints.retranscribe(conversationId), { options });
+};
+
 /** Every correction event recorded against a transcript (speaker renames,
  *  segment reassignments), chronological - see `GET /api/transcript-corrections`. */
 export const getTranscriptCorrections = (

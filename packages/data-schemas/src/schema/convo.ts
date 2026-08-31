@@ -52,6 +52,24 @@ const convoSchema: Schema<IConversation> = new Schema(
     pinned: {
       type: Boolean,
     },
+    /** How this conversation's transcript was produced, for the Audio
+     *  Transcriber. `model` is what the ASR server actually loaded (never the
+     *  caller's possibly-absent request), and the rest is the option set the
+     *  transcript came from - kept so a re-transcribe starts from what was
+     *  used rather than from the dialog's defaults. */
+    transcription: {
+      model: { type: String },
+      requestedModel: { type: String },
+      language: { type: String },
+      diarize: { type: Boolean },
+      minSpeakers: { type: Number },
+      maxSpeakers: { type: Number },
+      clusteringThreshold: { type: Number },
+      includeTimestamps: { type: Boolean },
+      contextTerms: { type: String },
+      context: { type: String },
+      suppressNumerals: { type: Boolean },
+    },
   },
   { timestamps: true },
 );

@@ -97,7 +97,7 @@ async function embedTranscript({ req, file_id, filename, text }) {
  * @param {string} params.sourceFileId - id of the persisted source file; the transcript's
  *   own id is derived from it (`${sourceFileId}-transcript`) so re-transcribing the same
  *   source overwrites its transcript instead of leaking a duplicate.
- * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; clusteringThreshold?: number; language?: string; contextTerms?: string; context?: string; model?: string}} [params.options]
+ * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; clusteringThreshold?: number; language?: string; contextTerms?: string; context?: string; model?: string; suppressNumerals?: boolean}} [params.options]
  * @returns {Promise<{
  *   segments: Array<{start: number; end: number; speaker: string; text: string}>,
  *   language: string | undefined,
@@ -124,6 +124,7 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
     contextTerms,
     context,
     model,
+    suppressNumerals,
   } = options;
 
   const jwtToken = generateShortLivedToken(req.user.id);
@@ -159,6 +160,11 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
   // (WHISPERX_WHISPER_MODEL) - the server is also the one place that
   // validates this against its allow-list (see `rag_server/app.py`), so
   // nothing here needs to duplicate that check.
+  // Explicitly forwarded even when false: digits are suppressed at the decoder,
+  // so `false` is a real instruction ("emit numerals"), not an absent option.
+  if (suppressNumerals != null) {
+    formData.append('suppress_numerals', String(suppressNumerals));
+  }
   if (model) {
     formData.append('model', model);
   }

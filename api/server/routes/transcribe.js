@@ -1,5 +1,8 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { pipeline } = require('stream/promises');
+const axios = require('axios');
 const express = require('express');
 const multer = require('multer');
 const { logger } = require('@librechat/data-schemas');
@@ -9,7 +12,7 @@ const {
   FileContext,
   FileSources,
 } = require('librechat-data-provider');
-const { getStorageMetadata, extractAudioTrack } = require('@librechat/api');
+const { getStorageMetadata, extractAudioTrack, generateShortLivedToken } = require('@librechat/api');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
 const configMiddleware = require('~/server/middleware/config/app');
 const { storage: uploadStorage } = require('~/server/routes/files/multer');
@@ -42,6 +45,32 @@ async function saveSourceFile({ req, file, source, fileName }) {
 }
 
 const router = express.Router();
+
+/**
+ * The option set a transcript came from, plus the model that actually served
+ * it. Stored on the conversation so the transcript pane can say which model
+ * wrote it, and so a re-transcribe starts from these rather than the dialog's
+ * defaults. `model_used` is the server's resolved choice - the only reliable
+ * answer when the caller left the model on "auto".
+ */
+function buildTranscriptionMeta(options, result) {
+  return {
+    model: result.diagnostics?.model_used,
+    requestedModel: result.diagnostics?.model_requested,
+    language: result.language,
+    diarize: options.diarize,
+    minSpeakers: options.minSpeakers,
+    maxSpeakers: options.maxSpeakers,
+    clusteringThreshold: options.clusteringThreshold,
+    includeTimestamps: options.includeTimestamps,
+    contextTerms: options.contextTerms,
+    context: options.context,
+    // The resolved value the decoder ran under, not the request's - the caller
+    // may have left it unset and taken the deployment default.
+    suppressNumerals: result.diagnostics?.suppress_numerals,
+  };
+}
+
 router.use(requireJwtAuth);
 router.use(configMiddleware);
 
@@ -93,6 +122,31 @@ function getTranscribeErrorMessage(error) {
  * runs before any chat message exists, `file_search` can be forced on for the
  * conversation from the very first turn (no "not bound this turn" race).
  */
+/**
+ * This deployment's effective transcription defaults, proxied from the ASR
+ * server. The client needs it to label its own "auto" options with the value
+ * they actually resolve to - an unlabelled auto is how a recording gets
+ * transcribed by a model nobody chose.
+ */
+router.get('/config', async (req, res) => {
+  if (!process.env.RAG_API_URL) {
+    return res.status(503).json({
+      error: 'Audio transcription is not configured on this server (RAG_API_URL is not set).',
+    });
+  }
+  try {
+    const jwtToken = generateShortLivedToken(req.user.id);
+    const response = await axios.get(`${process.env.RAG_API_URL}/transcribe/config`, {
+      headers: { Authorization: `Bearer ${jwtToken}` },
+      timeout: 10 * 1000,
+    });
+    res.json(response.data);
+  } catch (error) {
+    logger.error('[GET /api/transcribe/config] Failed', error);
+    res.status(502).json({ error: 'Could not read transcription defaults' });
+  }
+});
+
 router.post('/', upload.single('file'), async (req, res) => {
   const { file } = req;
   if (!file) {
@@ -204,7 +258,13 @@ router.post('/', upload.single('file'), async (req, res) => {
     // pre-existing conversation, so it's always safe to fully delete on failure.
     await db.saveConvo(
       { userId: req.user.id },
-      { conversationId, title: file.originalname, endpoint, agent_id },
+      {
+        conversationId,
+        title: file.originalname,
+        endpoint,
+        agent_id,
+        transcription: buildTranscriptionMeta(options, result),
+      },
       { context: 'POST /api/transcribe' },
     );
     conversationCreated = true;
@@ -261,6 +321,108 @@ router.post('/', upload.single('file'), async (req, res) => {
     }
   } finally {
     await cleanupTempFile();
+  }
+});
+
+
+/**
+ * Re-runs transcription on the audio already stored for a conversation and
+ * replaces that conversation's transcript in place.
+ *
+ * The source audio is read back out of whichever strategy stored it and staged
+ * to a temp file, because `transcribeAndEmbed` streams from a path rather than
+ * a buffer. Both the transcript row and its RAG chunks are keyed off the
+ * source file's id, and `createFile` upserts on `file_id`, so the previous
+ * transcript is overwritten rather than duplicated - same conversation, same
+ * URL, one transcript.
+ *
+ * Corrections for this conversation are dropped rather than carried over: they
+ * address line indices in text that no longer exists, and re-applying them to
+ * a different transcript would corrupt it silently.
+ */
+router.post('/:conversationId/retranscribe', async (req, res) => {
+  const { conversationId } = req.params;
+
+  let options = {};
+  try {
+    const raw = req.body?.options;
+    options = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? {});
+  } catch {
+    return res.status(400).json({ error: 'Invalid options payload' });
+  }
+
+  let tmpPath = null;
+  try {
+    const conversation = await db.getConvo(req.user.id, conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const fileIds = conversation.files ?? [];
+    const transcriptFileId = fileIds.find((id) => id.endsWith('-transcript'));
+    const sourceFileId = fileIds.find((id) => id !== transcriptFileId);
+    if (!sourceFileId) {
+      return res.status(409).json({ error: 'This conversation has no source audio to re-transcribe' });
+    }
+
+    const records = await db.getFiles({ file_id: sourceFileId, user: req.user.id });
+    const sourceRecord = records?.[0];
+    if (!sourceRecord) {
+      return res.status(409).json({ error: 'Source audio is no longer available' });
+    }
+
+    const { getDownloadStream } = getStrategyFunctions(sourceRecord.source);
+    const stream = await getDownloadStream(req, sourceRecord.storageKey || sourceRecord.filepath);
+    tmpPath = path.join(os.tmpdir(), `retranscribe-${sourceFileId}-${Date.now()}`);
+    await pipeline(stream, fs.createWriteStream(tmpPath));
+
+    logger.info(`[RETRANSCRIBE] conversationId=${conversationId} source=${sourceFileId}`);
+    const result = await transcribeAndEmbed({
+      req,
+      file: {
+        path: tmpPath,
+        originalname: sourceRecord.filename,
+        mimetype: sourceRecord.type || inferMimeType(sourceRecord.filename),
+      },
+      sourceFileId,
+      options,
+    });
+
+    await db.deleteTranscriptCorrections([conversationId]);
+
+    const transcriptFile = await saveTranscriptFile({
+      req,
+      file_id: result.transcriptFileId,
+      filename: `${sourceRecord.filename}-transcript.md`,
+      text: result.text,
+      conversationId,
+      embedded: result.embedded,
+    });
+
+    await db.saveConvo(
+      { userId: req.user.id },
+      { conversationId, transcription: buildTranscriptionMeta(options, result) },
+      { context: 'POST /api/transcribe/:conversationId/retranscribe' },
+    );
+
+    logger.info(
+      `[RETRANSCRIBE] done conversationId=${conversationId} segments=${result.segments.length} model=${result.diagnostics?.model_used}`,
+    );
+    res.json({
+      conversationId,
+      segments: result.segments,
+      language: result.language,
+      diagnostics: result.diagnostics,
+      sourceFile: { file_id: sourceRecord.file_id, filename: sourceRecord.filename },
+      transcriptFile: { file_id: transcriptFile.file_id, filename: transcriptFile.filename },
+    });
+  } catch (error) {
+    logger.error('[POST /api/transcribe/:conversationId/retranscribe] Failed', error);
+    res.status(500).json({ error: getTranscribeErrorMessage(error) });
+  } finally {
+    if (tmpPath) {
+      await fs.promises.unlink(tmpPath).catch(() => {});
+    }
   }
 });
 

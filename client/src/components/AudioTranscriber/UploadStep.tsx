@@ -267,6 +267,7 @@ export default function UploadStep() {
             mutation.error,
             localize('com_ui_audio_transcriber_error'),
           )}
+          modelLabel={lastOptions?.model || localize('com_ui_transcribe_model_auto')}
           onRetry={handleRetry}
           onChooseDifferent={handleChooseDifferent}
         />
@@ -340,6 +341,7 @@ export default function UploadStep() {
         isOpen={isOptionsOpen}
         onOpenChange={setIsOptionsOpen}
         onConfirm={handleConfirm}
+        initialOptions={lastOptions ?? undefined}
       />
     </div>
   );
@@ -352,6 +354,7 @@ function FileProgressCard({
   elapsedSeconds,
   isError,
   errorMessage,
+  modelLabel,
   onRetry,
   onChooseDifferent,
 }: {
@@ -361,6 +364,7 @@ function FileProgressCard({
   elapsedSeconds: number;
   isError: boolean;
   errorMessage: string;
+  modelLabel: string;
   onRetry: () => void;
   onChooseDifferent: () => void;
 }) {
@@ -429,6 +433,9 @@ function FileProgressCard({
             {isProcessing
               ? localize('com_ui_audio_transcriber_processing', { 0: String(elapsedSeconds) })
               : localize('com_ui_audio_transcriber_uploading', { 0: String(uploadProgress) })}
+          </p>
+          <p className="text-xs text-text-secondary">
+            {localize('com_ui_audio_transcriber_model', { 0: modelLabel })}
           </p>
         </>
       )}

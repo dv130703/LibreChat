@@ -35,7 +35,7 @@
     "rag": "cd rag_server && .venv/bin/python app.py",
     "backend:inspect": "cross-env NODE_ENV=production node --inspect --expose-gc api/server/index.js",
     "backend:dev": "cross-env NODE_ENV=development npx nodemon api/server/index.js",
-    "dev": "concurrently -n RAG,BACKEND,FRONTEND -c magenta,blue,green \"npm:rag\" \"npm:backend:dev\" \"npm:frontend:dev\"",
+    "dev": "concurrently -n \"[PYTHON],,[FRONTEND]\" --prefix \"{name}\" -c magenta,green,green \"npm:rag\" \"npm:backend:dev\" \"npm:frontend:dev\"",
     "backend:experimental": "cross-env NODE_ENV=production node api/server/experimental.js",
     "backend:stop": "node config/stop-backend.js",
     "build:data-provider": "cd packages/data-provider && npm run build",

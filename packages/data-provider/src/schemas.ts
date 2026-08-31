@@ -946,6 +946,24 @@ export const tConversationSchema = z.object({
   endpointType: eModelEndpointSchema.nullable().optional(),
   isArchived: z.boolean().optional(),
   pinned: z.boolean().optional(),
+  /** Audio Transcriber only: how this conversation's transcript was produced.
+   *  `model` is what the ASR server actually loaded, which is the only
+   *  reliable answer when the request left the model on "auto". */
+  transcription: z
+    .object({
+      model: z.string().optional(),
+      requestedModel: z.string().optional(),
+      language: z.string().optional(),
+      diarize: z.boolean().optional(),
+      minSpeakers: z.number().optional(),
+      maxSpeakers: z.number().optional(),
+      clusteringThreshold: z.number().optional(),
+      includeTimestamps: z.boolean().optional(),
+      contextTerms: z.string().optional(),
+      context: z.string().optional(),
+      suppressNumerals: z.boolean().optional(),
+    })
+    .optional(),
   title: z.string().nullable().or(z.literal('New Chat')).default('New Chat'),
   user: z.string().optional(),
   messages: z.array(z.string()).optional(),

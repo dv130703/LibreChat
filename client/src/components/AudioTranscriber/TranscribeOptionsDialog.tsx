@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { Check, ChevronDown, Clock, Minus, Plus, Users, X } from 'lucide-react';
+import { Check, ChevronDown, Clock, Hash, Minus, Plus, Users, X } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 import {
   OGDialog,
   OGDialogTemplate,
   Switch,
-  Textarea,
   Label,
   Button,
   usePopoverZIndex,
 } from '@librechat/client';
+import { useTranscribeConfigQuery } from '~/data-provider';
 import { useLocalize } from '~/hooks';
 import type { TranslationKeys } from '~/hooks/useLocalize';
 import { cn } from '~/utils';
@@ -41,6 +41,10 @@ export interface TranscribeAudioOptions {
    *  an allow-list server-side (`rag_server/app.py`) - this list is only for
    *  what the picker offers, not the actual security boundary. */
   model?: string;
+  /** Whether digits are suppressed at the decoder. Sent explicitly rather than
+   *  left absent: suppression happens inside the decoder, so `false` is a real
+   *  instruction and an omitted value silently takes the server's default. */
+  suppressNumerals?: boolean;
   /** ISO 639-1 code (e.g. `'en'`), or `undefined` to let the server
    *  auto-detect from the first 30 seconds of audio - the right default for
    *  a single-language recording, but worth overriding for code-switched
@@ -98,6 +102,11 @@ const WHISPER_MODEL_OPTIONS: Array<{
     value: 'medium',
     labelKey: 'com_ui_transcribe_model_medium',
     hintKey: 'com_ui_transcribe_model_medium_hint',
+  },
+  {
+    value: 'large-v2',
+    labelKey: 'com_ui_transcribe_model_large_v2',
+    hintKey: 'com_ui_transcribe_model_large_v2_hint',
   },
   {
     value: 'large-v3',
@@ -698,12 +707,61 @@ interface TranscribeOptionsDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (options: TranscribeAudioOptions) => void;
+  /** What to open with. Absent fields fall back to this dialog's defaults.
+   *  Supplying the last-used set is what stops a second transcription in the
+   *  same session from silently reverting to Auto with no terms - the model
+   *  and vocabulary someone chose are the whole point of opening this. */
+  initialOptions?: TranscribeAudioOptions;
+}
+
+/** Stable identity for "no suggestions yet", so the seeding effect below does
+ *  not re-run on every render while the config query is still in flight. */
+const NO_TERMS: string[] = [];
+
+/** The literal string the ASR decoder will receive, assembled the same way the
+ *  server's `build_initial_prompt` assembles it: a bare comma-separated list
+ *  terminated with a period, no framing sentence. Shown to the user because a
+ *  prompt they cannot see is a prompt they cannot correct. */
+function previewInitialPrompt(tags: string[]): string {
+  return tags.length > 0 ? `${tags.join(', ')}.` : '';
+}
+
+/** Matches the server's own fallback counter (`estimate_tokens`, 3 chars per
+ *  token). Approximate by construction - the real count comes from the model's
+ *  tokenizer - so it is always rendered with a "~". */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3);
+}
+
+/** Inverse of the `termTags.join(', ')` that `handleConfirm` sends, so terms
+ *  survive a round trip through a stored option set. Splits on the same
+ *  separators the server's own `parse_terms` accepts. */
+function parseTermTags(contextTerms: string | undefined): string[] {
+  if (!contextTerms) {
+    return [];
+  }
+  return contextTerms
+    .split(/[,;\n]/)
+    .map((term) => term.trim())
+    .filter((term) => term.length > 0);
+}
+
+/** Reverses `handleConfirm`'s threshold mapping so a re-opened dialog shows the
+ *  grouping that produced the previous run rather than resetting to balanced. */
+function groupingFromThreshold(threshold: number | undefined): SpeakerGrouping {
+  if (threshold == null) {
+    return 'balanced';
+  }
+  const match = (Object.keys(CLUSTERING_THRESHOLD) as Array<Exclude<SpeakerGrouping, 'balanced'>>)
+    .find((key) => CLUSTERING_THRESHOLD[key] === threshold);
+  return match ?? 'balanced';
 }
 
 export default function TranscribeOptionsDialog({
   isOpen,
   onOpenChange,
   onConfirm,
+  initialOptions,
 }: TranscribeOptionsDialogProps) {
   const localize = useLocalize();
   const [step, setStep] = useState<1 | 2>(1);
@@ -713,20 +771,33 @@ export default function TranscribeOptionsDialog({
   const [diarize, setDiarize] = useState(DEFAULT_OPTIONS.diarize);
   const [speakerRange, setSpeakerRange] = useState<{ min?: number; max?: number }>({});
   const [speakerGrouping, setSpeakerGrouping] = useState<SpeakerGrouping>('balanced');
-  const [context, setContext] = useState('');
   const [termTags, setTermTags] = useState<string[]>([]);
+  /** Held positively ("emit digits") rather than as the server's negative
+   *  `suppress_numerals`, so the control reads the way the transcript does. */
+  const [emitNumerals, setEmitNumerals] = useState(false);
+  const seededRef = useRef(false);
+  const { data: transcribeConfig } = useTranscribeConfigQuery();
+  const serverSuppressesNumerals = transcribeConfig?.default_suppress_numerals ?? true;
 
   const handleOpenChange = (open: boolean) => {
     if (open) {
       setStep(1);
-      setModel('');
-      setLanguage('');
-      setIncludeTimestamps(DEFAULT_OPTIONS.includeTimestamps);
-      setDiarize(DEFAULT_OPTIONS.diarize);
-      setSpeakerRange({});
-      setSpeakerGrouping('balanced');
-      setContext('');
-      setTermTags([]);
+      setModel(initialOptions?.model ?? '');
+      setLanguage(initialOptions?.language ?? '');
+      setIncludeTimestamps(initialOptions?.includeTimestamps ?? DEFAULT_OPTIONS.includeTimestamps);
+      setDiarize(initialOptions?.diarize ?? DEFAULT_OPTIONS.diarize);
+      setSpeakerRange({ min: initialOptions?.minSpeakers, max: initialOptions?.maxSpeakers });
+      setSpeakerGrouping(groupingFromThreshold(initialOptions?.clusteringThreshold));
+      // A re-run (or a repeat in this session) restores exactly what was used,
+      // including a deliberately emptied list. Only a first, fresh
+      // transcription gets seeded with the deployment vocabulary below.
+      seededRef.current = initialOptions != null;
+      setTermTags(parseTermTags(initialOptions?.contextTerms));
+      setEmitNumerals(
+        initialOptions?.suppressNumerals != null
+          ? !initialOptions.suppressNumerals
+          : !serverSuppressesNumerals,
+      );
     }
     onOpenChange(open);
   };
@@ -743,6 +814,29 @@ export default function TranscribeOptionsDialog({
     setSpeakerRange((prev) => ({ ...prev, max: value }));
   };
 
+  const suggestedTerms = transcribeConfig?.suggested_terms ?? NO_TERMS;
+  const unusedSuggestions = suggestedTerms.filter(
+    (term) => !termTags.some((tag) => tag.toLowerCase() === term.toLowerCase()),
+  );
+  const promptPreview = previewInitialPrompt(termTags);
+
+  /** Seeds a fresh transcription with the deployment vocabulary once the config
+   *  query lands. Runs as an effect rather than inside the open handler because
+   *  the config may still be in flight when the dialog opens. */
+  useEffect(() => {
+    if (!isOpen || seededRef.current || suggestedTerms.length === 0) {
+      return;
+    }
+    seededRef.current = true;
+    setTermTags((current) => (current.length === 0 ? suggestedTerms : current));
+  }, [isOpen, suggestedTerms]);
+
+  const addSuggestion = (term: string) => {
+    setTermTags((current) =>
+      current.some((tag) => tag.toLowerCase() === term.toLowerCase()) ? current : [...current, term],
+    );
+  };
+
   const handleConfirm = () => {
     onConfirm({
       includeTimestamps,
@@ -754,9 +848,9 @@ export default function TranscribeOptionsDialog({
           ? CLUSTERING_THRESHOLD[speakerGrouping]
           : undefined,
       contextTerms: termTags.length > 0 ? termTags.join(', ') : undefined,
-      context: context.trim() || undefined,
       model: model || undefined,
       language: language || undefined,
+      suppressNumerals: !emitNumerals,
     });
     onOpenChange(false);
   };
@@ -799,6 +893,13 @@ export default function TranscribeOptionsDialog({
                   <p className="text-xs text-text-secondary">
                     {localize('com_ui_transcribe_options_model_hint_note')}
                   </p>
+                  {model === '' && transcribeConfig?.default_model != null && (
+                    <p className="text-xs text-text-secondary">
+                      {localize('com_ui_transcribe_options_model_resolved', {
+                        0: transcribeConfig.default_model,
+                      })}
+                    </p>
+                  )}
                   <p className="text-xs text-text-secondary">
                     {localize('com_ui_transcribe_options_language_hint')}
                   </p>
@@ -819,7 +920,17 @@ export default function TranscribeOptionsDialog({
                     checked={diarize}
                     onCheckedChange={setDiarize}
                   />
+                  <ToggleRow
+                    id="transcribe-option-numerals"
+                    icon={Hash}
+                    label={localize('com_ui_transcribe_options_numerals')}
+                    checked={emitNumerals}
+                    onCheckedChange={setEmitNumerals}
+                  />
                 </div>
+                <p className="text-xs text-text-secondary">
+                  {localize('com_ui_transcribe_options_numerals_hint')}
+                </p>
 
                 {diarize && (
                   <div className="grid gap-3 rounded-lg border border-border-light bg-surface-secondary p-3">
@@ -864,15 +975,6 @@ export default function TranscribeOptionsDialog({
               </>
             ) : (
               <>
-                <Textarea
-                  id="transcribe-option-context"
-                  rows={2}
-                  value={context}
-                  onChange={(e) => setContext(e.target.value)}
-                  placeholder={localize('com_ui_transcribe_options_context_placeholder')}
-                  aria-label={localize('com_ui_transcribe_options_context_label')}
-                  className="focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
-                />
                 <TagInput
                   id="transcribe-option-terms"
                   ariaLabel={localize('com_ui_transcribe_options_terms_label')}
@@ -882,6 +984,58 @@ export default function TranscribeOptionsDialog({
                   tags={termTags}
                   onChange={setTermTags}
                 />
+
+                {unusedSuggestions.length > 0 && (
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs font-medium text-text-secondary">
+                      {localize('com_ui_transcribe_options_suggestions_label')}
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {unusedSuggestions.map((term) => (
+                        <button
+                          key={term}
+                          type="button"
+                          onClick={() => addSuggestion(term)}
+                          aria-label={localize('com_ui_transcribe_options_add_suggestion', {
+                            0: term,
+                          })}
+                          className="flex items-center gap-1 rounded-full border border-dashed border-border-medium px-2.5 py-1 text-xs text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                        >
+                          <Plus className="h-3 w-3 shrink-0" aria-hidden="true" />
+                          {term}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-1.5 rounded-lg border border-border-light bg-surface-secondary p-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-xs font-medium text-text-secondary">
+                      {localize('com_ui_transcribe_options_prompt_preview_label')}
+                    </span>
+                    {promptPreview !== '' && (
+                      <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-secondary">
+                        {localize('com_ui_transcribe_options_prompt_tokens', {
+                          0: String(estimateTokens(promptPreview)),
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  <p
+                    className={cn(
+                      'break-words font-mono text-xs',
+                      promptPreview === '' ? 'italic text-text-tertiary' : 'text-text-primary',
+                    )}
+                  >
+                    {promptPreview === ''
+                      ? localize('com_ui_transcribe_options_prompt_preview_empty')
+                      : promptPreview}
+                  </p>
+                  <p className="text-xs text-text-secondary">
+                    {localize('com_ui_transcribe_options_prompt_preview_hint')}
+                  </p>
+                </div>
               </>
             )}
           </div>

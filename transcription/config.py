@@ -35,9 +35,14 @@ class Settings(BaseSettings):
             "HUGGING_FACE_HUB_TOKEN",
         ),
     )
-    # None uses whisperx's default (pyannote/speaker-diarization-community-1).
-    # The older, more battle-tested pyannote/speaker-diarization-3.1 is also
-    # supported - it needs its own terms acceptance on huggingface.co.
+    # None uses whisperx's default, pyannote/speaker-diarization-community-1,
+    # which is also what pyannote themselves recommend: their README calls 3.1
+    # "the legacy pipeline" and reports community-1 ahead of it on every
+    # benchmark listed (AMI IHM 17.0% vs 18.8% DER, DIHARD 3 20.2% vs 21.4%,
+    # AISHELL-4 11.7% vs 12.2%), with the gain specifically in "speaker counting
+    # and assignment". pyannote/speaker-diarization-3.1 still loads if pinned
+    # here - it needs its own terms acceptance on huggingface.co - but it is a
+    # downgrade, not a safer choice.
     diarization_model: str | None = None
     # None lets whisperx auto-detect the spoken language.
     default_language: str | None = None
