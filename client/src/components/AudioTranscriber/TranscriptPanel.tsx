@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import * as Popover from '@radix-ui/react-popover';
 import { isEqual } from 'lodash';
 import {
   Mic,
@@ -9,8 +10,9 @@ import {
   AlertCircle,
   ArrowUpToLine,
   ArrowDownToLine,
+  ChevronDown,
 } from 'lucide-react';
-import { Spinner } from '@librechat/client';
+import { Spinner, usePopoverZIndex } from '@librechat/client';
 import {
   useGetConvoIdQuery,
   useFilePreview,
@@ -22,8 +24,12 @@ import {
   useEditTranscriptTimeMutation,
   useInsertTranscriptLineMutation,
   useRetranscribeAudioMutation,
+  useExportInterviewDocxMutation,
+  useExportMeetingMinutesDocxMutation,
 } from '~/data-provider';
+import type { InterviewTranscriptForm, MeetingMinutesForm } from 'librechat-data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
+import { cn } from '~/utils';
 import type { MouseEvent } from 'react';
 import type { ParsedLine, SpeakerOption } from './types';
 import { computeInsertionSlots, formatSlotTimestamp } from './lineInsert';
@@ -31,6 +37,8 @@ import { reduceCorrections, createCustomSpeakerId } from './corrections';
 import { getSpeakerDotColor } from './speakerColors';
 import TranscribeOptionsDialog from './TranscribeOptionsDialog';
 import type { TranscribeAudioOptions } from './TranscribeOptionsDialog';
+import InterviewTranscriptDialog from './InterviewTranscriptDialog';
+import MeetingMinutesDialog from './MeetingMinutesDialog';
 import TranscriptHeader from './TranscriptHeader';
 import TranscriptRow from './TranscriptRow';
 import { splitFileIds } from './fileIds';
@@ -101,17 +109,27 @@ function downloadTextFile(text: string, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 /** Below this width, hide a button's text label - always leaving its icon
  *  and `aria-label` behind, so the action stays both visible and
  *  screen-reader-identifiable with no visible text at all.
  *
- *  Read as a shed order, widest threshold first: the `.txt` suffix is pure
- *  decoration and goes first, then Re-transcribe (occasional, and the longest
+ *  Read as a shed order, widest threshold first: the export menu's dropdown
+ *  chevron goes first (the menu still opens on click with no chevron - only
+ *  the visual hint is gone), then Re-transcribe (occasional, and the longest
  *  label), then the speaker roster, and Export keeps its label longest because
  *  it is the most-used action here. Values allow for three labelled buttons -
  *  they were originally tuned for two, so adding Re-transcribe raised them
  *  all rather than just adding a fourth constant. */
-const EXPORT_EXT_MIN_WIDTH = 540;
+const EXPORT_CHEVRON_MIN_WIDTH = 540;
 const RETRANSCRIBE_LABEL_MIN_WIDTH = 470;
 const SPEAKERS_LABEL_MIN_WIDTH = 400;
 const EXPORT_LABEL_MIN_WIDTH = 330;
@@ -127,20 +145,26 @@ const EXPORT_LABEL_MIN_WIDTH = 330;
 function TranscriptPanelHeader({
   lineCount,
   speakerCount,
-  namedSpeakerCount,
   modelUsed,
   isRetranscribing,
+  isExportingInterview,
+  isExportingMeetingMinutes,
   onOpenRoster,
-  onExport,
+  onExportTxt,
+  onExportInterview,
+  onExportMeetingMinutes,
   onRetranscribe,
 }: {
   lineCount: number;
   speakerCount: number;
-  namedSpeakerCount: number;
   modelUsed?: string;
   isRetranscribing: boolean;
+  isExportingInterview: boolean;
+  isExportingMeetingMinutes: boolean;
   onOpenRoster: () => void;
-  onExport: () => void;
+  onExportTxt: () => void;
+  onExportInterview: () => void;
+  onExportMeetingMinutes: () => void;
   onRetranscribe: () => void;
 }) {
   const localize = useLocalize();
@@ -166,16 +190,12 @@ function TranscriptPanelHeader({
   // collapsing to icons for one frame on every mount.
   const showSpeakersLabel = width === null || width >= SPEAKERS_LABEL_MIN_WIDTH;
   const showExportLabel = width === null || width >= EXPORT_LABEL_MIN_WIDTH;
-  const showExportExt = width === null || width >= EXPORT_EXT_MIN_WIDTH;
+  const showExportChevron = width === null || width >= EXPORT_CHEVRON_MIN_WIDTH;
   const showRetranscribeLabel = width === null || width >= RETRANSCRIBE_LABEL_MIN_WIDTH;
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuZIndex = usePopoverZIndex();
 
-  const speakersLabel =
-    namedSpeakerCount === 0
-      ? localize('com_ui_transcript_roster_badge_unnamed', { count: speakerCount })
-      : localize('com_ui_transcript_roster_badge_named', {
-          count: speakerCount,
-          named: namedSpeakerCount,
-        });
+  const speakersLabel = localize('com_ui_transcript_define_speakers');
 
   return (
     <div
@@ -236,18 +256,80 @@ function TranscriptPanelHeader({
           )}
           {showRetranscribeLabel && <span>{localize('com_ui_transcript_retranscribe')}</span>}
         </button>
-        <button
-          type="button"
-          onClick={onExport}
-          aria-label={`${localize('com_ui_transcript_export')} ${localize('com_ui_transcript_export_txt')}`}
-          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
-        >
-          <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          {showExportLabel && <span>{localize('com_ui_transcript_export')}</span>}
-          {showExportExt && (
-            <span className="text-text-secondary">{localize('com_ui_transcript_export_txt')}</span>
-          )}
-        </button>
+        <Popover.Root open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
+          <Popover.Trigger asChild>
+            <button
+              type="button"
+              aria-label={localize('com_ui_transcript_export')}
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+            >
+              {isExportingInterview || isExportingMeetingMinutes ? (
+                <Spinner className="h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              )}
+              {showExportLabel && <span>{localize('com_ui_transcript_export')}</span>}
+              {showExportChevron && (
+                <ChevronDown
+                  className={cn(
+                    'h-3 w-3 shrink-0 text-text-secondary transition-transform',
+                    exportMenuOpen && 'rotate-180',
+                  )}
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Content
+              side="bottom"
+              align="end"
+              sideOffset={4}
+              style={{ zIndex: exportMenuZIndex }}
+              className="w-56 rounded-lg border border-border-medium bg-surface-primary p-1 shadow-lg"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  onExportTxt();
+                }}
+                className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm text-text-primary hover:bg-surface-hover"
+              >
+                {localize('com_ui_transcript_export_format_txt')}
+                <span className="text-xs text-text-secondary">
+                  {localize('com_ui_transcript_export_txt')}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  onExportInterview();
+                }}
+                className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm text-text-primary hover:bg-surface-hover"
+              >
+                {localize('com_ui_transcript_export_format_interview')}
+                <span className="text-xs text-text-secondary">
+                  {localize('com_ui_transcript_export_docx')}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  onExportMeetingMinutes();
+                }}
+                className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm text-text-primary hover:bg-surface-hover"
+              >
+                {localize('com_ui_transcript_export_format_meeting_minutes')}
+                <span className="text-xs text-text-secondary">
+                  {localize('com_ui_transcript_export_docx')}
+                </span>
+              </button>
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
       </div>
     </div>
   );
@@ -498,11 +580,6 @@ export default function TranscriptPanel({
         dotColorClass: getSpeakerDotColor(speakerOrder.get(id) ?? 0),
       })),
     [uniqueSpeakerIds, speakerOrder, getDisplayName],
-  );
-
-  const namedSpeakerCount = useMemo(
-    () => uniqueSpeakerIds.filter((id) => stableSpeakerNames[id] != null).length,
-    [uniqueSpeakerIds, stableSpeakerNames],
   );
 
   /** A representative clip for each speaker - their first line - so the
@@ -1105,17 +1182,63 @@ export default function TranscriptPanel({
     };
   }, [contextMenu, closeContextMenu]);
 
+  /** Shared by both export formats - the interview cover sheet changes only
+   *  what gets prepended, never how the dialogue itself is rendered (per
+   *  spec: "the transcript body itself is unaffected"). */
+  const buildTranscriptBody = useCallback(
+    () =>
+      effectiveLines
+        .map((line) => {
+          const speaker = line.speaker != null ? `${getDisplayName(line.speaker)}: ` : '';
+          const time = line.timestamp ? `[${line.timestamp}] ` : '';
+          return `${time}${speaker}${line.text}`;
+        })
+        .join('\n'),
+    [effectiveLines, getDisplayName],
+  );
+
   const handleExportTxt = useCallback(() => {
     const title = conversation?.title ?? 'transcript';
-    const text = effectiveLines
-      .map((line) => {
-        const speaker = line.speaker != null ? `${getDisplayName(line.speaker)}: ` : '';
-        const time = line.timestamp ? `[${line.timestamp}] ` : '';
-        return `${time}${speaker}${line.text}`;
-      })
-      .join('\n');
-    downloadTextFile(text, `${title}-transcript.txt`);
-  }, [conversation?.title, effectiveLines, getDisplayName]);
+    downloadTextFile(buildTranscriptBody(), `${title}-transcript.txt`);
+  }, [conversation?.title, buildTranscriptBody]);
+
+  const [interviewDialogOpen, setInterviewDialogOpen] = useState(false);
+  const exportInterviewDocx = useExportInterviewDocxMutation();
+
+  const handleExportInterview = useCallback(
+    (form: InterviewTranscriptForm) => {
+      const title = conversation?.title ?? 'transcript';
+      exportInterviewDocx.mutate(
+        { conversationId, form, speakers: speakerOptions },
+        {
+          onSuccess: (blob) => {
+            const safeTitle = title.replace(/[/:*?"<>|]/g, '_');
+            downloadBlob(blob, `${safeTitle}-interview.docx`);
+          },
+        },
+      );
+    },
+    [conversationId, conversation?.title, speakerOptions, exportInterviewDocx],
+  );
+
+  const [meetingMinutesDialogOpen, setMeetingMinutesDialogOpen] = useState(false);
+  const exportMeetingMinutesDocx = useExportMeetingMinutesDocxMutation();
+
+  const handleExportMeetingMinutes = useCallback(
+    (form: MeetingMinutesForm) => {
+      const title = conversation?.title ?? 'transcript';
+      exportMeetingMinutesDocx.mutate(
+        { conversationId, form, speakers: speakerOptions },
+        {
+          onSuccess: (blob) => {
+            const safeTitle = title.replace(/[/:*?"<>|]/g, '_');
+            downloadBlob(blob, `${safeTitle}-meeting-minutes.docx`);
+          },
+        },
+      );
+    },
+    [conversationId, conversation?.title, speakerOptions, exportMeetingMinutesDocx],
+  );
 
   const isLoading =
     !isConvoError && (isConvoLoading || (transcriptFileId != null && isPreviewLoading));
@@ -1135,11 +1258,14 @@ export default function TranscriptPanel({
         <TranscriptPanelHeader
           lineCount={lines.length}
           speakerCount={uniqueSpeakerIds.length}
-          namedSpeakerCount={namedSpeakerCount}
           modelUsed={conversation?.transcription?.model}
           isRetranscribing={retranscribe.isLoading}
+          isExportingInterview={exportInterviewDocx.isLoading}
+          isExportingMeetingMinutes={exportMeetingMinutesDocx.isLoading}
           onOpenRoster={() => setRosterModalOpen(true)}
-          onExport={handleExportTxt}
+          onExportTxt={handleExportTxt}
+          onExportInterview={() => setInterviewDialogOpen(true)}
+          onExportMeetingMinutes={() => setMeetingMinutesDialogOpen(true)}
           onRetranscribe={() => setRetranscribeOpen(true)}
         />
       )}
@@ -1290,6 +1416,18 @@ export default function TranscriptPanel({
         onOpenChange={setRetranscribeOpen}
         onConfirm={handleRetranscribe}
         initialOptions={previousOptions}
+      />
+      <InterviewTranscriptDialog
+        isOpen={interviewDialogOpen}
+        onOpenChange={setInterviewDialogOpen}
+        speakerOptions={speakerOptions}
+        onConfirm={handleExportInterview}
+      />
+      <MeetingMinutesDialog
+        isOpen={meetingMinutesDialogOpen}
+        onOpenChange={setMeetingMinutesDialogOpen}
+        initialTitle={conversation?.title ?? ''}
+        onConfirm={handleExportMeetingMinutes}
       />
       <SpeakerRosterModal
         open={rosterModalOpen}

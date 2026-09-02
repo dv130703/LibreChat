@@ -69,6 +69,8 @@ const convoSchema: Schema<IConversation> = new Schema(
       contextTerms: { type: String },
       context: { type: String },
       suppressNumerals: { type: Boolean },
+      channelSplit: { type: Boolean },
+      diarizationBackend: { type: String },
     },
   },
   { timestamps: true },

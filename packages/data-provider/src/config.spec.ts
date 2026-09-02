@@ -24,6 +24,10 @@ describe('excludedKeys', () => {
     expect(excludedKeys.has(field)).toBe(true);
   });
 
+  it('excludes transcription - BaseClient $unsets any persisted field missing from this set on every message send', () => {
+    expect(excludedKeys.has('transcription')).toBe(true);
+  });
+
   it('does not exclude tenantId (plugin-level guard owns this)', () => {
     expect(excludedKeys.has('tenantId')).toBe(false);
   });

@@ -5,6 +5,9 @@ import type {
   TTranscribeOptions,
   TTranscribeResponse,
   TTranscriptCorrection,
+  InterviewTranscriptForm,
+  MeetingMinutesForm,
+  NamedSpeaker,
   TSpeakerRenameRequest,
   TSegmentReassignRequest,
   TTextEditRequest,
@@ -73,13 +76,57 @@ export const useRetranscribeAudioMutation = (): UseMutationResult<
       // that no longer exists), and the conversation carries the new model.
       queryClient.invalidateQueries([QueryKeys.conversation, data.conversationId]);
       queryClient.invalidateQueries([QueryKeys.filePreview, data.transcriptFile?.file_id]);
-      queryClient.invalidateQueries([QueryKeys.transcriptCorrections, data.transcriptFile?.file_id]);
+      queryClient.invalidateQueries([
+        QueryKeys.transcriptCorrections,
+        data.transcriptFile?.file_id,
+      ]);
     },
   });
 };
 
 /** Renames a speaker - applies to every line from that speaker at once, since
  *  the name is a property of the speaker id, not any individual line. */
+export interface ExportInterviewDocxVariables {
+  conversationId: string;
+  form: InterviewTranscriptForm;
+  speakers: NamedSpeaker[];
+}
+
+/** The interview cover-sheet export - a real .docx from the server, not a
+ *  client-built .txt approximation of one. No cache to invalidate: this
+ *  produces a file, not a change to the conversation. */
+export const useExportInterviewDocxMutation = (): UseMutationResult<
+  Blob,
+  unknown,
+  ExportInterviewDocxVariables,
+  unknown
+> => {
+  return useMutation([MutationKeys.exportInterviewDocx], {
+    mutationFn: ({ conversationId, form, speakers }: ExportInterviewDocxVariables) =>
+      dataService.exportInterviewDocx(conversationId, form, speakers),
+  });
+};
+
+export interface ExportMeetingMinutesDocxVariables {
+  conversationId: string;
+  form: MeetingMinutesForm;
+  speakers: NamedSpeaker[];
+}
+
+/** The meeting-minutes export - same shape as `useExportInterviewDocxMutation`,
+ *  a real .docx from the server with no cache to invalidate. */
+export const useExportMeetingMinutesDocxMutation = (): UseMutationResult<
+  Blob,
+  unknown,
+  ExportMeetingMinutesDocxVariables,
+  unknown
+> => {
+  return useMutation([MutationKeys.exportMeetingMinutesDocx], {
+    mutationFn: ({ conversationId, form, speakers }: ExportMeetingMinutesDocxVariables) =>
+      dataService.exportMeetingMinutesDocx(conversationId, form, speakers),
+  });
+};
+
 export const useRenameTranscriptSpeakerMutation = (
   transcriptFileId: string,
 ): UseMutationResult<TTranscriptCorrection, unknown, TSpeakerRenameRequest, unknown> => {

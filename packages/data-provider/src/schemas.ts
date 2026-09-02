@@ -962,6 +962,13 @@ export const tConversationSchema = z.object({
       contextTerms: z.string().optional(),
       context: z.string().optional(),
       suppressNumerals: z.boolean().optional(),
+      /** Whether the user accepted channel-based speaker separation for this
+       *  recording after being notified it has multiple audio channels. */
+      channelSplit: z.boolean().optional(),
+      /** What actually produced the speaker labels - `"pyannote"` or
+       *  `"channel_split"` - from the transcription response's own
+       *  diagnostics, not just the request's intent. */
+      diarizationBackend: z.string().optional(),
     })
     .optional(),
   title: z.string().nullable().or(z.literal('New Chat')).default('New Chat'),

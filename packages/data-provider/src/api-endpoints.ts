@@ -309,6 +309,11 @@ export const transcribeConfig = () => `${BASE_URL}/api/transcribe/config`;
 
 export const retranscribe = (conversationId: string) =>
   `${BASE_URL}/api/transcribe/${encodeURIComponent(conversationId)}/retranscribe`;
+
+export const interviewDocx = (conversationId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(conversationId)}/interview-docx`;
+export const meetingMinutesDocx = (conversationId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(conversationId)}/meeting-minutes-docx`;
 const transcriptCorrectionsRoot = `${BASE_URL}/api/transcript-corrections`;
 export const transcriptCorrections = (transcriptFileId: string, conversationId: string) =>
   `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}${buildQuery({ conversationId })}`;

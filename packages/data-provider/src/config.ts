@@ -67,6 +67,7 @@ export const excludedKeys = new Set([
   'spec',
   'disableParams',
   'chatProjectId',
+  'transcription',
 ]);
 
 export enum SettingsViews {

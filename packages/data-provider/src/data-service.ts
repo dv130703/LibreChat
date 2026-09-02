@@ -11,6 +11,8 @@ import * as ag from './types/agents';
 import * as q from './types/queries';
 import * as sk from './types/skills';
 import * as f from './types/files';
+import type { InterviewTranscriptForm, NamedSpeaker } from './interviewTranscript';
+import type { MeetingMinutesForm } from './meetingMinutes';
 import * as config from './config';
 import request from './request';
 import * as s from './schemas';
@@ -516,6 +518,30 @@ export const transcribeAudio = (
  *  server is reconfigured. */
 export const getTranscribeConfig = (): Promise<f.TTranscribeConfig> => {
   return request.get(endpoints.transcribeConfig());
+};
+
+/** The interview cover-sheet export - an actual .docx built server-side, not
+ *  a plain-text approximation. `speakers` is the display-name list the
+ *  dialog already has on screen; the server independently re-derives the
+ *  corrected transcript body from the stored correction log rather than
+ *  trust text the client might send stale. */
+export const exportInterviewDocx = (
+  conversationId: string,
+  form: InterviewTranscriptForm,
+  speakers: NamedSpeaker[],
+): Promise<Blob> => {
+  return request.postForBlob(endpoints.interviewDocx(conversationId), { form, speakers });
+};
+
+/** The meeting-minutes export - same server-side re-derivation of the
+ *  corrected transcript as `exportInterviewDocx`, just a plainer form (no
+ *  witnesses/roles) and a friendlier document layout on the server side. */
+export const exportMeetingMinutesDocx = (
+  conversationId: string,
+  form: MeetingMinutesForm,
+  speakers: NamedSpeaker[],
+): Promise<Blob> => {
+  return request.postForBlob(endpoints.meetingMinutesDocx(conversationId), { form, speakers });
 };
 
 export const retranscribeAudio = (

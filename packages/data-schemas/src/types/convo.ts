@@ -12,6 +12,8 @@ export interface ITranscriptionMeta {
   contextTerms?: string;
   context?: string;
   suppressNumerals?: boolean;
+  channelSplit?: boolean;
+  diarizationBackend?: string;
 }
 
 // @ts-ignore

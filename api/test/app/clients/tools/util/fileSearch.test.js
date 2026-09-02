@@ -1,13 +1,18 @@
 const axios = require('axios');
 
 jest.mock('axios');
-jest.mock('@librechat/api', () => ({
-  generateShortLivedToken: jest.fn(),
-  logAxiosError: jest.fn(),
-}));
+jest.mock('@librechat/api', () => {
+  const actual = jest.requireActual('@librechat/api');
+  return {
+    generateShortLivedToken: jest.fn(),
+    logAxiosError: jest.fn(),
+    extractChunkEvidence: actual.extractChunkEvidence,
+  };
+});
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: {
+    info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     debug: jest.fn(),
@@ -24,6 +29,8 @@ jest.mock('~/server/services/Files/permissions', () => ({
 
 const { createFileSearchTool } = require('~/app/clients/tools/util/fileSearch');
 const { generateShortLivedToken } = require('@librechat/api');
+const { logger } = require('@librechat/data-schemas');
+const { getFiles } = require('~/models');
 
 describe('fileSearch.js - tuple return validation', () => {
   beforeEach(() => {
@@ -140,6 +147,55 @@ describe('fileSearch.js - tuple return validation', () => {
         relevance: expect.any(Number),
         pages: [1],
         pageRelevance: { 1: expect.any(Number) },
+        chunkId: 'file-123',
+        chunkIndex: null,
+        transcriptVersion: null,
+        indexVersion: null,
+        startS: null,
+        endS: null,
+        speakers: [],
+      });
+    });
+
+    it('attaches evidence (chunk id, version, time range, speakers) recovered from transcript chunks', async () => {
+      generateShortLivedToken.mockReturnValue('mock-jwt-token');
+      getFiles.mockResolvedValueOnce([
+        { file_id: 'transcript-1', transcriptVersion: 5, indexVersion: 5, indexStatus: 'ready' },
+      ]);
+
+      const mockApiResponse = {
+        data: [
+          [
+            {
+              page_content:
+                '[00:42.0-00:46.5] Speaker 1: We agreed on the payment terms.\n[00:46.5-00:50.0] Speaker 2: Yes, that sounds right.',
+              metadata: { source: '/path/to/transcript.md', file_id: 'transcript-1', chunk_index: 3 },
+            },
+            0.1,
+          ],
+        ],
+      };
+      axios.post.mockResolvedValue(mockApiResponse);
+
+      const fileSearchTool = await createFileSearchTool({
+        userId: 'user1',
+        files: [{ file_id: 'transcript-1', filename: 'transcript.md' }],
+      });
+
+      const [formattedString, artifact] = await fileSearchTool.func({ query: 'payment terms' });
+
+      expect(formattedString).toContain('Time range: 42.0s-50.0s');
+      expect(formattedString).toContain('Speakers: Speaker 1, Speaker 2');
+
+      const source = artifact.file_search.sources[0];
+      expect(source).toMatchObject({
+        chunkId: 'transcript-1#3',
+        chunkIndex: 3,
+        transcriptVersion: 5,
+        indexVersion: 5,
+        startS: 42,
+        endS: 50,
+        speakers: ['Speaker 1', 'Speaker 2'],
       });
     });
 
@@ -229,6 +285,54 @@ describe('fileSearch.js - tuple return validation', () => {
       expect(artifact.file_search.sources[0].fileId).toBe('file-2');
       expect(artifact.file_search.sources[1].fileId).toBe('file-1');
     });
+
+    it('attributes results to the correct file when an earlier file in the same batch fails', async () => {
+      // Regression test: file_id used to be recovered from a result's
+      // position in the *filtered* (successes-only) results array, indexed
+      // back into the original (unfiltered) `files` array - once any file
+      // before it in the batch failed, every result after that point got
+      // attributed to the wrong file.
+      generateShortLivedToken.mockReturnValue('mock-jwt-token');
+
+      const mockResponse2 = {
+        data: [
+          [
+            { page_content: 'Content from file 2', metadata: { source: '/path/to/file2.pdf' } },
+            0.1,
+          ],
+        ],
+      };
+      const mockResponse3 = {
+        data: [
+          [
+            { page_content: 'Content from file 3', metadata: { source: '/path/to/file3.pdf' } },
+            0.2,
+          ],
+        ],
+      };
+
+      axios.post
+        .mockRejectedValueOnce(new Error('file-1 query failed'))
+        .mockResolvedValueOnce(mockResponse2)
+        .mockResolvedValueOnce(mockResponse3);
+
+      const fileSearchTool = await createFileSearchTool({
+        userId: 'user1',
+        files: [
+          { file_id: 'file-1', filename: 'file1.pdf' },
+          { file_id: 'file-2', filename: 'file2.pdf' },
+          { file_id: 'file-3', filename: 'file3.pdf' },
+        ],
+      });
+
+      const [, artifact] = await fileSearchTool.func({ query: 'test query' });
+
+      const sources = artifact.file_search.sources;
+      expect(sources).toHaveLength(2);
+      const byContent = Object.fromEntries(sources.map((s) => [s.content, s.fileId]));
+      expect(byContent['Content from file 2']).toBe('file-2');
+      expect(byContent['Content from file 3']).toBe('file-3');
+    });
   });
 });
 
@@ -289,5 +393,72 @@ describe('entity_id scoping by file origin', () => {
     });
     await tool.func({ query: 'q' });
     expect(bodiesSent()[0].entity_id).toBeUndefined();
+  });
+});
+
+describe('retrieval logging', () => {
+  const ORIGINAL_RAG_API_URL = process.env.RAG_API_URL;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RAG_API_URL = 'http://localhost:8000';
+    generateShortLivedToken.mockReturnValue('mock-jwt-token');
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_RAG_API_URL === undefined) {
+      delete process.env.RAG_API_URL;
+    } else {
+      process.env.RAG_API_URL = ORIGINAL_RAG_API_URL;
+    }
+  });
+
+  it('reports staleness for a queried file whose index has fallen behind its transcript version', async () => {
+    getFiles.mockResolvedValueOnce([
+      { file_id: 'file-1', transcriptVersion: 3, indexVersion: 2, indexStatus: 'stale' },
+    ]);
+    axios.post.mockResolvedValueOnce({
+      data: [[{ page_content: 'stale content', metadata: { source: '/path/to/file1.pdf' } }, 0.1]],
+    });
+
+    const tool = await createFileSearchTool({
+      userId: 'user1',
+      files: [{ file_id: 'file-1', filename: 'file1.pdf' }],
+    });
+    await tool.func({ query: 'test query' });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      '[RAG] file_search retrieval',
+      expect.objectContaining({
+        query: 'test query',
+        candidateCount: 1,
+        returnedCount: 1,
+        staleness: [
+          expect.objectContaining({
+            file_id: 'file-1',
+            transcriptVersion: 3,
+            indexVersion: 2,
+            indexStatus: 'stale',
+            isStale: true,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('omits staleness for a file with no tracked version (not the Audio Transcriber)', async () => {
+    getFiles.mockResolvedValueOnce([]);
+    axios.post.mockResolvedValueOnce({ data: [] });
+
+    const tool = await createFileSearchTool({
+      userId: 'user1',
+      files: [{ file_id: 'plain-file', filename: 'doc.pdf' }],
+    });
+    await tool.func({ query: 'test query' });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      '[RAG] file_search retrieval',
+      expect.objectContaining({ staleness: undefined }),
+    );
   });
 });

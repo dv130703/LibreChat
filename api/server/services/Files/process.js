@@ -1330,6 +1330,13 @@ async function saveBase64Image(
  */
 async function saveTranscriptFile({ req, file_id, filename, text, conversationId, embedded }) {
   const bytes = Buffer.byteLength(text, 'utf8');
+  // `createFile`'s upsert is a MongoDB *replacement* update (no `$set`), so
+  // any field not explicitly included here is dropped, not left alone -
+  // `transcriptVersion`/`indexVersion` have to be read first and re-supplied
+  // on every call, including a plain re-transcribe of the same file_id, or
+  // they'd silently reset instead of continuing the sequence.
+  const existing = await db.findFileById(file_id);
+  const transcriptVersion = (existing?.transcriptVersion ?? 0) + 1;
   return await db.createFile(
     {
       type: 'text/markdown',
@@ -1341,6 +1348,56 @@ async function saveTranscriptFile({ req, file_id, filename, text, conversationId
       text,
       bytes,
       embedded: Boolean(embedded),
+      transcriptVersion,
+      // On a failed embed, the RAG index may still hold whatever it had
+      // before this call (or may not - see `embedTranscript`'s retry/failure
+      // handling) - either way it does NOT reflect this new version, so
+      // `indexVersion` is left at its previous value rather than advanced,
+      // and `indexStatus` says so explicitly instead of leaving it ambiguous.
+      indexVersion: embedded ? transcriptVersion : (existing?.indexVersion ?? null),
+      indexStatus: embedded ? 'indexed' : 'index_failed',
+      user: req.user.id,
+      conversationId,
+      ...(await getRetentionExpiry(req)),
+      tenantId: req.user.tenantId,
+    },
+    true,
+  );
+}
+
+/**
+ * Persists the full diarization/ASR detail for one transcription - raw pyannote
+ * turns, speaker embeddings, and per-word speaker assignments - as its own
+ * text-only file record, same storage pattern as `saveTranscriptFile` (content
+ * lives directly on the Mongo record, no physical bytes). Never embedded into
+ * RAG and never shown in the transcript pane: a forensic/audit artifact only,
+ * kept separate so the plain transcript response and its RAG embedding stay the
+ * size and shape they always were. `file_id` is deterministic (derived from the
+ * source audio file's own id) so re-transcribing overwrites this record instead
+ * of leaking a duplicate.
+ *
+ * @param {Object} params
+ * @param {ServerRequest} params.req
+ * @param {string} params.file_id
+ * @param {string} params.filename
+ * @param {import('librechat-data-provider').TTranscriptionDiarizationDetail} params.detail
+ * @param {string} [params.conversationId]
+ * @returns {Promise<MongoFile>}
+ */
+async function saveDiarizationDetailFile({ req, file_id, filename, detail, conversationId }) {
+  const text = JSON.stringify(detail);
+  const bytes = Buffer.byteLength(text, 'utf8');
+  return await db.createFile(
+    {
+      type: 'application/json',
+      source: FileSources.text,
+      context: FileContext.transcript_diarization_detail,
+      file_id,
+      filepath: `transcript-diarization-detail://${file_id}`,
+      filename,
+      text,
+      bytes,
+      embedded: false,
       user: req.user.id,
       conversationId,
       ...(await getRetentionExpiry(req)),
@@ -1433,6 +1490,7 @@ module.exports = {
   processFileURL,
   saveBase64Image,
   saveTranscriptFile,
+  saveDiarizationDetailFile,
   processImageFile,
   uploadImageBuffer,
   sweepExpiredFiles,

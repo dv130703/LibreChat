@@ -29,6 +29,17 @@ async function _postMultiPart(url: string, formData: FormData, options?: AxiosRe
   return response.data;
 }
 
+/** A JSON-body POST whose response is binary (a generated file, not JSON) -
+ *  `responseType: 'blob'` is what makes axios hand back a `Blob` in
+ *  `response.data` instead of trying to parse it as JSON. */
+async function _postForBlob(url: string, data?: any): Promise<Blob> {
+  const response = await axios.post(url, JSON.stringify(data), {
+    headers: { 'Content-Type': 'application/json' },
+    responseType: 'blob',
+  });
+  return response.data;
+}
+
 async function _postTTS(url: string, formData: FormData, options?: AxiosRequestConfig) {
   const response = await axios.post(url, formData, {
     ...options,
@@ -421,6 +432,7 @@ export default {
   getResponse: _getResponse,
   post: _post,
   postMultiPart: _postMultiPart,
+  postForBlob: _postForBlob,
   postTTS: _postTTS,
   put: _put,
   delete: _delete,

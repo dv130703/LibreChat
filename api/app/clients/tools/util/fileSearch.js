@@ -1,7 +1,11 @@
 const axios = require('axios');
 const { logger } = require('@librechat/data-schemas');
 const { tool } = require('@librechat/agents/langchain/tools');
-const { generateShortLivedToken, logAxiosError } = require('@librechat/api');
+const {
+  generateShortLivedToken,
+  logAxiosError,
+  extractChunkEvidence,
+} = require('@librechat/api');
 const { Tools, EToolResources } = require('librechat-data-provider');
 const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
 const { getFiles } = require('~/models');
@@ -78,6 +82,59 @@ const primeFiles = async (options) => {
 };
 
 /**
+ * One structured log line per `file_search` invocation - everything needed
+ * to diagnose "the LLM gave a bad answer" without guessing whether the cause
+ * was retrieval or reasoning: which files were queried, how many candidates
+ * came back per file, which chunks actually made the top-10 cut and their
+ * relevance scores, whether any queried file's RAG index was stale (or had
+ * never indexed successfully) at query time, and total latency. Chunk
+ * content itself is deliberately not logged (only its length) - this is a
+ * diagnostic trail, not a copy of retrieved text.
+ */
+function logRetrieval({ query, files, versionByFileId, startedAt, candidateCount, returned }) {
+  const staleness = files
+    .map((file) => {
+      const version = versionByFileId.get(file.file_id);
+      if (!version || version.transcriptVersion == null) {
+        // Not a file kind that tracks canonical-text versions - nothing to
+        // report, not a lookup failure.
+        return null;
+      }
+      return {
+        file_id: file.file_id,
+        transcriptVersion: version.transcriptVersion,
+        indexVersion: version.indexVersion,
+        indexStatus: version.indexStatus,
+        isStale: version.indexVersion !== version.transcriptVersion,
+      };
+    })
+    .filter((entry) => entry !== null);
+
+  logger.info('[RAG] file_search retrieval', {
+    query,
+    filesQueried: files.map((file) => file.file_id),
+    candidateCount,
+    returnedCount: returned.length,
+    latencyMs: Date.now() - startedAt,
+    staleness: staleness.length > 0 ? staleness : undefined,
+    chunks: returned.map((result) => ({
+      file_id: result.file_id,
+      filename: result.filename,
+      relevance: Number((1 - result.distance).toFixed(4)),
+      page: result.page,
+      chunkIndex: result.chunkIndex,
+      // Recovered from the chunk's own text (see `extractChunkEvidence`) -
+      // timing only, never speaker names, since a renamed speaker can carry
+      // a real person's name and this log line is diagnostic metadata, not
+      // a copy of retrieved content.
+      startS: result.evidence?.startS,
+      endS: result.evidence?.endS,
+      contentLength: result.content?.length ?? 0,
+    })),
+  });
+}
+
+/**
  *
  * @param {Object} options
  * @param {string} options.userId
@@ -89,6 +146,7 @@ const primeFiles = async (options) => {
 const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = false }) => {
   return tool(
     async ({ query }) => {
+      const startedAt = Date.now();
       if (files.length === 0) {
         logger.warn(
           `[RAG] ${Tools.file_search} invoked with no files attached to the tool resource — nothing will be queried.`,
@@ -99,6 +157,29 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
       if (!jwtToken) {
         return ['There was an error authenticating the file search request.', undefined];
       }
+
+      // Version/index-status fields (see `IMongoFile.indexStatus`) are only
+      // ever set on files with revisable canonical text - the Audio
+      // Transcriber's transcript files, currently. `undefined` here for any
+      // other file kind is expected, not a lookup failure - the log line
+      // below just omits staleness for those.
+      const versionByFileId = new Map(
+        (
+          (await getFiles({ file_id: { $in: files.map((file) => file.file_id) } }, null, {
+            file_id: 1,
+            transcriptVersion: 1,
+            indexVersion: 1,
+            indexStatus: 1,
+          })) ?? []
+        ).map((file) => [
+          file.file_id,
+          {
+            transcriptVersion: file.transcriptVersion ?? null,
+            indexVersion: file.indexVersion ?? null,
+            indexStatus: file.indexStatus ?? null,
+          },
+        ]),
+      );
 
       /**
        * @param {import('librechat-data-provider').TFile & { fromAgent?: boolean }} file
@@ -139,6 +220,13 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
               'Content-Type': 'application/json',
             },
           })
+          // `file_id` travels with its own response from here on, rather than
+          // being recovered afterward by array index - `validResults` below
+          // drops failed entries, which shifts every index after the first
+          // failure. Recovering `file_id` via `files[fileIndex]` post-filter
+          // (the previous approach) silently attributed later chunks to the
+          // wrong file whenever an earlier file in the same batch failed.
+          .then((response) => ({ file_id: file.file_id, response }))
           .catch((error) => {
             logAxiosError({
               message: 'Error encountered in `file_search` while querying file',
@@ -150,41 +238,81 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
 
       const results = await Promise.all(queryPromises);
       const validResults = results.filter((result) => result !== null);
+      const candidateCount = validResults.reduce(
+        (sum, result) => sum + (result.response.data?.length ?? 0),
+        0,
+      );
       logger.info(
-        `[RAG] query returned ${validResults.reduce((sum, result) => sum + (result.data?.length ?? 0), 0)} chunk(s) across ${validResults.length}/${files.length} file(s)`,
+        `[RAG] query returned ${candidateCount} chunk(s) across ${validResults.length}/${files.length} file(s)`,
       );
 
       if (validResults.length === 0) {
+        logRetrieval({ query, files, versionByFileId, startedAt, candidateCount: 0, returned: [] });
         return ['No results found or errors occurred while searching the files.', undefined];
       }
 
       const formattedResults = validResults
-        .flatMap((result, fileIndex) =>
-          result.data.map(([docInfo, distance]) => ({
-            filename: docInfo.metadata.source.split('/').pop(),
-            content: docInfo.page_content,
-            distance,
-            file_id: files[fileIndex]?.file_id,
-            page: docInfo.metadata.page || null,
-          })),
+        .flatMap(({ file_id, response }) =>
+          response.data.map(([docInfo, distance]) => {
+            const chunkIndex = docInfo.metadata.chunk_index ?? null;
+            const version = versionByFileId.get(file_id);
+            return {
+              filename: docInfo.metadata.source.split('/').pop(),
+              content: docInfo.page_content,
+              distance,
+              file_id,
+              page: docInfo.metadata.page || null,
+              // A stable identifier for exactly this chunk - `file_id` alone
+              // is ambiguous once a file has more than one chunk. Falls back
+              // to the bare file_id for chunks embedded before `chunk_index`
+              // was surfaced (see `rag_server/app.py`'s `/query`).
+              chunkIndex,
+              chunkId: chunkIndex != null ? `${file_id}#${chunkIndex}` : file_id,
+              transcriptVersion: version?.transcriptVersion ?? null,
+              indexVersion: version?.indexVersion ?? null,
+              // Recovered from the chunk's own text, since chunking isn't
+              // turn-aware and carries no structured timing/speaker metadata
+              // of its own - see `extractChunkEvidence`.
+              evidence: extractChunkEvidence(docInfo.page_content),
+            };
+          }),
         )
         .sort((a, b) => a.distance - b.distance)
         .slice(0, 10);
 
       if (formattedResults.length === 0) {
+        logRetrieval({ query, files, versionByFileId, startedAt, candidateCount, returned: [] });
         return [
           'No content found in the files. The files may not have been processed correctly or you may need to refine your query.',
           undefined,
         ];
       }
 
+      logRetrieval({
+        query,
+        files,
+        versionByFileId,
+        startedAt,
+        candidateCount,
+        returned: formattedResults,
+      });
+
       const formattedString = formattedResults
-        .map(
-          (result, index) =>
-            `File: ${result.filename}${
-              fileCitations ? `\nAnchor: \\ue202turn0file${index} (${result.filename})` : ''
-            }\nRelevance: ${(1.0 - result.distance).toFixed(4)}\nContent: ${result.content}\n`,
-        )
+        .map((result, index) => {
+          const { evidence } = result;
+          // Only surfaced when the chunk actually has timestamped/speaker
+          // lines to report - a non-transcript chunk gets no evidence block
+          // rather than a misleading blank one.
+          const evidenceLines = [
+            evidence.startS != null && evidence.endS != null
+              ? `Time range: ${evidence.startS.toFixed(1)}s-${evidence.endS.toFixed(1)}s`
+              : null,
+            evidence.speakers.length > 0 ? `Speakers: ${evidence.speakers.join(', ')}` : null,
+          ].filter(Boolean);
+          return `File: ${result.filename}${
+            fileCitations ? `\nAnchor: \\ue202turn0file${index} (${result.filename})` : ''
+          }${evidenceLines.length > 0 ? `\n${evidenceLines.join('\n')}` : ''}\nRelevance: ${(1.0 - result.distance).toFixed(4)}\nContent: ${result.content}\n`;
+        })
         .join('\n---\n');
 
       const sources = formattedResults.map((result) => ({
@@ -195,6 +323,13 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
         relevance: 1.0 - result.distance,
         pages: result.page ? [result.page] : [],
         pageRelevance: result.page ? { [result.page]: 1.0 - result.distance } : {},
+        chunkId: result.chunkId,
+        chunkIndex: result.chunkIndex,
+        transcriptVersion: result.transcriptVersion,
+        indexVersion: result.indexVersion,
+        startS: result.evidence.startS ?? null,
+        endS: result.evidence.endS ?? null,
+        speakers: result.evidence.speakers,
       }));
 
       return [formattedString, { [Tools.file_search]: { sources, fileCitations } }];

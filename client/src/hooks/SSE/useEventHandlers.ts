@@ -938,7 +938,13 @@ export default function useEventHandlers({
         setErrorMessages(convoId, errorResponse);
         if (newConversation) {
           newConversation({
-            template: { conversationId: convoId },
+            // Carries the existing conversation's endpoint/model/files
+            // forward instead of a bare { conversationId }, which has no
+            // endpoint and so trips switchToConversation's "build a default
+            // conversation" path - silently dropping files (and with them,
+            // file_search context) even though the underlying persisted
+            // conversation and its files are untouched by this error.
+            template: { ...(submission.conversation ?? {}), conversationId: convoId },
             preset: tPresetSchema.parse(submission.conversation),
           });
         }
@@ -953,7 +959,7 @@ export default function useEventHandlers({
         setErrorMessages(convoId, errorResponse);
         if (newConversation) {
           newConversation({
-            template: { conversationId: convoId },
+            template: { ...(submission.conversation ?? {}), conversationId: convoId },
             preset: tPresetSchema.parse(submission.conversation),
           });
         }
@@ -1043,7 +1049,7 @@ export default function useEventHandlers({
         logger.log('conversation', 'Aborted conversation with minimal messages, ID: ' + convoId);
         if (newConversation) {
           newConversation({
-            template: { conversationId: convoId },
+            template: { ...(submission.conversation ?? {}), conversationId: convoId },
             preset: tPresetSchema.parse(submission.conversation),
           });
         }
@@ -1096,7 +1102,10 @@ export default function useEventHandlers({
         setMessages([...submission.messages, submission.userMessage, errorResponse]);
         if (newConversation) {
           newConversation({
-            template: { conversationId: conversationId || errorResponse.conversationId || v4() },
+            template: {
+              ...(submission.conversation ?? {}),
+              conversationId: conversationId || errorResponse.conversationId || v4(),
+            },
             preset: tPresetSchema.parse(submission.conversation),
           });
         }

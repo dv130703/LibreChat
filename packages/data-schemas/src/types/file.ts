@@ -55,6 +55,31 @@ export interface IMongoFile extends Omit<Document, 'model'> {
   storageRegion?: string;
   object: 'file';
   embedded?: boolean;
+  /**
+   * How many times this file's canonical text has changed - the Audio
+   * Transcriber bumps this on every correction and every re-transcribe (see
+   * `db.markTranscriptStale`). Absent for file kinds that never revise their
+   * own text after creation.
+   */
+  transcriptVersion?: number;
+  /**
+   * Which `transcriptVersion` is actually reflected in this file's RAG
+   * index right now - compare against `transcriptVersion` to detect a stale
+   * index without inferring it from `indexStatus` alone (a transient
+   * 'indexing'/'index_failed' status doesn't by itself say which version,
+   * if any, was last successfully indexed).
+   */
+  indexVersion?: number | null;
+  /**
+   * Lifecycle of this file's RAG index relative to `transcriptVersion`.
+   * `'stale'`: a newer `transcriptVersion` exists than what `indexVersion`
+   * reflects, and re-indexing hasn't started yet. `'indexing'`: an embed
+   * call is in flight. `'indexed'`: the last embed succeeded and
+   * `indexVersion === transcriptVersion`. `'index_failed'`: the last embed
+   * attempt (including retries) failed. Absent/`'not_indexed'` for file
+   * kinds that were never meant to be indexed, or before the first attempt.
+   */
+  indexStatus?: 'not_indexed' | 'stale' | 'indexing' | 'indexed' | 'index_failed';
   type: string;
   context?: string;
   usage: number;

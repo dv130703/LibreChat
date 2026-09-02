@@ -101,6 +101,8 @@ export enum MutationKeys {
   fileDelete = 'fileDelete',
   transcribeAudio = 'transcribeAudio',
   retranscribeAudio = 'retranscribeAudio',
+  exportInterviewDocx = 'exportInterviewDocx',
+  exportMeetingMinutesDocx = 'exportMeetingMinutesDocx',
   renameTranscriptSpeaker = 'renameTranscriptSpeaker',
   reassignTranscriptSegment = 'reassignTranscriptSegment',
   editTranscriptText = 'editTranscriptText',

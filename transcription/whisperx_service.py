@@ -1,6 +1,7 @@
+import copy
 import logging
 import warnings
-from dataclasses import replace
+from dataclasses import asdict, replace
 from functools import lru_cache
 from threading import Lock
 
@@ -20,18 +21,72 @@ import torch
 import whisperx
 from whisperx.diarize import DiarizationPipeline
 
+from .channels import load_audio_channel, probe_channel_count
 from .config import Settings, get_settings
 from .offline import ensure_offline_mode
-from .speaker_bounds import resolve_speaker_bounds
+from .recording_profile import UNKNOWN_SPEAKER_LABEL, compute_recording_profile
+from .speaker_bounds import SpeakerBounds, resolve_speaker_bounds
 from .transcription_prompt import (
     PromptBuild,
     build_initial_prompt,
     estimate_tokens,
     normalize_hotwords,
+    pack_hotwords,
+    parse_terms,
     prompt_budget,
 )
 
 logger = logging.getLogger(__name__)
+
+# Past this many seconds from the nearest diarization turn, "nearest" is no
+# longer meaningful evidence about who's speaking - see
+# `WhisperXService._resolve_speaker_assignment`. Illustrative, not calibrated
+# against labelled data (same caveat as the recording-profile thresholds).
+MAX_NEAREST_FALLBACK_DISTANCE_S = 5.0
+
+# Clustering threshold tried on an automatic diarization retry - see
+# `WhisperXService.transcribe`'s retry block. A recording flagged "difficult"
+# (see recording_profile.py) most often means clustering merged two real
+# speakers together or fragmented one speaker's voice into false splits;
+# splitting further is the more common fix of the two, so this leans that
+# way rather than trying both directions. Illustrative, not calibrated.
+DIFFICULT_RETRY_CLUSTERING_THRESHOLD = 0.48
+
+# Only retry once, ever, per transcription - an unbounded "keep retrying
+# until it looks good" loop would turn one slow GPU pass into an unbounded
+# number of them for exactly the recordings that already took the longest to
+# get through diarization once.
+_RETRY_TRIGGER_CLASSIFICATION = "difficult"
+
+
+def _preview_label(segments: list[dict]) -> list[dict]:
+    """Cheap stand-in for the real sequential "Speaker N" renumbering
+    (`WhisperXService._speaker_label`), used only to evaluate a diarization
+    candidate's recording profile before deciding whether to keep it.
+    Substitutes the literal "Unknown" placeholder for unassigned items - so
+    `compute_recording_profile`'s speaker_count exclusion sees it correctly -
+    without running the real renumbering, which the eventual winning
+    candidate still gets from the normal assembly loop in `transcribe`."""
+    preview = []
+    for segment in segments:
+        speaker = (
+            UNKNOWN_SPEAKER_LABEL
+            if segment.get("_assignment_method") == "unknown"
+            else segment.get("speaker")
+        )
+        words = [
+            {
+                **word,
+                "speaker": (
+                    UNKNOWN_SPEAKER_LABEL
+                    if word.get("_assignment_method") == "unknown"
+                    else word.get("speaker")
+                ),
+            }
+            for word in segment.get("words", [])
+        ]
+        preview.append({**segment, "speaker": speaker, "words": words})
+    return preview
 
 
 class WhisperXService:
@@ -262,15 +317,48 @@ class WhisperXService:
             budget=prompt_budget(hotwords_tokens=hotwords_tokens),
         )
 
+    def _build_request_hotwords(self, model, used_terms: list[str]) -> str | None:
+        """Give this request's confirmed terms the same decode-time boost the
+        deployment-wide glossary gets, not just `initial_prompt`'s softer
+        conditioning.
+
+        Experimental (see `transcribe`'s docstring note): faster-whisper
+        documents `hotwords` as a more direct decode-time bias than
+        `initial_prompt`. This deliberately duplicates whatever
+        `build_prompt` already packed into `initial_prompt` (`used_terms`)
+        into this channel too, layered on top of the deployment glossary -
+        to test whether a model that under-weights `initial_prompt` still
+        honours the same terms when boosted this way instead. The deployment
+        glossary is kept first (it is curated once and applies to every
+        recording); confirmed terms fill whatever room is left under
+        faster-whisper's own per-part cap.
+
+        This deliberately breaks the "same words never cost the window
+        twice" invariant `_get_model`'s comment describes for the deployment
+        glossary: a term can now occupy both `hotwords` and `initial_prompt`
+        at once. Accepted for this experiment since confirmed lists are
+        typically a handful of names, not the full 223-token cap either
+        channel allows.
+        """
+        deployment_terms = parse_terms(normalize_hotwords(self.settings.hotwords))
+        if not used_terms:
+            return ", ".join(deployment_terms) if deployment_terms else None
+
+        seen = {term.casefold() for term in deployment_terms}
+        combined = [*deployment_terms, *(term for term in used_terms if term.casefold() not in seen)]
+        return pack_hotwords(combined, self._token_counter(model))
+
     def _transcribe_batched(
         self,
         model,
         audio,
         language: str | None,
         initial_prompt: str | None,
+        hotwords: str | None,
         suppress_numerals: bool,
     ) -> dict:
-        """Run the ASR pass, optionally under a per-request initial_prompt.
+        """Run the ASR pass, optionally under a per-request initial_prompt
+        and/or hotwords.
 
         WhisperX bakes ASR options into the pipeline at load time and its
         transcribe() takes no prompt argument, so a per-recording prompt has to
@@ -288,7 +376,9 @@ class WhisperXService:
         context carried) contaminating a transcript that asked for none of it.
         Skipping straight to model.transcribe() is only actually safe when
         nothing else can be touching model.options at the same moment, which the
-        previous fast path didn't establish.
+        previous fast path didn't establish. `hotwords` carries the same risk
+        (a leaked, request-specific hotwords list boosting the wrong recording's
+        terms), so it is restored in the same `finally` block as `initial_prompt`.
 
         The prompt reaches every chunk, not just the first: the batched decoder
         prepends it inside generate_segment_batched (whisperx/asr.py:47-50).
@@ -302,8 +392,13 @@ class WhisperXService:
             # apply and revert branches inside transcribe() - so it is only safe
             # to move around the whole call, never during it.
             previous_suppress = model.suppress_numerals
+            overrides = {}
             if initial_prompt:
-                model.options = replace(previous_options, initial_prompt=initial_prompt)
+                overrides["initial_prompt"] = initial_prompt
+            if hotwords:
+                overrides["hotwords"] = hotwords
+            if overrides:
+                model.options = replace(previous_options, **overrides)
             model.suppress_numerals = suppress_numerals
             try:
                 return model.transcribe(audio, batch_size=effective_batch_size, language=resolved_language)
@@ -314,6 +409,166 @@ class WhisperXService:
                 # in a recording that asked for them.
                 model.options = previous_options
                 model.suppress_numerals = previous_suppress
+
+    def _asr_and_align(
+        self,
+        whisper_model,
+        audio,
+        language: str | None,
+        initial_prompt: str | None,
+        request_hotwords: str | None,
+        suppress_numerals: bool,
+    ) -> tuple[list[dict], str, int, float, bool]:
+        """ASR + forced alignment for one mono audio stream - the same two
+        steps `transcribe` runs once for the whole recording, factored out so
+        channel-split mode can run them once per channel instead."""
+        result = self._transcribe_batched(
+            whisper_model, audio, language, initial_prompt, request_hotwords, suppress_numerals
+        )
+        language_code = result["language"]
+
+        alignment_gap_count = 0
+        alignment_gap_total_s = 0.0
+        alignment_failed = False
+        try:
+            model_a, metadata = self._get_align_model(language_code)
+            result = whisperx.align(
+                result["segments"], model_a, metadata, audio, self.device, return_char_alignments=False
+            )
+            for segment in result["segments"]:
+                for word in segment.get("words", []):
+                    start, end = word.get("start"), word.get("end")
+                    if start is None or end is None:
+                        alignment_gap_count += 1
+                    else:
+                        alignment_gap_total_s += end - start
+        except Exception:
+            alignment_failed = True
+            logger.exception(
+                "Alignment failed for language=%s; falling back to unaligned segment timestamps",
+                language_code,
+            )
+
+        return result["segments"], language_code, alignment_gap_count, alignment_gap_total_s, alignment_failed
+
+    def _run_diarization(
+        self,
+        audio,
+        asr_segments: list[dict],
+        bounds: SpeakerBounds,
+        clustering_threshold: float | None,
+    ) -> dict:
+        """One full diarize-and-assign pass over already-transcribed+aligned
+        `asr_segments`, clustering at `clustering_threshold`. Never mutates
+        `asr_segments` itself - works on a deep copy, so calling this twice
+        with different thresholds (see the retry block in `transcribe`)
+        never lets one attempt's speaker assignments leak into the other's.
+
+        Returns a dict with `segments` (assignment-resolved, not yet
+        renumbered into "Speaker N" - see `_preview_label`/the real assembly
+        loop in `transcribe`), `diarization_turns`, `speaker_embeddings`, and
+        `diarization_speaker_count`.
+        """
+        segments = copy.deepcopy(asr_segments)
+        diarize_model = self._get_diarize_model()
+
+        # Serialises every use of the shared diarization pipeline the same
+        # way _options_lock serialises the shared ASR model: instantiate()
+        # below mutates the pipeline's clustering hyperparameters in place,
+        # and the inference call right after reads them - two concurrent
+        # /transcribe requests interleaving those two steps on the same
+        # cached pipeline object (see _get_diarize_model) would otherwise
+        # run one request's diarization under hyperparameters meant for a
+        # different request, or race the underlying model's internal state
+        # outright. Nothing upstream of this serialises it: FastAPI runs
+        # each /transcribe call in its own threadpool thread.
+        with self._diarize_lock:
+            if hasattr(diarize_model, "model"):
+                requested_threshold = (
+                    clustering_threshold
+                    if clustering_threshold is not None
+                    else self.settings.diarization_clustering_threshold
+                )
+                try:
+                    # pyannote.audio 4.x's clustering step is VBx-based, not
+                    # the AgglomerativeClustering it was pre-4.0: `method`
+                    # and `min_cluster_size` were never valid parameter names
+                    # on this version - passing them (as this used to) made
+                    # instantiate() raise on every call, silently caught
+                    # below, so this tuning knob was a guaranteed no-op
+                    # regardless of what was configured. Confirmed against
+                    # the installed pipeline's own model.default_parameters().
+                    threshold_to_apply = (
+                        requested_threshold
+                        if requested_threshold is not None
+                        else diarize_model.model.default_parameters()["clustering"]["threshold"]
+                    )
+                    diarize_model.model.instantiate({"clustering": {"threshold": threshold_to_apply}})
+                    if requested_threshold is not None:
+                        logger.info("Applied clustering threshold %s", requested_threshold)
+                except Exception:
+                    logger.exception(
+                        "Could not apply clustering hyperparameters; using pipeline defaults"
+                    )
+
+            # return_embeddings=True costs nothing extra - Community-1 already
+            # computes per-cluster embeddings as part of its own clustering
+            # step; this just asks the pipeline to hand them back instead of
+            # discarding them.
+            if bounds.min_speakers is not None and bounds.min_speakers == bounds.max_speakers:
+                # An exact count forces pyannote's clustering to cut into
+                # precisely that many groups. An equal min/max pair instead
+                # still runs its threshold-based count *estimation* and only
+                # clamps the result afterward - a different, less direct path
+                # even though the number given is identical.
+                diarize_segments, speaker_embeddings = diarize_model(
+                    audio, num_speakers=bounds.min_speakers, return_embeddings=True
+                )
+            else:
+                diarize_segments, speaker_embeddings = diarize_model(
+                    audio,
+                    min_speakers=bounds.min_speakers,
+                    max_speakers=bounds.max_speakers,
+                    return_embeddings=True,
+                )
+
+        if len(diarize_segments) == 0:
+            raise RuntimeError(
+                "Diarization produced no speaker segments. This may indicate that the audio "
+                "is too short, too quiet, or lacks sufficient speaker overlap for accurate diarization. "
+                "Try with different min_speakers/max_speakers settings, or check that you have accepted "
+                "the speaker-diarization-community-1 model terms on huggingface.co."
+            )
+
+        # The raw ground truth everything else here is derived from -
+        # captured before assign_word_speakers touches anything, and kept in
+        # the diarization-detail record (never the plain transcript) so "why
+        # did this word get this speaker" is answerable later instead of
+        # only "because the transcript says so."
+        diarization_turns = [
+            {"start": float(row["start"]), "end": float(row["end"]), "speaker": str(row["speaker"])}
+            for row in diarize_segments[["start", "end", "speaker"]].to_dict("records")
+        ]
+
+        # fill_nearest=False, deliberately - see _resolve_speaker_assignment
+        # for why the library's own unconditional "nearest speaker, no
+        # matter how far away" fallback is not used here.
+        result = whisperx.assign_word_speakers(diarize_segments, {"segments": segments}, fill_nearest=False)
+        diarization_speaker_count = (
+            int(diarize_segments["speaker"].nunique()) if "speaker" in diarize_segments else 0
+        )
+
+        for segment in result["segments"]:
+            self._resolve_speaker_assignment(segment, diarization_turns)
+            for word in segment.get("words", []):
+                self._resolve_speaker_assignment(word, diarization_turns)
+
+        return {
+            "segments": result["segments"],
+            "diarization_turns": diarization_turns,
+            "speaker_embeddings": speaker_embeddings,
+            "diarization_speaker_count": diarization_speaker_count,
+        }
 
     def transcribe(
         self,
@@ -327,9 +582,15 @@ class WhisperXService:
         context: str | None = None,
         model: str | None = None,
         suppress_numerals: bool | None = None,
-    ) -> tuple[list[dict], str, dict]:
+        channel_split: bool = False,
+    ) -> tuple[list[dict], str, dict, list[dict], dict[str, list[float]] | None, dict]:
         prompt_build = self.build_prompt(context_terms, context, model_name=model)
         initial_prompt = prompt_build.prompt or self.settings.initial_prompt
+        # Experimental: also boost this recording's confirmed terms through
+        # hotwords, not just initial_prompt - see _build_request_hotwords.
+        request_hotwords = self._build_request_hotwords(
+            self._get_model(model), prompt_build.used_terms
+        )
 
         # Put the hint in range and the right way round before any diarizer sees
         # it. pyannote takes these at face value, so an inverted pair silently
@@ -338,7 +599,9 @@ class WhisperXService:
         for adjustment in bounds.adjustments:
             logger.warning("Speaker-count hint adjusted: %s", adjustment)
 
-        if diarize:
+        # Channel-split mode replaces pyannote outright (see below), so it
+        # never needs the token pyannote requires.
+        if diarize and not channel_split:
             self._require_diarization_token()
 
         # Resolved the same way _get_model resolves it, so the diagnostics
@@ -353,172 +616,261 @@ class WhisperXService:
             self.settings.suppress_numerals if suppress_numerals is None else suppress_numerals
         )
         logger.info(
-            "Transcribing with whisper model %s (requested: %s)",
+            "Transcribing with whisper model %s (requested: %s), hotwords_terms=%d",
             resolved_model,
             model or "auto",
+            len(parse_terms(request_hotwords)) if request_hotwords else 0,
         )
         whisper_model = self._get_model(model)
-        # Load and resample audio to 16kHz (WhisperX standard)
-        # whisperx.load_audio() automatically resamples to 16kHz using librosa
-        audio = whisperx.load_audio(audio_path)
-
-        result = self._transcribe_batched(
-            whisper_model, audio, language, initial_prompt, resolved_suppress_numerals
-        )
-        language_code = result["language"]
-
-        alignment_gap_count = 0
-        alignment_gap_total_s = 0.0
-        alignment_failed = False
-
-        try:
-            model_a, metadata = self._get_align_model(language_code)
-            result = whisperx.align(
-                result["segments"], model_a, metadata, audio, self.device, return_char_alignments=False
-            )
-            # Count alignment gaps (words with missing start/end times), and
-            # total up the duration only of words that DO have both, so
-            # elapsed time never gets attributed to a gap that has none.
-            for segment in result["segments"]:
-                for word in segment.get("words", []):
-                    start, end = word.get("start"), word.get("end")
-                    if start is None or end is None:
-                        alignment_gap_count += 1
-                    else:
-                        alignment_gap_total_s += end - start
-        except Exception:
-            # Timestamps come from this stage - silently keeping the
-            # unaligned segments would mean a bad transcript with no trace of
-            # why, so this is worth a real log line even though it's handled.
-            alignment_failed = True
-            logger.exception(
-                "Alignment failed for language=%s; falling back to unaligned segment timestamps",
-                language_code,
-            )
 
         diarization_speaker_count = 0
         # Whether the hint actually reached the diarizer - worth reporting
         # rather than letting the caller believe a number they set was
         # honoured when clustering could still land outside it regardless.
         speaker_hint_applied = False
+        diarization_backend = "pyannote"
 
-        if diarize:
-            diarize_model = self._get_diarize_model()
+        if channel_split:
+            # The recording already tells you who's who - no clustering
+            # needed. Each channel is decoded and transcribed on its own
+            # (whisperx.load_audio's downmix would otherwise erase exactly
+            # the separation this mode exists to use), and the per-channel
+            # results are merged back into one timeline afterward.
+            channel_count = probe_channel_count(audio_path)
+            if channel_count < 2:
+                raise RuntimeError(
+                    "Channel-based speaker separation requires an audio file with at least 2 "
+                    f"channels; this file has {channel_count}."
+                )
 
-            # Serialises every use of the shared diarization pipeline the same
-            # way _options_lock serialises the shared ASR model: instantiate()
-            # below mutates the pipeline's clustering hyperparameters in place,
-            # and the inference call right after reads them - two concurrent
-            # /transcribe requests interleaving those two steps on the same
-            # cached pipeline object (see _get_diarize_model) would otherwise
-            # run one request's diarization under hyperparameters meant for a
-            # different request, or race the underlying model's internal state
-            # outright. Nothing upstream of this serialises it: FastAPI runs
-            # each /transcribe call in its own threadpool thread.
-            with self._diarize_lock:
-                if hasattr(diarize_model, "model"):
-                    # A per-request value (the "speaker grouping" control in
-                    # the upload dialog) overrides this deployment's own
-                    # configured default for just this call.
-                    requested_threshold = (
-                        clustering_threshold
-                        if clustering_threshold is not None
-                        else self.settings.diarization_clustering_threshold
+            language_code: str | None = None
+            alignment_gap_count = 0
+            alignment_gap_total_s = 0.0
+            alignment_failed = False
+            channel_segments: list[dict] = []
+
+            for channel_index in range(channel_count):
+                channel_audio = load_audio_channel(audio_path, channel_index)
+                segs, channel_language, gap_count, gap_total, failed = self._asr_and_align(
+                    whisper_model,
+                    channel_audio,
+                    language,
+                    initial_prompt,
+                    request_hotwords,
+                    resolved_suppress_numerals,
+                )
+                language_code = language_code or channel_language
+                alignment_gap_count += gap_count
+                alignment_gap_total_s += gap_total
+                alignment_failed = alignment_failed or failed
+                for segment in segs:
+                    # A channel index, not a pyannote label, but consumed by
+                    # the exact same _speaker_label numbering below - the
+                    # rest of the pipeline never needs to know which strategy
+                    # produced these ids.
+                    segment["speaker"] = f"CHANNEL_{channel_index}"
+                    segment["_assignment_method"] = "channel_split"
+                    segment["_assignment_distance_s"] = None
+                    for word in segment.get("words", []):
+                        word["speaker"] = segment["speaker"]
+                        word["_assignment_method"] = "channel_split"
+                        word["_assignment_distance_s"] = None
+                channel_segments.extend(segs)
+
+            # Interleaved by who spoke when, not grouped by channel - a
+            # transcript is read in time order regardless of how the
+            # speakers were separated.
+            channel_segments.sort(key=lambda segment: segment["start"])
+            result = {"segments": channel_segments}
+            diarization_speaker_count = channel_count
+            diarization_backend = "channel_split"
+            # No pyannote involved in this mode - nothing to report at either.
+            diarization_turns: list[dict] = []
+            speaker_embeddings: dict[str, list[float]] | None = None
+            diarization_retry_diagnostics: dict = {
+                "attempted": False,
+                "kept": None,
+                "threshold": None,
+                "original_suspicious_ratio": None,
+                "retry_suspicious_ratio": None,
+            }
+        else:
+            # Load and resample audio to 16kHz (WhisperX standard)
+            # whisperx.load_audio() automatically resamples to 16kHz using librosa
+            audio = whisperx.load_audio(audio_path)
+
+            (
+                asr_segments,
+                language_code,
+                alignment_gap_count,
+                alignment_gap_total_s,
+                alignment_failed,
+            ) = self._asr_and_align(
+                whisper_model, audio, language, initial_prompt, request_hotwords, resolved_suppress_numerals
+            )
+            result = {"segments": asr_segments}
+            diarization_turns: list[dict] = []
+            speaker_embeddings: dict[str, list[float]] | None = None
+            # Default for every segment/word when diarize=False (no turns to
+            # classify against at all) - overwritten below when diarize=True.
+            for segment in result["segments"]:
+                segment["_assignment_method"] = "none"
+                segment["_assignment_distance_s"] = None
+                for word in segment.get("words", []):
+                    word["_assignment_method"] = "none"
+                    word["_assignment_distance_s"] = None
+
+            diarization_retry_diagnostics: dict = {
+                "attempted": False,
+                "kept": None,
+                "threshold": None,
+                "original_suspicious_ratio": None,
+                "retry_suspicious_ratio": None,
+            }
+
+            if diarize:
+                diarize_result = self._run_diarization(audio, asr_segments, bounds, clustering_threshold)
+                speaker_hint_applied = bounds.is_set
+
+                # Selective retry: a "difficult" first pass most often means
+                # clustering merged two real speakers together or fragmented
+                # one voice into false splits. One automatic retry at a
+                # different threshold either measurably reduces the
+                # suspicious-segment ratio (kept) or it doesn't (discarded,
+                # original result stands) - never more than one retry, and
+                # never for a recording that wasn't flagged difficult in the
+                # first place. See DIFFICULT_RETRY_CLUSTERING_THRESHOLD.
+                initial_profile = compute_recording_profile(
+                    _preview_label(diarize_result["segments"]), diarize_result["diarization_turns"]
+                )
+                already_at_retry_threshold = (
+                    clustering_threshold is not None
+                    and abs(clustering_threshold - DIFFICULT_RETRY_CLUSTERING_THRESHOLD) < 1e-6
+                )
+                if (
+                    initial_profile.classification == _RETRY_TRIGGER_CLASSIFICATION
+                    and not already_at_retry_threshold
+                ):
+                    diarization_retry_diagnostics["attempted"] = True
+                    diarization_retry_diagnostics["threshold"] = DIFFICULT_RETRY_CLUSTERING_THRESHOLD
+                    diarization_retry_diagnostics["original_suspicious_ratio"] = (
+                        initial_profile.suspicious_segment_ratio
                     )
                     try:
-                        # Re-instantiated on every call, even to the pipeline's
-                        # own default, rather than only when a threshold is
-                        # configured: diarize_model is one cached pipeline
-                        # shared across every request (see _get_diarize_model),
-                        # so skipping this when the current request wants the
-                        # default would silently leave a *previous* request's
-                        # custom threshold in effect instead of resetting it.
-                        #
-                        # pyannote.audio 4.x's clustering step is VBx-based, not
-                        # the AgglomerativeClustering it was pre-4.0: `method`
-                        # and `min_cluster_size` (this pipeline's parameter tree
-                        # exposes only `threshold`, plus fixed `Fa`/`Fb`) were
-                        # never valid parameter names on this version, for
-                        # either supported diarization_model - passing them (as
-                        # this used to) made instantiate() raise on every call,
-                        # silently caught below, so this tuning knob was a
-                        # guaranteed no-op regardless of what was configured.
-                        # Confirmed against the installed pipeline's own
-                        # model.default_parameters().
-                        threshold_to_apply = (
-                            requested_threshold
-                            if requested_threshold is not None
-                            else diarize_model.model.default_parameters()["clustering"]["threshold"]
+                        retry_result = self._run_diarization(
+                            audio, asr_segments, bounds, DIFFICULT_RETRY_CLUSTERING_THRESHOLD
                         )
-                        diarize_model.model.instantiate({"clustering": {"threshold": threshold_to_apply}})
-                        if requested_threshold is not None:
-                            logger.info("Applied clustering threshold %s", requested_threshold)
+                        retry_profile = compute_recording_profile(
+                            _preview_label(retry_result["segments"]), retry_result["diarization_turns"]
+                        )
+                        diarization_retry_diagnostics["retry_suspicious_ratio"] = (
+                            retry_profile.suspicious_segment_ratio
+                        )
+                        if retry_profile.suspicious_segment_ratio < initial_profile.suspicious_segment_ratio:
+                            diarize_result = retry_result
+                            diarization_retry_diagnostics["kept"] = "retry"
+                            logger.info(
+                                "Diarization retry (threshold=%.2f) improved suspicious_segment_ratio "
+                                "%.4f -> %.4f; keeping retry.",
+                                DIFFICULT_RETRY_CLUSTERING_THRESHOLD,
+                                initial_profile.suspicious_segment_ratio,
+                                retry_profile.suspicious_segment_ratio,
+                            )
+                        else:
+                            diarization_retry_diagnostics["kept"] = "original"
+                            logger.info(
+                                "Diarization retry (threshold=%.2f) did not improve suspicious_segment_ratio "
+                                "(retry=%.4f vs original=%.4f); keeping original.",
+                                DIFFICULT_RETRY_CLUSTERING_THRESHOLD,
+                                retry_profile.suspicious_segment_ratio,
+                                initial_profile.suspicious_segment_ratio,
+                            )
                     except Exception:
-                        logger.exception(
-                            "Could not apply clustering hyperparameters; using pipeline defaults"
-                        )
+                        logger.exception("Diarization retry failed; keeping original result")
+                        diarization_retry_diagnostics["kept"] = "original"
+                        diarization_retry_diagnostics["error"] = True
 
-                if bounds.min_speakers is not None and bounds.min_speakers == bounds.max_speakers:
-                    # An exact count forces pyannote's clustering to cut into
-                    # precisely that many groups. An equal min/max pair instead
-                    # still runs its threshold-based count *estimation* and only
-                    # clamps the result afterward - a different, less direct path
-                    # even though the number given is identical.
-                    diarize_segments = diarize_model(audio, num_speakers=bounds.min_speakers)
-                else:
-                    diarize_segments = diarize_model(
-                        audio, min_speakers=bounds.min_speakers, max_speakers=bounds.max_speakers
+                result = {"segments": diarize_result["segments"]}
+                diarization_turns = diarize_result["diarization_turns"]
+                speaker_embeddings = diarize_result["speaker_embeddings"]
+                diarization_speaker_count = diarize_result["diarization_speaker_count"]
+
+                # A hint is a hint, not a constraint - clustering can still land
+                # outside it. Saying so is the difference between a transcript the
+                # user can trust and one they have to re-check by hand.
+                if bounds.is_set and diarization_speaker_count and not bounds.contains(diarization_speaker_count):
+                    logger.warning(
+                        "Diarization found %d speakers, outside the requested %s.",
+                        diarization_speaker_count,
+                        bounds.describe(),
                     )
-            speaker_hint_applied = bounds.is_set
-
-            if len(diarize_segments) == 0:
-                raise RuntimeError(
-                    "Diarization produced no speaker segments. This may indicate that the audio "
-                    "is too short, too quiet, or lacks sufficient speaker overlap for accurate diarization. "
-                    "Try with different min_speakers/max_speakers settings, or check that you have accepted "
-                    "the speaker-diarization-community-1 model terms on huggingface.co."
-                )
-
-            # fill_nearest=True: a word whose timing falls in a gap between
-            # diarization segments (a brief VAD miss, alignment slop) would
-            # otherwise get no speaker at all and fall through to this
-            # service's hardcoded "Speaker 1" default regardless of who's
-            # actually talking - this assigns it to the nearest real speaker
-            # instead.
-            result = whisperx.assign_word_speakers(diarize_segments, result, fill_nearest=True)
-            diarization_speaker_count = int(diarize_segments["speaker"].nunique()) if "speaker" in diarize_segments else 0
-
-            # A hint is a hint, not a constraint - clustering can still land
-            # outside it. Saying so is the difference between a transcript the
-            # user can trust and one they have to re-check by hand.
-            if bounds.is_set and diarization_speaker_count and not bounds.contains(diarization_speaker_count):
-                logger.warning(
-                    "Diarization found %d speakers, outside the requested %s.",
-                    diarization_speaker_count,
-                    bounds.describe(),
-                )
 
         speaker_numbers: dict[str, int] = {}
         segments = []
         for index, segment in enumerate(result["segments"]):
+            # Segment's own label resolved first, before any of its words -
+            # numbering order stays exactly what it was before this change
+            # (segment-appearance order) unless a word's raw speaker never
+            # appears as any segment's own speaker, which is itself the kind
+            # of disagreement this whole record exists to make visible.
+            # "unknown" bypasses the numbered sequence entirely - it isn't a
+            # distinct speaker, it's "no evidence was close enough to trust",
+            # and numbering it would falsely imply otherwise.
             raw_speaker = segment.get("speaker")
+            speaker_label = (
+                UNKNOWN_SPEAKER_LABEL
+                if segment.get("_assignment_method") == "unknown"
+                else self._speaker_label(raw_speaker, speaker_numbers)
+            )
+
+            words = []
+            for word in segment.get("words", []):
+                raw_word_speaker = word.get("speaker")
+                if word.get("_assignment_method") == "unknown":
+                    word_speaker_label = UNKNOWN_SPEAKER_LABEL
+                elif raw_word_speaker is not None:
+                    word_speaker_label = self._speaker_label(raw_word_speaker, speaker_numbers)
+                else:
+                    word_speaker_label = None
+                words.append(
+                    {
+                        "word": (word.get("word") or "").strip(),
+                        "start": word.get("start"),
+                        "end": word.get("end"),
+                        "speaker": word_speaker_label,
+                        "assignment_method": word.get("_assignment_method", "none"),
+                        "assignment_distance_s": word.get("_assignment_distance_s"),
+                    }
+                )
+
             segments.append(
                 {
                     "id": f"segment-{index}",
                     "start": round(float(segment["start"]), 2),
                     "end": round(float(segment["end"]), 2),
-                    "speaker": self._speaker_label(raw_speaker, speaker_numbers),
+                    "speaker": speaker_label,
                     "text": segment["text"].strip(),
+                    "assignment_method": segment.get("_assignment_method", "none"),
+                    "assignment_distance_s": segment.get("_assignment_distance_s"),
+                    "words": words,
                 }
             )
+
+        # Raw pyannote/channel id -> this transcript's renumbered label, so a
+        # raw turn or embedding (both keyed by the raw id) can be traced back
+        # to what the transcript actually displays for it.
+        speaker_label_map = {
+            raw_id: f"Speaker {number}" for raw_id, number in speaker_numbers.items()
+        }
 
         # Build diagnostics dict
         diagnostics = {
             "alignment_gap_count": alignment_gap_count,
             "alignment_gap_total_s": round(alignment_gap_total_s, 2),
             "alignment_failed": alignment_failed,
-            "diarization_backend": "pyannote",
+            "diarization_backend": diarization_backend,
             "diarization_speaker_count": diarization_speaker_count,
+            "channel_split_applied": channel_split,
             "model_requested": model,
             "model_used": resolved_model,
             "suppress_numerals": resolved_suppress_numerals,
@@ -530,6 +882,13 @@ class WhisperXService:
             "context_terms_harvested": prompt_build.harvested_terms,
             "context_prompt_tokens": prompt_build.used_tokens,
             "context_prompt_budget": prompt_build.budget_tokens,
+            # Whether this recording's confirmed terms also reached the
+            # decoder via hotwords, not just initial_prompt - see
+            # _build_request_hotwords. Total term count in the combined
+            # hotwords sent (deployment glossary + this recording's terms),
+            # so a term the confirmed list expected there but that got
+            # dropped for want of room is visible here too.
+            "hotwords_term_count": len(parse_terms(request_hotwords)) if request_hotwords else 0,
             # The speaker-count hint, end to end: what was asked for after
             # normalisation, whether the backend could take it, and whether the
             # result actually landed inside it.
@@ -542,9 +901,20 @@ class WhisperXService:
                 if bounds.is_set and diarize and diarization_speaker_count
                 else None
             ),
+            "speaker_label_map": speaker_label_map,
+            # Whether an automatic diarization retry (a different clustering
+            # threshold) ran because the first pass looked "difficult", and
+            # whether it was actually kept - see DIFFICULT_RETRY_CLUSTERING_THRESHOLD.
+            "diarization_retry_attempted": diarization_retry_diagnostics["attempted"],
+            "diarization_retry_kept": diarization_retry_diagnostics["kept"],
+            "diarization_retry_threshold": diarization_retry_diagnostics["threshold"],
+            "diarization_original_suspicious_ratio": diarization_retry_diagnostics["original_suspicious_ratio"],
+            "diarization_retry_suspicious_ratio": diarization_retry_diagnostics["retry_suspicious_ratio"],
         }
 
-        return segments, language_code, diagnostics
+        recording_profile = asdict(compute_recording_profile(segments, diarization_turns))
+
+        return segments, language_code, diagnostics, diarization_turns, speaker_embeddings, recording_profile
 
     @staticmethod
     def _speaker_label(raw_speaker: str | None, speaker_numbers: dict[str, int]) -> str:
@@ -553,6 +923,66 @@ class WhisperXService:
         if raw_speaker not in speaker_numbers:
             speaker_numbers[raw_speaker] = len(speaker_numbers) + 1
         return f"Speaker {speaker_numbers[raw_speaker]}"
+
+    @staticmethod
+    def _nearest_turn(
+        diarization_turns: list[dict], start: float, end: float
+    ) -> tuple[str | None, float]:
+        """The closest raw diarization turn to [start, end] by gap (0 if it
+        actually overlaps, which shouldn't happen for a caller of this - see
+        `_resolve_speaker_assignment`), and that gap in seconds. `(None,
+        inf)` when there are no turns at all."""
+        best_speaker: str | None = None
+        best_distance = float("inf")
+        for turn in diarization_turns:
+            if turn["end"] <= start:
+                distance = start - turn["end"]
+            elif turn["start"] >= end:
+                distance = turn["start"] - end
+            else:
+                distance = 0.0
+            if distance < best_distance:
+                best_distance = distance
+                best_speaker = turn["speaker"]
+        return best_speaker, best_distance
+
+    @staticmethod
+    def _resolve_speaker_assignment(item: dict, diarization_turns: list[dict]) -> None:
+        """Mutates `item` (a segment or word dict) in place, adding
+        `_assignment_method` and `_assignment_distance_s`. Called after
+        `assign_word_speakers(..., fill_nearest=False)`, so `item["speaker"]`
+        already reflects a real overlap match when one exists - this only
+        resolves what's left unset.
+
+        Deliberately does NOT use `fill_nearest=True`'s unconditional
+        nearest-speaker fallback (no matter how far away): past
+        `MAX_NEAREST_FALLBACK_DISTANCE_S`, the nearest turn is no longer
+        meaningful evidence about who's actually speaking, and confidently
+        assigning it anyway is exactly the "silently attributed to the wrong
+        person" failure mode a forensic transcript can least afford. Beyond
+        that distance, `item["speaker"]` is left unset - the caller renders
+        that as "Unknown" - rather than guessing.
+        """
+        start = item.get("start")
+        end = item.get("end", start)
+        if item.get("speaker") is not None:
+            item["_assignment_method"] = "overlap"
+            item["_assignment_distance_s"] = 0.0
+            return
+        if start is None:
+            item["_assignment_method"] = "none"
+            item["_assignment_distance_s"] = None
+            return
+        nearest_speaker, distance = WhisperXService._nearest_turn(
+            diarization_turns, start, end if end is not None else start
+        )
+        if nearest_speaker is not None and distance <= MAX_NEAREST_FALLBACK_DISTANCE_S:
+            item["speaker"] = nearest_speaker
+            item["_assignment_method"] = "nearest"
+            item["_assignment_distance_s"] = round(distance, 2)
+        else:
+            item["_assignment_method"] = "unknown"
+            item["_assignment_distance_s"] = round(distance, 2) if nearest_speaker is not None else None
 
 
 @lru_cache

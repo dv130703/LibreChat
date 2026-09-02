@@ -22,7 +22,7 @@ jest.mock('~/server/services/Files/VectorDB/crud', () => ({
 const { uploadVectors } = require('~/server/services/Files/VectorDB/crud');
 const fsPromises = require('fs/promises');
 const fs = require('fs');
-const { transcribeAndEmbed, formatTimestamp, formatLine } = require('./index');
+const { transcribeAndEmbed, embedTranscript, formatTimestamp, formatLine } = require('./index');
 
 const req = { user: { id: 'user-1' } };
 const multerFile = { path: '/tmp/upload-1', originalname: 'meeting.mp3', mimetype: 'audio/mpeg' };
@@ -138,4 +138,62 @@ describe('transcribeAndEmbed', () => {
       '[00:00.0-00:02.0] SPEAKER_00: Hello there.\n[00:02.0-00:04.0] SPEAKER_01: General Kenobi.',
     );
   });
+});
+
+describe('embedTranscript retry behavior', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('does not retry when the first attempt succeeds', async () => {
+    uploadVectors.mockResolvedValueOnce({ embedded: true });
+
+    const result = await embedTranscript({
+      req,
+      file_id: 'file-1',
+      filename: 'transcript.md',
+      text: 'Speaker 1: Hi.',
+    });
+
+    expect(result).toBe(true);
+    expect(uploadVectors).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient failure and succeeds on the second attempt', async () => {
+    uploadVectors
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce({ embedded: true });
+
+    const result = await embedTranscript({
+      req,
+      file_id: 'file-1',
+      filename: 'transcript.md',
+      text: 'Speaker 1: Hi.',
+    });
+
+    expect(result).toBe(true);
+    expect(uploadVectors).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up and returns false after exhausting every attempt', async () => {
+    uploadVectors.mockRejectedValue(new Error('RAG server unreachable'));
+
+    const result = await embedTranscript({
+      req,
+      file_id: 'file-1',
+      filename: 'transcript.md',
+      text: 'Speaker 1: Hi.',
+    });
+
+    expect(result).toBe(false);
+    expect(uploadVectors).toHaveBeenCalledTimes(3);
+  }, 10000);
+
+  it('always cleans up the temp file, even after every attempt fails', async () => {
+    uploadVectors.mockRejectedValue(new Error('RAG server unreachable'));
+
+    await embedTranscript({ req, file_id: 'file-1', filename: 'transcript.md', text: 'Hi.' });
+
+    expect(fsPromises.unlink).toHaveBeenCalledTimes(1);
+  }, 10000);
 });

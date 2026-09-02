@@ -196,6 +196,26 @@ function serializeTranscriptLines(lines: ParsedTranscriptLine[]): string {
 }
 
 /**
+ * The corrected transcript as structured lines - final speaker (renamed
+ * where applicable), final text, final timing, one entry per turn segment.
+ * The entry point for anything that needs to tell speakers apart
+ * programmatically (see `interviewDocx.ts`'s `turnParagraphs`): re-parsing
+ * `applyTranscriptCorrections`'s serialized string output cannot recover
+ * this, because `LINE_PATTERN` only recognizes the raw pipeline's literal
+ * `Speaker N` shape - a renamed speaker's actual name would fail that match
+ * and fall into the free-text tail instead, silently losing the speaker
+ * boundary. Structured lines never round-trip through that regex at all.
+ */
+export function applyTranscriptCorrectionsStructured(
+  baseText: string,
+  corrections: TTranscriptCorrection[],
+): ParsedTranscriptLine[] {
+  const baseLines = parseTranscriptText(baseText);
+  const withEdits = applyCorrectionsToLines(baseLines, corrections);
+  return applySpeakerNames(withEdits, corrections);
+}
+
+/**
  * The one entry point the correction routes need: base pipeline text in,
  * corrected text out, ready to re-embed under the transcript's existing
  * `file_id` (re-uploading the same id replaces its RAG chunks rather than
@@ -205,8 +225,5 @@ export function applyTranscriptCorrections(
   baseText: string,
   corrections: TTranscriptCorrection[],
 ): string {
-  const baseLines = parseTranscriptText(baseText);
-  const withEdits = applyCorrectionsToLines(baseLines, corrections);
-  const withNames = applySpeakerNames(withEdits, corrections);
-  return serializeTranscriptLines(withNames);
+  return serializeTranscriptLines(applyTranscriptCorrectionsStructured(baseText, corrections));
 }

@@ -53,6 +53,16 @@ const file: Schema<IMongoFile> = new Schema(
     embedded: {
       type: Boolean,
     },
+    transcriptVersion: {
+      type: Number,
+    },
+    indexVersion: {
+      type: Number,
+    },
+    indexStatus: {
+      type: String,
+      enum: ['not_indexed', 'stale', 'indexing', 'indexed', 'index_failed'],
+    },
     type: {
       type: String,
       required: true,

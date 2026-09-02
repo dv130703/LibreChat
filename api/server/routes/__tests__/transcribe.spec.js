@@ -19,6 +19,9 @@ jest.mock('~/server/middleware/config/app', () => (req, res, next) => next());
 jest.mock('~/server/services/Files/strategies', () => ({
   getStrategyFunctions: jest.fn(() => ({
     saveBuffer: jest.fn().mockResolvedValue('/fake/storage/path'),
+    // Real enough for /retranscribe's real-disk round trip: reads back
+    // whatever local path the test itself wrote as the "stored" source file.
+    getDownloadStream: jest.fn((req, filepath) => require('fs').createReadStream(filepath)),
   })),
 }));
 
@@ -104,6 +107,22 @@ describe('POST /api/transcribe', () => {
       segments: [{ start: 0, end: 1, speaker: 'Speaker 1', text: 'Hello' }],
       language: 'en',
       diagnostics: {},
+      diarizationTurns: [{ start: 0, end: 1, speaker: 'SPEAKER_00' }],
+      speakerEmbeddings: null,
+      recordingProfile: {
+        speaker_count: 1,
+        turn_count: 1,
+        median_turn_duration_s: 1,
+        mean_turn_duration_s: 1,
+        p95_turn_duration_s: 1,
+        longest_turn_s: 1,
+        speaker_switches_per_minute: 0,
+        speaker_time_distribution_s: { 'Speaker 1': 1 },
+        overlap_ratio: 0,
+        unassigned_audio_ratio: 0,
+        short_turn_ratio: 0,
+        classification: 'monologue',
+      },
       text: 'Speaker 1: Hello',
       transcriptFileId: 'source-file-transcript',
       embedded: true,
@@ -126,6 +145,11 @@ describe('POST /api/transcribe', () => {
     expect(response.body.transcriptFile).toEqual(
       expect.objectContaining({ file_id: 'source-file-transcript' }),
     );
+    expect(response.body.diarizationDetailFile).not.toBeNull();
+    // Diarization-detail-only fields never leak into the plain response -
+    // only the persisted file (asserted below) carries them.
+    expect(response.body.segments[0]).not.toHaveProperty('words');
+    expect(response.body.segments[0]).not.toHaveProperty('assignment_method');
 
     const File = mongoose.models.File;
     const transcriptFile = await File.findOne({ file_id: 'source-file-transcript' }).lean();
@@ -137,13 +161,31 @@ describe('POST /api/transcribe', () => {
     expect(sourceFile).not.toBeNull();
     expect(sourceFile.context).toBe('transcript_rag');
 
+    const diarizationDetailFileId = `${sourceFile.file_id}-diarization-detail`;
+    const diarizationDetailFile = await File.findOne({ file_id: diarizationDetailFileId }).lean();
+    expect(diarizationDetailFile).not.toBeNull();
+    expect(diarizationDetailFile.context).toBe('transcript_diarization_detail');
+    expect(diarizationDetailFile.embedded).toBe(false);
+    const detail = JSON.parse(diarizationDetailFile.text);
+    expect(detail.diarizationTurns).toEqual([{ start: 0, end: 1, speaker: 'SPEAKER_00' }]);
+    expect(detail.segments[0]).toEqual(
+      expect.objectContaining({ speaker: 'Speaker 1', text: 'Hello', assignmentMethod: 'none' }),
+    );
+    expect(detail.recordingProfile).toEqual(
+      expect.objectContaining({ speakerCount: 1, turnCount: 1, classification: 'monologue' }),
+    );
+
     const Conversation = mongoose.models.Conversation;
     const convo = await Conversation.findOne({ conversationId }).lean();
     expect(convo).not.toBeNull();
     expect(convo.files).toEqual(
-      expect.arrayContaining([sourceFile.file_id, 'source-file-transcript']),
+      expect.arrayContaining([
+        sourceFile.file_id,
+        'source-file-transcript',
+        diarizationDetailFileId,
+      ]),
     );
-    expect(convo.files).toHaveLength(2);
+    expect(convo.files).toHaveLength(3);
   });
 
   it('does not persist the conversation until the transcription finishes', async () => {
@@ -161,6 +203,8 @@ describe('POST /api/transcribe', () => {
         segments: [{ start: 0, end: 1, speaker: 'Speaker 1', text: 'Hello' }],
         language: 'en',
         diagnostics: {},
+        diarizationTurns: [],
+        speakerEmbeddings: null,
         text: 'Speaker 1: Hello',
         transcriptFileId: 'source-file-transcript',
         embedded: true,
@@ -175,10 +219,10 @@ describe('POST /api/transcribe', () => {
     expect(response.status).toBe(200);
     expect(convoDuringTranscription).toBeNull();
 
-    // ...and exists, with both files attached, once the request is done.
+    // ...and exists, with all three files attached, once the request is done.
     const convo = await mongoose.models.Conversation.findOne({ conversationId }).lean();
     expect(convo).not.toBeNull();
-    expect(convo.files).toHaveLength(2);
+    expect(convo.files).toHaveLength(3);
   });
 
   it('leaves no conversation behind when the transcription fails', async () => {
@@ -251,5 +295,121 @@ describe('POST /api/transcribe', () => {
     const Conversation = mongoose.models.Conversation;
     const convo = await Conversation.findOne({ conversationId }).lean();
     expect(convo.files).toEqual([sourceFile.file_id]);
+  });
+});
+
+describe('POST /api/transcribe/:conversationId/retranscribe', () => {
+  let app;
+  let mongoServer;
+  let userId;
+  let modelsToCleanup = [];
+
+  beforeAll(async () => {
+    mongoServer = await MongoMemoryServer.create();
+    await mongoose.connect(mongoServer.getUri());
+
+    const { createModels } = require('@librechat/data-schemas');
+    const models = createModels(mongoose);
+    modelsToCleanup = Object.keys(models);
+    Object.assign(mongoose.models, models);
+
+    const methods = createMethods(mongoose);
+    await methods.seedDefaultRoles();
+
+    userId = new mongoose.Types.ObjectId().toString();
+
+    app = express();
+    app.use(express.json());
+    app.use((req, res, next) => {
+      req.user = { id: userId, tenantId: undefined };
+      req.config = { paths: { uploads: os.tmpdir() } };
+      next();
+    });
+
+    const router = require('../transcribe');
+    app.use('/api/transcribe', router);
+  });
+
+  afterAll(async () => {
+    for (const modelName of modelsToCleanup) {
+      if (mongoose.models[modelName]) {
+        delete mongoose.models[modelName];
+      }
+    }
+    await mongoose.disconnect();
+    await mongoServer.stop();
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('identifies the real source file even when a diarization-detail file id would sort before it', async () => {
+    // Regression test: adding a third per-conversation file
+    // (`-diarization-detail`) broke the old `fileIds.find((id) => id !==
+    // transcriptFileId)` discovery logic, which assumed "whatever isn't the
+    // transcript" was necessarily the source audio. Deliberately ordered so
+    // the diarization-detail id comes before the real source id - exactly
+    // the shape that logic would have picked wrong.
+    const conversationId = `convo-retranscribe-${Date.now()}`;
+    const File = mongoose.models.File;
+    const Conversation = mongoose.models.Conversation;
+
+    const audioPath = path.join(os.tmpdir(), `retranscribe-source-${Date.now()}.m4a`);
+    await fs.promises.writeFile(audioPath, Buffer.from('fake-audio-bytes'));
+
+    const sourceFileId = `source-${Date.now()}`;
+    const transcriptFileId = `${sourceFileId}-transcript`;
+    const diarizationDetailFileId = `${sourceFileId}-diarization-detail`;
+
+    await File.create({
+      user: userId,
+      file_id: sourceFileId,
+      filename: 'meeting.m4a',
+      filepath: audioPath,
+      source: 'local',
+      type: 'audio/mp4',
+      bytes: 16,
+      context: 'transcript_rag',
+      conversationId,
+    });
+    await File.create({
+      user: userId,
+      file_id: diarizationDetailFileId,
+      filename: 'meeting-diarization-detail.json',
+      filepath: `transcript-diarization-detail://${diarizationDetailFileId}`,
+      source: 'text',
+      type: 'application/json',
+      bytes: 2,
+      text: '{}',
+      context: 'transcript_diarization_detail',
+      conversationId,
+    });
+    await Conversation.create({
+      conversationId,
+      user: userId,
+      endpoint: 'agents',
+      files: [transcriptFileId, diarizationDetailFileId, sourceFileId],
+    });
+
+    mockTranscribeAndEmbed.mockResolvedValue({
+      segments: [{ start: 0, end: 1, speaker: 'Speaker 1', text: 'Hi again' }],
+      language: 'en',
+      diagnostics: {},
+      diarizationTurns: [],
+      speakerEmbeddings: null,
+      text: 'Speaker 1: Hi again',
+      transcriptFileId,
+      embedded: true,
+    });
+
+    const response = await request(app)
+      .post(`/api/transcribe/${conversationId}/retranscribe`)
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(mockTranscribeAndEmbed).toHaveBeenCalledWith(expect.objectContaining({ sourceFileId }));
+
+    await fs.promises.unlink(audioPath).catch(() => {});
   });
 });

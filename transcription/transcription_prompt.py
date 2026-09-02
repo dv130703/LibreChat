@@ -235,6 +235,19 @@ def build_initial_prompt(
     )
 
 
+def pack_hotwords(terms: list[str], count_tokens: TokenCounter) -> str | None:
+    """Fit as many terms as faster-whisper's per-part cap allows into one
+    ``hotwords`` string.
+
+    Reuses ``_pack``'s ordering rule: earlier terms are kept over later ones
+    if the cap is reached, so callers should list their highest-priority
+    terms first. No trailing period - unlike the initial prompt, hotwords is
+    not meant to read as a sentence.
+    """
+    used, _dropped, _used_tokens = _pack(terms, FASTER_WHISPER_PART_CAP, count_tokens)
+    return ", ".join(used) if used else None
+
+
 def normalize_hotwords(raw: str | None) -> str | None:
     """Coerce the configured glossary into the single string faster-whisper wants.
 

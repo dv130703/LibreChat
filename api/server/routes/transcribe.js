@@ -12,12 +12,24 @@ const {
   FileContext,
   FileSources,
 } = require('librechat-data-provider');
-const { getStorageMetadata, extractAudioTrack, generateShortLivedToken } = require('@librechat/api');
+const {
+  getStorageMetadata,
+  extractAudioTrack,
+  generateShortLivedToken,
+  applyTranscriptCorrectionsStructured,
+  buildInterviewDocx,
+  buildMeetingMinutesDocx,
+  buildDiarizationDetail,
+  stripSegmentDetail,
+} = require('@librechat/api');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
 const configMiddleware = require('~/server/middleware/config/app');
 const { storage: uploadStorage } = require('~/server/routes/files/multer');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
-const { saveTranscriptFile } = require('~/server/services/Files/process');
+const {
+  saveTranscriptFile,
+  saveDiarizationDetailFile,
+} = require('~/server/services/Files/process');
 const { getRetentionExpiry } = require('~/server/services/Files/retention');
 const { getFileStrategy } = require('~/server/utils/getFileStrategy');
 const { transcribeAndEmbed } = require('~/server/services/Transcription');
@@ -68,7 +80,52 @@ function buildTranscriptionMeta(options, result) {
     // The resolved value the decoder ran under, not the request's - the caller
     // may have left it unset and taken the deployment default.
     suppressNumerals: result.diagnostics?.suppress_numerals,
+    channelSplit: options.channelSplit,
+    diarizationBackend: result.diagnostics?.diarization_backend,
   };
+}
+
+/**
+ * Persists the full diarization/ASR detail (raw pyannote turns, speaker
+ * embeddings, per-word speaker assignments) as its own file, separate from
+ * the plain transcript - see `saveDiarizationDetailFile`. Used by both the
+ * initial transcribe route and `/retranscribe`, always keyed off the same
+ * `sourceFileId` so a re-transcribe overwrites this record rather than
+ * leaking a duplicate, same as the transcript file itself.
+ */
+/** The transcript file's indexing state, alongside its identity - lets a
+ *  caller tell "indexed and current" apart from "still indexing" or "the
+ *  last index attempt failed" without a separate lookup. */
+function toTranscriptFilePayload(transcriptFile) {
+  if (!transcriptFile) {
+    return null;
+  }
+  return {
+    file_id: transcriptFile.file_id,
+    filename: transcriptFile.filename,
+    transcriptVersion: transcriptFile.transcriptVersion ?? 0,
+    indexVersion: transcriptFile.indexVersion ?? null,
+    indexStatus: transcriptFile.indexStatus ?? 'not_indexed',
+  };
+}
+
+async function persistDiarizationDetail({ req, sourceFileId, filename, result, conversationId }) {
+  const detail = buildDiarizationDetail({
+    segments: result.segments,
+    diarizationTurns: result.diarizationTurns,
+    speakerEmbeddings: result.speakerEmbeddings,
+    diagnostics: result.diagnostics ?? {},
+    recordingProfile: result.recordingProfile ?? null,
+  });
+  const diarizationDetailFile = await saveDiarizationDetailFile({
+    req,
+    file_id: `${sourceFileId}-diarization-detail`,
+    filename: `${filename}-diarization-detail.json`,
+    detail,
+    conversationId,
+  });
+  await db.addConvoFile(conversationId, diarizationDetailFile.file_id);
+  return diarizationDetailFile;
 }
 
 router.use(requireJwtAuth);
@@ -273,6 +330,7 @@ router.post('/', upload.single('file'), async (req, res) => {
     await db.addConvoFile(conversationId, sourceFile.file_id);
 
     let transcriptFile = null;
+    let diarizationDetailFile = null;
     if (result.transcriptFileId) {
       transcriptFile = await saveTranscriptFile({
         req,
@@ -285,17 +343,29 @@ router.post('/', upload.single('file'), async (req, res) => {
       logger.info(`[TRANSCRIPTION] transcript file saved file_id=${transcriptFile.file_id}`);
       await db.addConvoFile(conversationId, transcriptFile.file_id);
       logger.info(`[TRANSCRIPTION] transcript attached to conversation`);
+
+      diarizationDetailFile = await persistDiarizationDetail({
+        req,
+        sourceFileId: sourceFile.file_id,
+        filename: file.originalname,
+        result,
+        conversationId,
+      });
+      logger.info(
+        `[TRANSCRIPTION] diarization detail file saved file_id=${diarizationDetailFile.file_id}`,
+      );
     }
 
     logger.info(`[TRANSCRIPTION] responding conversationId=${conversationId}`);
     res.json({
       conversationId,
-      segments: result.segments,
+      segments: stripSegmentDetail(result.segments),
       language: result.language,
       diagnostics: result.diagnostics,
       sourceFile: { file_id: sourceFile.file_id, filename: sourceFile.filename },
-      transcriptFile: transcriptFile
-        ? { file_id: transcriptFile.file_id, filename: transcriptFile.filename }
+      transcriptFile: toTranscriptFilePayload(transcriptFile),
+      diarizationDetailFile: diarizationDetailFile
+        ? { file_id: diarizationDetailFile.file_id, filename: diarizationDetailFile.filename }
         : null,
     });
   } catch (error) {
@@ -323,7 +393,6 @@ router.post('/', upload.single('file'), async (req, res) => {
     await cleanupTempFile();
   }
 });
-
 
 /**
  * Re-runs transcription on the audio already stored for a conversation and
@@ -360,9 +429,18 @@ router.post('/:conversationId/retranscribe', async (req, res) => {
 
     const fileIds = conversation.files ?? [];
     const transcriptFileId = fileIds.find((id) => id.endsWith('-transcript'));
-    const sourceFileId = fileIds.find((id) => id !== transcriptFileId);
+    const diarizationDetailFileId = fileIds.find((id) => id.endsWith('-diarization-detail'));
+    // Excludes both derived-file suffixes explicitly, rather than "whatever
+    // isn't the transcript" - a conversation now carries three files, and a
+    // looser check would silently hand the diarization-detail file's id to
+    // `getDownloadStream` below as if it were the source audio.
+    const sourceFileId = fileIds.find(
+      (id) => id !== transcriptFileId && id !== diarizationDetailFileId,
+    );
     if (!sourceFileId) {
-      return res.status(409).json({ error: 'This conversation has no source audio to re-transcribe' });
+      return res
+        .status(409)
+        .json({ error: 'This conversation has no source audio to re-transcribe' });
     }
 
     const records = await db.getFiles({ file_id: sourceFileId, user: req.user.id });
@@ -399,6 +477,14 @@ router.post('/:conversationId/retranscribe', async (req, res) => {
       embedded: result.embedded,
     });
 
+    const diarizationDetailFile = await persistDiarizationDetail({
+      req,
+      sourceFileId,
+      filename: sourceRecord.filename,
+      result,
+      conversationId,
+    });
+
     await db.saveConvo(
       { userId: req.user.id },
       { conversationId, transcription: buildTranscriptionMeta(options, result) },
@@ -410,11 +496,15 @@ router.post('/:conversationId/retranscribe', async (req, res) => {
     );
     res.json({
       conversationId,
-      segments: result.segments,
+      segments: stripSegmentDetail(result.segments),
       language: result.language,
       diagnostics: result.diagnostics,
       sourceFile: { file_id: sourceRecord.file_id, filename: sourceRecord.filename },
-      transcriptFile: { file_id: transcriptFile.file_id, filename: transcriptFile.filename },
+      transcriptFile: toTranscriptFilePayload(transcriptFile),
+      diarizationDetailFile: {
+        file_id: diarizationDetailFile.file_id,
+        filename: diarizationDetailFile.filename,
+      },
     });
   } catch (error) {
     logger.error('[POST /api/transcribe/:conversationId/retranscribe] Failed', error);
@@ -423,6 +513,98 @@ router.post('/:conversationId/retranscribe', async (req, res) => {
     if (tmpPath) {
       await fs.promises.unlink(tmpPath).catch(() => {});
     }
+  }
+});
+
+/**
+ * The interview cover-sheet export, as an actual .docx - not a plain-text
+ * approximation of one wrapped in a fake bordered box. Takes the same form
+ * data the pre-export dialog collected (see `InterviewTranscriptDialog.tsx`)
+ * and regenerates the CORRECTED transcript text server-side from the stored
+ * correction log, the same way `GET /api/transcript-corrections` does -
+ * rather than trust whatever text the client happens to send, which could be
+ * stale against corrections made in another tab or saved after this page
+ * loaded.
+ */
+/**
+ * Loads a conversation's transcript, regenerated from its correction log the
+ * same way `GET /api/transcript-corrections` does - shared by every docx
+ * export route so none of them can drift into trusting stale client-side
+ * text. Throws an `Error` with a `.status` set to the right HTTP code; each
+ * route's own catch block reads that instead of duplicating these same
+ * lookups and status codes itself.
+ */
+async function loadCorrectedTranscript(userId, conversationId) {
+  const conversation = await db.getConvo(userId, conversationId);
+  if (!conversation) {
+    throw Object.assign(new Error('Conversation not found'), { status: 404 });
+  }
+
+  const fileIds = conversation.files ?? [];
+  const transcriptFileId = fileIds.find((id) => id.endsWith('-transcript'));
+  if (!transcriptFileId) {
+    throw Object.assign(new Error('This conversation has no transcript to export'), {
+      status: 409,
+    });
+  }
+
+  const baseFile = await db.findFileById(transcriptFileId);
+  if (!baseFile?.text) {
+    throw Object.assign(new Error('Transcript text is not available'), { status: 409 });
+  }
+
+  const corrections = await db.getTranscriptCorrections(transcriptFileId);
+  const lines = applyTranscriptCorrectionsStructured(baseFile.text, corrections);
+  return { conversation, lines };
+}
+
+function sendDocx(res, buffer, filename) {
+  res.set({
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+  });
+  res.send(buffer);
+}
+
+router.post('/:conversationId/interview-docx', async (req, res) => {
+  const { conversationId } = req.params;
+  const { form, speakers } = req.body ?? {};
+
+  if (form == null || !Array.isArray(speakers)) {
+    return res.status(400).json({ error: 'form and speakers are required' });
+  }
+
+  try {
+    const { conversation, lines } = await loadCorrectedTranscript(req.user.id, conversationId);
+    const buffer = await buildInterviewDocx({ form, speakers, lines });
+    const filename = `${(conversation.title ?? 'transcript').replace(/[/:*?"<>|]/g, '_')}-interview.docx`;
+    sendDocx(res, buffer, filename);
+  } catch (error) {
+    logger.error('[POST /api/transcribe/:conversationId/interview-docx] Failed', error);
+    res.status(error.status ?? 500).json({
+      error: error.status ? error.message : 'Could not generate the interview transcript',
+    });
+  }
+});
+
+router.post('/:conversationId/meeting-minutes-docx', async (req, res) => {
+  const { conversationId } = req.params;
+  const { form, speakers } = req.body ?? {};
+
+  if (form == null || !Array.isArray(speakers)) {
+    return res.status(400).json({ error: 'form and speakers are required' });
+  }
+
+  try {
+    const { conversation, lines } = await loadCorrectedTranscript(req.user.id, conversationId);
+    const buffer = await buildMeetingMinutesDocx({ form, speakers, lines });
+    const filename = `${(conversation.title ?? 'transcript').replace(/[/:*?"<>|]/g, '_')}-meeting-minutes.docx`;
+    sendDocx(res, buffer, filename);
+  } catch (error) {
+    logger.error('[POST /api/transcribe/:conversationId/meeting-minutes-docx] Failed', error);
+    res
+      .status(error.status ?? 500)
+      .json({ error: error.status ? error.message : 'Could not generate the meeting minutes' });
   }
 });
 

@@ -8,6 +8,7 @@ import { useTranscribeAudioMutation, useGetEndpointsQuery } from '~/data-provide
 import { useUpdateEphemeralAgent, useFlagAudioTranscriberConvo } from '~/store';
 import { cn, getLocalStorageItems } from '~/utils';
 import getDefaultEndpoint from '~/utils/getDefaultEndpoint';
+import MultiChannelDialog from './MultiChannelDialog';
 import TranscribeOptionsDialog from './TranscribeOptionsDialog';
 import type { TranscribeAudioOptions } from './TranscribeOptionsDialog';
 
@@ -34,6 +35,115 @@ function getDragValidity(dataTransfer: DataTransfer | null): 'valid' | 'invalid'
     return 'unknown';
   }
   return items.every((item) => isAudioOrVideo(item.type)) ? 'valid' : 'invalid';
+}
+
+// Enough header/data for virtually every common container (WAV, MP3, AAC/M4A,
+// OGG) to report its real channel count without decoding the whole file.
+const CHANNEL_PROBE_CHUNK_BYTES = 5 * 1024 * 1024;
+// A handful of container formats (some MP4/MOV muxings) put the metadata a
+// truncated chunk can't reach at the end of the file, not the start - this
+// bounds the full-file fallback decode so a multi-hour, multi-hundred-MB
+// recording can't balloon into gigabytes of decoded PCM in the tab's memory
+// just to answer a channel-count question.
+const CHANNEL_PROBE_MAX_FULL_DECODE_BYTES = 150 * 1024 * 1024;
+
+// -36 dBFS - well above the noise floor/digital silence, well below normal
+// speech level, so "active" means "someone is plausibly talking," not "any
+// signal at all."
+const CHANNEL_ACTIVE_RMS_THRESHOLD = 0.015;
+const CHANNEL_ACTIVITY_FRAME_SECONDS = 0.2;
+
+/** Stereo is the overwhelming common case for 2-channel audio - a normal
+ *  stereo mix, a single mic recorded in stereo, a dual-mono re-encode - and
+ *  none of those are "one speaker per channel." Only a 2-channel file where
+ *  the two channels are actually independent (one active while the other is
+ *  silent, not both moving together) looks like a real per-speaker split;
+ *  anything else would fire this dialog on nearly every video upload. 3+
+ *  channels has no such common "just a normal mix" case, so it's taken as
+ *  independent without this check. */
+function looksLikeSeparateSpeakerChannels(buffer: AudioBuffer): boolean {
+  if (buffer.numberOfChannels !== 2) {
+    return true;
+  }
+
+  const left = buffer.getChannelData(0);
+  const right = buffer.getChannelData(1);
+  const frameSize = Math.max(1, Math.floor(buffer.sampleRate * CHANNEL_ACTIVITY_FRAME_SECONDS));
+  const frameCount = Math.floor(Math.min(left.length, right.length) / frameSize);
+  if (frameCount < 10) {
+    // Too little decoded audio (short file, or a truncated probe chunk that
+    // barely decoded) to judge confidently - default to the far more common
+    // case, an ordinary stereo mix, rather than guess.
+    return false;
+  }
+
+  let bothActive = 0;
+  let oneActiveOnly = 0;
+  for (let frame = 0; frame < frameCount; frame++) {
+    const start = frame * frameSize;
+    const end = start + frameSize;
+    let sumLeft = 0;
+    let sumRight = 0;
+    for (let i = start; i < end; i++) {
+      sumLeft += left[i] * left[i];
+      sumRight += right[i] * right[i];
+    }
+    const activeLeft = Math.sqrt(sumLeft / frameSize) > CHANNEL_ACTIVE_RMS_THRESHOLD;
+    const activeRight = Math.sqrt(sumRight / frameSize) > CHANNEL_ACTIVE_RMS_THRESHOLD;
+    if (activeLeft && activeRight) {
+      bothActive += 1;
+    } else if (activeLeft || activeRight) {
+      oneActiveOnly += 1;
+    }
+  }
+
+  const activeFrames = bothActive + oneActiveOnly;
+  // Separate speaker channels spend most of their "someone's talking" time
+  // with only one channel active; an ordinary stereo mix (or dual-mono) has
+  // both channels active together almost whenever either one is.
+  return activeFrames > 0 && oneActiveOnly / activeFrames > 0.6;
+}
+
+interface MultiChannelProbeResult {
+  channelCount: number;
+  looksLikeSeparateSpeakers: boolean;
+}
+
+/** Decodes enough of the file to answer "does this look like one speaker per
+ *  channel" - best-effort, not authoritative: some containers/codecs the
+ *  browser can't decode at all, and very large files are deliberately not
+ *  decoded in full (see `CHANNEL_PROBE_MAX_FULL_DECODE_BYTES`). `null` means
+ *  "couldn't tell," treated the same as "doesn't look separated" - the
+ *  multi-channel dialog only ever shows on a positive, confident detection. */
+async function probeMultiChannelAudio(file: File): Promise<MultiChannelProbeResult | null> {
+  const AudioContextCtor =
+    window.AudioContext ??
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) {
+    return null;
+  }
+  const context = new AudioContextCtor();
+  try {
+    const chunk = await file.slice(0, CHANNEL_PROBE_CHUNK_BYTES).arrayBuffer();
+    let buffer: AudioBuffer;
+    try {
+      buffer = await context.decodeAudioData(chunk);
+    } catch {
+      if (file.size > CHANNEL_PROBE_MAX_FULL_DECODE_BYTES) {
+        return null;
+      }
+      const full = await file.arrayBuffer();
+      buffer = await context.decodeAudioData(full);
+    }
+    return {
+      channelCount: buffer.numberOfChannels,
+      looksLikeSeparateSpeakers: looksLikeSeparateSpeakerChannels(buffer),
+    };
+  } catch {
+    return null;
+  } finally {
+    void context.close();
+  }
 }
 
 function formatFileSize(bytes: number): string {
@@ -88,6 +198,9 @@ export default function UploadStep() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [lastOptions, setLastOptions] = useState<TranscribeAudioOptions | null>(null);
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
+  const [isChannelDialogOpen, setIsChannelDialogOpen] = useState(false);
+  const [detectedChannelCount, setDetectedChannelCount] = useState(0);
+  const [channelSplitChoice, setChannelSplitChoice] = useState(false);
   const [dragState, setDragState] = useState<'none' | 'valid' | 'invalid'>('none');
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -107,7 +220,7 @@ export default function UploadStep() {
   }, [mutation.isLoading]);
 
   const openOptionsFor = useCallback(
-    (file: File) => {
+    async (file: File) => {
       if (!isAudioOrVideo(file.type)) {
         setSelectionError(
           `${localize('com_ui_audio_transcriber_dropzone_invalid')} — ${localize('com_ui_audio_transcriber_dropzone_invalid_hint')}`,
@@ -117,6 +230,18 @@ export default function UploadStep() {
       setSelectionError(null);
       mutation.reset();
       setPendingFile(file);
+      setChannelSplitChoice(false);
+
+      const probeResult = await probeMultiChannelAudio(file);
+      if (
+        probeResult != null &&
+        probeResult.channelCount > 1 &&
+        probeResult.looksLikeSeparateSpeakers
+      ) {
+        setDetectedChannelCount(probeResult.channelCount);
+        setIsChannelDialogOpen(true);
+        return;
+      }
       setIsOptionsOpen(true);
     },
     // react-query's useMutation() returns a brand-new object every render;
@@ -126,10 +251,20 @@ export default function UploadStep() {
     [localize, mutation.reset],
   );
 
+  const handleChannelSplitAccept = useCallback(() => {
+    setChannelSplitChoice(true);
+    setIsOptionsOpen(true);
+  }, []);
+
+  const handleChannelSplitDecline = useCallback(() => {
+    setChannelSplitChoice(false);
+    setIsOptionsOpen(true);
+  }, []);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      openOptionsFor(file);
+      void openOptionsFor(file);
     }
     event.target.value = '';
   };
@@ -163,7 +298,7 @@ export default function UploadStep() {
     setDragState('none');
     const file = event.dataTransfer.files?.[0];
     if (file) {
-      openOptionsFor(file);
+      void openOptionsFor(file);
     }
   };
 
@@ -211,8 +346,11 @@ export default function UploadStep() {
     if (!pendingFile) {
       return;
     }
-    setLastOptions(options);
-    runTranscription(pendingFile, options);
+    const finalOptions: TranscribeAudioOptions = channelSplitChoice
+      ? { ...options, channelSplit: true }
+      : options;
+    setLastOptions(finalOptions);
+    runTranscription(pendingFile, finalOptions);
   };
 
   const handleRetry = () => {
@@ -227,6 +365,7 @@ export default function UploadStep() {
     mutation.reset();
     setPendingFile(null);
     setUploadProgress(null);
+    setChannelSplitChoice(false);
     inputRef.current?.click();
   };
 
@@ -337,11 +476,19 @@ export default function UploadStep() {
           {selectionError}
         </p>
       )}
+      <MultiChannelDialog
+        isOpen={isChannelDialogOpen}
+        onOpenChange={setIsChannelDialogOpen}
+        channelCount={detectedChannelCount}
+        onAccept={handleChannelSplitAccept}
+        onDecline={handleChannelSplitDecline}
+      />
       <TranscribeOptionsDialog
         isOpen={isOptionsOpen}
         onOpenChange={setIsOptionsOpen}
         onConfirm={handleConfirm}
         initialOptions={lastOptions ?? undefined}
+        channelSplitEnabled={channelSplitChoice}
       />
     </div>
   );

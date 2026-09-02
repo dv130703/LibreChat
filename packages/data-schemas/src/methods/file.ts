@@ -66,6 +66,7 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
     user?: string;
     tenantId?: string | null;
   }) => Promise<IMongoFile | null>;
+  markTranscriptStale: (file_id: string) => Promise<IMongoFile | null>;
   deleteFile: (file_id: string) => Promise<IMongoFile | null>;
   deleteFiles: (file_ids: string[], user?: string) => Promise<{ deletedCount?: number }>;
   deleteFileByFilter: (filter: FilterQuery<IMongoFile>) => Promise<IMongoFile | null>;
@@ -430,6 +431,24 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
   }
 
   /**
+   * Atomically bumps `transcriptVersion` and marks the index `'stale'` -
+   * called the moment a file's canonical text changes (an Audio Transcriber
+   * correction lands) so the version/status flip is one atomic write, not a
+   * read-then-write a concurrent correction on the same file could race.
+   * @param file_id - The transcript file whose canonical text just changed.
+   * @returns The updated file document (read `transcriptVersion` off it to
+   *   see the new value), or null if no file has that id.
+   */
+  async function markTranscriptStale(file_id: string): Promise<IMongoFile | null> {
+    const File = mongoose.models.File as Model<IMongoFile>;
+    return File.findOneAndUpdate(
+      { file_id },
+      { $inc: { transcriptVersion: 1 }, $set: { indexStatus: 'stale' } },
+      { new: true },
+    ).lean<IMongoFile>();
+  }
+
+  /**
    * Deletes a file identified by file_id.
    * @param file_id - The unique identifier of the file to delete
    * @returns A promise that resolves to the deleted file document or null
@@ -589,6 +608,7 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
     createFile,
     updateFile,
     updateFileUsage,
+    markTranscriptStale,
     deleteFile,
     deleteFiles,
     deleteFileByFilter,

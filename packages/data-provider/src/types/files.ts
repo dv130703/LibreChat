@@ -34,6 +34,11 @@ export enum FileContext {
   /** Transcript embedded into RAG for one conversation only - never listed in
    *  the general file library, deleted along with the conversation. */
   transcript_rag = 'transcript_rag',
+  /** The full diarization/ASR detail record for one transcription - raw
+   *  pyannote turns, speaker embeddings, and per-word speaker assignments -
+   *  never embedded into RAG or shown in the transcript pane; a forensic/audit
+   *  artifact only. See `TTranscriptionDiarizationDetail`. */
+  transcript_diarization_detail = 'transcript_diarization_detail',
   filename = 'filename',
   updatedAt = 'updatedAt',
   source = 'source',
@@ -197,12 +202,132 @@ export type AvatarUploadResponse = {
   url: string;
 };
 
-/** One WhisperX segment, as returned by `POST /api/transcribe`. */
+/** How a segment/word's `speaker` was actually decided - see
+ *  `WhisperXService._resolve_speaker_assignment` in
+ *  `transcription/whisperx_service.py`. `"overlap"`: a diarization turn
+ *  genuinely overlapped this span, and the speaker with the most overlapping
+ *  duration was used (pyannote's own `assign_word_speakers`). `"nearest"`:
+ *  no turn overlapped this span, but the nearest one was within
+ *  `MAX_NEAREST_FALLBACK_DISTANCE_S` - a real but lower-confidence fallback.
+ *  `"unknown"`: no turn overlapped this span and the nearest one was too far
+ *  away to trust - `speaker` is the literal string `"Unknown"`, not a guess.
+ *  `"channel_split"`: no pyannote clustering was involved - the speaker is
+ *  simply which audio channel this word/segment came from. `"none"`:
+ *  diarization wasn't run at all. */
+export type TSpeakerAssignmentMethod = 'overlap' | 'nearest' | 'unknown' | 'channel_split' | 'none';
+
+/** One aligned word within a `TTranscriptSegment` - present only on the
+ *  diarization-detail record (`transcript_diarization_detail`), never on the
+ *  plain transcript shown in the UI. */
+export type TWordSpan = {
+  word: string;
+  start?: number;
+  end?: number;
+  speaker?: string;
+  assignmentMethod: TSpeakerAssignmentMethod;
+  /** Seconds from the nearest diarization turn - `0` for `"overlap"`,
+   *  `undefined` for `"channel_split"`/`"none"` (not applicable), a real gap
+   *  for `"nearest"`/`"unknown"`. */
+  assignmentDistanceS?: number;
+};
+
+/** One raw pyannote speaker turn, before this app's own sequential
+ *  "Speaker N" renumbering - the ground truth `TTranscriptSegment.speaker`
+ *  and `TWordSpan.speaker` are ultimately derived from. Empty for
+ *  `channel_split` transcriptions, which never call pyannote. */
+export type TDiarizationTurn = {
+  start: number;
+  end: number;
+  /** Pyannote's own raw label, e.g. `"SPEAKER_00"` - not renumbered. */
+  speaker: string;
+};
+
+/** One WhisperX segment, as returned by `POST /api/transcribe`. `words` and
+ *  `assignmentMethod` are populated on the diarization-detail record only -
+ *  the plain transcript response omits them to keep normal payloads small. */
 export type TTranscriptSegment = {
   start: number;
   end: number;
   speaker: string;
   text: string;
+  assignmentMethod?: TSpeakerAssignmentMethod;
+  assignmentDistanceS?: number;
+  words?: TWordSpan[];
+};
+
+/** How a recording's turn-taking was classified - see `_classify` in
+ *  `transcription/recording_profile.py`. `"insufficient_data"` when there
+ *  are no segments at all. Thresholds are illustrative starting points, not
+ *  calibrated against labelled data. */
+export type TRecordingClassification =
+  | 'monologue'
+  | 'conversation'
+  | 'rapid_dialogue'
+  | 'difficult'
+  | 'insufficient_data';
+
+/** A statistical fingerprint of the recording's turn-taking - purely
+ *  descriptive, computed once per transcription from the segments and raw
+ *  diarization turns already produced; changes nothing about what got
+ *  transcribed. See `transcription/recording_profile.py`. */
+export type TRecordingProfile = {
+  speakerCount: number;
+  turnCount: number;
+  medianTurnDurationS: number;
+  meanTurnDurationS: number;
+  p95TurnDurationS: number;
+  longestTurnS: number;
+  speakerSwitchesPerMinute: number;
+  /** Keyed by this transcript's renumbered `"Speaker N"` label. */
+  speakerTimeDistributionS: Record<string, number>;
+  /** Fraction of the diarized timeline where more than one speaker's turn
+   *  overlaps - 0 whenever there were no raw diarization turns (e.g.
+   *  channel_split), not necessarily "no overlap occurred." */
+  overlapRatio: number;
+  /** Fraction of total segment duration whose speaker came from a
+   *  `"nearest"`/`"none"` assignment rather than direct diarization overlap -
+   *  see `TSpeakerAssignmentMethod`. */
+  unassignedAudioRatio: number;
+  shortTurnRatio: number;
+  /** Fraction of the recording's own time span that at least one raw
+   *  diarization turn actually covers - distinct from `overlapRatio` (how
+   *  much turns overlap EACH OTHER). A low value alongside a high
+   *  `unassignedAudioRatio` points at real gaps in diarization coverage,
+   *  not just noisy assignment. */
+  diarizationCoverageRatio: number;
+  /** Fraction of segments whose own span is covered by more than one
+   *  distinct raw-diarization speaker - a segment straddling a turn
+   *  boundary pyannote itself drew. */
+  boundaryConflictRatio: number;
+  /** Fraction of word-bearing segments where the segment's own `speaker`
+   *  disagrees with the majority speaker among its own `words` - the two
+   *  are computed independently, so this is a real diagnostic signal. */
+  wordSegmentDisagreementRatio: number;
+  /** Fraction of segments flagged for any of: a `"nearest"`-fallback
+   *  assignment, a boundary conflict, or a word/segment disagreement. */
+  suspiciousSegmentRatio: number;
+  /** Which segment `id`s were actually flagged - a ratio alone tells you a
+   *  recording is worth reviewing; this tells you where to look. */
+  suspiciousSegmentIds: string[];
+  classification: TRecordingClassification;
+};
+
+/** The full, persisted forensic/audit record for one transcription - see
+ *  `FileContext.transcript_diarization_detail`. Fetched separately from the
+ *  plain transcript; not part of the normal `/api/transcribe` response body. */
+export type TTranscriptionDiarizationDetail = {
+  segments: TTranscriptSegment[];
+  diarizationTurns: TDiarizationTurn[];
+  /** Keyed by pyannote's raw label (matches `TDiarizationTurn.speaker`), one
+   *  vector per detected speaker cluster - not per word/segment. `null` for
+   *  `channel_split` transcriptions. */
+  speakerEmbeddings: Record<string, number[]> | null;
+  /** Raw pyannote label -> this transcript's renumbered `"Speaker N"` (or
+   *  `"Channel N"`) label, so an auditor can trace a displayed name back to
+   *  the diarizer's own identity for it. */
+  speakerLabelMap: Record<string, string>;
+  diagnostics: Record<string, unknown>;
+  recordingProfile: TRecordingProfile;
 };
 
 /** Per-recording transcription settings sent by the Audio Transcriber. Every
@@ -221,6 +346,12 @@ export type TTranscribeOptions = {
   /** Whether digits are suppressed at the decoder. Absent takes the server's
    *  configured default; `false` is a real instruction, not an absent option. */
   suppressNumerals?: boolean;
+  /** True once the caller has confirmed splitting by audio channel instead
+   *  of pyannote clustering, after being notified the file has more than one
+   *  channel (see `MultiChannelDialog`). Each channel is transcribed and
+   *  labelled as its own speaker; `minSpeakers`/`maxSpeakers` are ignored
+   *  when this is set. */
+  channelSplit?: boolean;
 };
 
 /** This deployment's effective transcription defaults - what each "auto"
@@ -235,6 +366,38 @@ export type TTranscribeConfig = {
   /** Vocabulary offered as one-click suggestions. Never sent on its own - a
    *  suggestion only reaches the decoder once the user confirms it. */
   suggested_terms: string[];
+  /** The real server-side cap on `minSpeakers`/`maxSpeakers` - values above
+   *  this are clamped silently by the diarizer, so the UI stops the user at
+   *  the same number rather than letting them type past it. */
+  max_speakers: number;
+};
+
+/** Lifecycle of a transcript's RAG index relative to its own canonical text -
+ *  see `IMongoFile.indexStatus` in `@librechat/data-schemas`. `'stale'`: a
+ *  newer `transcriptVersion` exists than `indexVersion` reflects, and
+ *  re-indexing hasn't started yet. `'indexing'`: an embed call is in flight.
+ *  `'indexed'`: the last embed succeeded and `indexVersion ===
+ *  transcriptVersion`. `'index_failed'`: the last embed attempt (including
+ *  retries) failed - `file_search` may still be serving an older version, or
+ *  nothing at all. */
+export type TTranscriptIndexStatus =
+  | 'not_indexed'
+  | 'stale'
+  | 'indexing'
+  | 'indexed'
+  | 'index_failed';
+
+/** A transcript file's identity plus its indexing state - lets a caller tell
+ *  "indexed and current" apart from "still indexing" or "the last index
+ *  attempt failed" without a separate lookup. See `POST
+ *  /api/transcript-corrections/:transcriptFileId/reindex` to retry a failed
+ *  or stale index manually. */
+export type TTranscriptFileStatus = {
+  file_id: string;
+  filename: string;
+  transcriptVersion: number;
+  indexVersion: number | null;
+  indexStatus: TTranscriptIndexStatus;
 };
 
 /** Response shape for `POST /api/transcribe` (Audio Transcriber section). */
@@ -244,7 +407,11 @@ export type TTranscribeResponse = {
   language?: string;
   diagnostics?: Record<string, unknown>;
   sourceFile: { file_id: string; filename: string };
-  transcriptFile: { file_id: string; filename: string } | null;
+  transcriptFile: TTranscriptFileStatus | null;
+  /** The forensic/audit record described by `TTranscriptionDiarizationDetail` -
+   *  fetch and parse its `text` field (via the regular files API) to read it;
+   *  never embedded into RAG, never shown in the transcript pane. */
+  diarizationDetailFile: { file_id: string; filename: string } | null;
 };
 
 /** One append-only correction event against an Audio Transcriber transcript -

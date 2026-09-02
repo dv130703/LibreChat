@@ -57,3 +57,5 @@ export * from './feedback';
 export * from './parameterSettings';
 /* code-execution sandbox */
 export * from './codeEnvRef';
+export * from './interviewTranscript';
+export * from './meetingMinutes';

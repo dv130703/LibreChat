@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { Check, ChevronDown, Clock, Hash, Minus, Plus, Users, X } from 'lucide-react';
+import { Check, ChevronDown, Clock, Hash, Plus, Users, X } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 import {
   OGDialog,
@@ -20,36 +20,15 @@ export interface TranscribeAudioOptions {
   diarize: boolean;
   minSpeakers?: number;
   maxSpeakers?: number;
-  /** Nudges how readily pyannote's clustering treats two voices as the same
-   *  speaker - `undefined` leaves the server's own default in place. Higher
-   *  merges more readily (fewer, broader speakers); lower splits more readily
-   *  (more, finer speakers). See `SpeakerGroupingControl` for the values
-   *  behind its three presets. */
   clusteringThreshold?: number;
-  /** Comma/semicolon/newline-separated names, jargon, or terms the model is
-   *  likely to hear - packed directly into the transcription prompt, so
-   *  these are the ones most likely to come out spelled correctly. */
   contextTerms?: string;
-  /** Free-text description of the recording - never sent to the model
-   *  verbatim (it would bias tone, not just spelling); only mined for
-   *  additional proper nouns if `contextTerms` leaves room. Improves
-   *  transcription only, not who-said-what: speaker separation is acoustic,
-   *  not text-driven. */
   context?: string;
-  /** A specific WhisperX model size, or `undefined` to use this server's own
-   *  configured default (`WHISPERX_WHISPER_MODEL`). Validated again against
-   *  an allow-list server-side (`rag_server/app.py`) - this list is only for
-   *  what the picker offers, not the actual security boundary. */
   model?: string;
-  /** Whether digits are suppressed at the decoder. Sent explicitly rather than
-   *  left absent: suppression happens inside the decoder, so `false` is a real
-   *  instruction and an omitted value silently takes the server's default. */
   suppressNumerals?: boolean;
-  /** ISO 639-1 code (e.g. `'en'`), or `undefined` to let the server
-   *  auto-detect from the first 30 seconds of audio - the right default for
-   *  a single-language recording, but worth overriding for code-switched
-   *  audio or anything whose opening seconds might mislead detection. */
   language?: string;
+  /** Set by `UploadStep` after the multi-channel confirm dialog, not by this
+   *  dialog itself - see `channelSplitEnabled`. */
+  channelSplit?: boolean;
 }
 
 const DEFAULT_OPTIONS: TranscribeAudioOptions = {
@@ -57,77 +36,28 @@ const DEFAULT_OPTIONS: TranscribeAudioOptions = {
   diarize: true,
 };
 
-const MIN_SPEAKER_COUNT = 1;
-const MAX_SPEAKER_COUNT = 20;
-
 type SpeakerGrouping = 'merge' | 'balanced' | 'split';
 
-/** pyannote's own default is 0.6, with 0.5-0.8 being the range it was tuned
- *  over - these sit clearly off that default in either direction without
- *  leaving that range, so each preset produces a real, noticeably different
- *  result without landing on a value nobody has validated. `balanced` sends
- *  nothing at all, leaving the server's own configured default untouched. */
 const CLUSTERING_THRESHOLD: Record<Exclude<SpeakerGrouping, 'balanced'>, number> = {
   merge: 0.72,
   split: 0.48,
 };
 
-/** Curated, not exhaustive - kept in sync by hand with the RAG server's own
- *  allow-list (`_ALLOWED_WHISPER_MODELS` in `rag_server/app.py`), which is
- *  the actual security boundary (letting a client name an arbitrary Hugging
- *  Face repo here would let a transcription request trigger an unbounded
- *  download of untrusted content). `''` means "don't send a model at all" -
- *  the server picks its own configured default. */
+// Kept in sync by hand with `_ALLOWED_WHISPER_MODELS` in `rag_server/app.py`,
+// the actual security boundary - this list is only what the picker offers.
 const WHISPER_MODEL_OPTIONS: Array<{
   value: string;
   labelKey: TranslationKeys;
-  hintKey: TranslationKeys;
 }> = [
-  {
-    value: '',
-    labelKey: 'com_ui_transcribe_model_auto',
-    hintKey: 'com_ui_transcribe_model_auto_hint',
-  },
-  {
-    value: 'tiny',
-    labelKey: 'com_ui_transcribe_model_tiny',
-    hintKey: 'com_ui_transcribe_model_tiny_hint',
-  },
-  {
-    value: 'small',
-    labelKey: 'com_ui_transcribe_model_small',
-    hintKey: 'com_ui_transcribe_model_small_hint',
-  },
-  {
-    value: 'medium',
-    labelKey: 'com_ui_transcribe_model_medium',
-    hintKey: 'com_ui_transcribe_model_medium_hint',
-  },
-  {
-    value: 'large-v2',
-    labelKey: 'com_ui_transcribe_model_large_v2',
-    hintKey: 'com_ui_transcribe_model_large_v2_hint',
-  },
-  {
-    value: 'large-v3',
-    labelKey: 'com_ui_transcribe_model_large',
-    hintKey: 'com_ui_transcribe_model_large_hint',
-  },
-  {
-    value: 'large-v3-turbo',
-    labelKey: 'com_ui_transcribe_model_turbo',
-    hintKey: 'com_ui_transcribe_model_turbo_hint',
-  },
+  { value: '', labelKey: 'com_ui_transcribe_model_auto' },
+  { value: 'tiny', labelKey: 'com_ui_transcribe_model_tiny' },
+  { value: 'small', labelKey: 'com_ui_transcribe_model_small' },
+  { value: 'medium', labelKey: 'com_ui_transcribe_model_medium' },
+  { value: 'large-v2', labelKey: 'com_ui_transcribe_model_large_v2' },
+  { value: 'large-v3', labelKey: 'com_ui_transcribe_model_large' },
+  { value: 'large-v3-turbo', labelKey: 'com_ui_transcribe_model_turbo' },
 ];
 
-/** Plain Whisper language codes (no regional variants - Whisper doesn't
- *  distinguish "en-US" from "en-GB", unlike a browser speech-recognition API).
- *  Curated to the languages a deployment is most likely to see, not
- *  Whisper's full ~99. `''` means "don't send a language at all" - the
- *  server auto-detects from the first 30 seconds of audio, which is the
- *  right default for a single-language recording but a real risk for
- *  code-switched audio or a confusing accent/opening silence - this picker
- *  exists so that risk has an escape hatch. */
 const LANGUAGE_OPTIONS: Array<{ value: string; labelKey: TranslationKeys }> = [
   { value: '', labelKey: 'com_ui_transcribe_language_auto' },
   { value: 'en', labelKey: 'com_ui_transcribe_language_en' },
@@ -152,503 +82,135 @@ const LANGUAGE_OPTIONS: Array<{ value: string; labelKey: TranslationKeys }> = [
   { value: 'uk', labelKey: 'com_ui_transcribe_language_uk' },
 ];
 
+const SPEAKER_GROUPING_OPTIONS: { value: SpeakerGrouping; labelKey: TranslationKeys }[] = [
+  { value: 'merge', labelKey: 'com_ui_transcribe_options_grouping_merge' },
+  { value: 'balanced', labelKey: 'com_ui_transcribe_options_grouping_balanced' },
+  { value: 'split', labelKey: 'com_ui_transcribe_options_grouping_split' },
+];
+
+function groupingFromThreshold(threshold: number | undefined): SpeakerGrouping {
+  if (threshold == null) {
+    return 'balanced';
+  }
+  const match = (
+    Object.keys(CLUSTERING_THRESHOLD) as Array<Exclude<SpeakerGrouping, 'balanced'>>
+  ).find((key) => CLUSTERING_THRESHOLD[key] === threshold);
+  return match ?? 'balanced';
+}
+
+interface MenuOption {
+  value: string;
+  label: string;
+}
+
 /**
- * Same trigger/popover mechanics as `ModelPicker` (including its z-index
- * workaround for a Popover nested inside this modal Dialog), but single-line
- * options instead of label+hint pairs - a language's name doesn't need a
- * second line to explain it the way a model size's trade-off does. Scrollable
- * rather than paginated or searchable: ~20 options is short enough to scan,
- * long enough to need `max-h`.
+ * Same trigger + popover pattern as the audio player's playback-speed menu
+ * (`TranscriptHeader.tsx`) and the per-line `SpeakerDropdown` - a bordered
+ * button that opens a Radix popover list with a sliding check mark, so every
+ * dropdown in this feature looks and behaves the same way.
  */
-function LanguagePicker({
+function DropdownField({
   id,
+  label,
+  hint,
+  ariaLabel,
   value,
+  options,
   onChange,
 }: {
   id: string;
+  label: string;
+  hint?: string;
+  ariaLabel: string;
   value: string;
+  options: MenuOption[];
   onChange: (value: string) => void;
 }) {
-  const localize = useLocalize();
   const [open, setOpen] = useState(false);
+  // Radix's DismissableLayer disables pointer-events on body while a modal
+  // Dialog is open and only re-enables the layer it considers topmost; this
+  // popover, nested one level inside OGDialog, isn't recognized as that
+  // layer without the zIndex/pointerEvents override below.
   const zIndex = usePopoverZIndex();
-  const selected = LANGUAGE_OPTIONS.find((option) => option.value === value) ?? LANGUAGE_OPTIONS[0];
+  const selected = options.find((option) => option.value === value) ?? options[0];
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <button
-          id={id}
-          type="button"
-          aria-label={localize('com_ui_transcribe_options_language_label')}
-          className={cn(
-            'flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary transition-colors hover:border-border-heavy focus-visible:border-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20',
-            open && 'border-blue-500 ring-2 ring-blue-500/20 dark:border-blue-400',
-          )}
-        >
-          <span className="min-w-0 truncate font-medium">{localize(selected.labelKey)}</span>
-          <ChevronDown
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <Label htmlFor={id} className="text-sm font-medium text-text-primary">
+        {label}
+      </Label>
+      <Popover.Root open={open} onOpenChange={setOpen}>
+        <Popover.Trigger asChild>
+          <button
+            id={id}
+            type="button"
+            aria-label={ariaLabel}
             className={cn(
-              'h-4 w-4 shrink-0 text-text-secondary transition-transform',
-              open && 'rotate-180',
+              'flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-border-medium px-3 text-xs font-semibold text-text-secondary transition-colors hover:border-border-heavy hover:text-text-primary',
+              open && 'border-blue-500 ring-2 ring-blue-500/20 dark:border-blue-400',
             )}
-            aria-hidden="true"
-          />
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="bottom"
-          align="start"
-          sideOffset={4}
-          collisionPadding={8}
-          style={{ zIndex, pointerEvents: 'auto' }}
-          className="max-h-64 w-[var(--radix-popover-trigger-width)] min-w-[12rem] overflow-y-auto rounded-lg border border-border-medium bg-surface-primary p-1 shadow-lg duration-150 animate-in fade-in-0 zoom-in-95"
-        >
-          {LANGUAGE_OPTIONS.map((option) => {
-            const isSelected = option.value === value;
-            return (
+          >
+            <span className="truncate">{selected?.label}</span>
+            <ChevronDown
+              className={cn('h-3.5 w-3.5 shrink-0 transition-transform', open && 'rotate-180')}
+            />
+          </button>
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            side="bottom"
+            align="start"
+            sideOffset={8}
+            collisionPadding={8}
+            style={{ zIndex, pointerEvents: 'auto' }}
+            className="max-h-64 w-[var(--radix-popover-trigger-width)] min-w-[10rem] overflow-y-auto rounded-lg border border-border-medium bg-surface-primary p-1 shadow-lg duration-150 animate-in fade-in-0 zoom-in-95"
+            // OGDialog's scroll lock blocks native wheel scrolling on
+            // anything outside its own DOM subtree - this popover is
+            // portaled to <body> as a sibling of the dialog, not a
+            // descendant, so it's caught by that lock. Driving scrollTop
+            // directly here sidesteps it regardless of the native scroll
+            // being blocked.
+            onWheel={(event) => {
+              event.currentTarget.scrollTop += event.deltaY;
+            }}
+          >
+            <Popover.Arrow className="fill-surface-primary" />
+            {options.map((option, index) => (
               <button
                 key={option.value || 'auto'}
                 type="button"
                 role="menuitemradio"
-                aria-checked={isSelected}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-                className={cn(
-                  'flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40',
-                  isSelected
-                    ? 'bg-blue-500/10 font-medium text-blue-600 dark:text-blue-300'
-                    : 'text-text-primary hover:bg-surface-hover',
-                )}
-              >
-                {localize(option.labelKey)}
-                <Check
-                  className={cn(
-                    'h-3.5 w-3.5 shrink-0 text-blue-600 transition-all dark:text-blue-300',
-                    isSelected ? 'scale-100 opacity-100' : 'scale-75 opacity-0',
-                  )}
-                  aria-hidden="true"
-                />
-              </button>
-            );
-          })}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  );
-}
-
-/**
- * Trigger + option list styled after the other custom dropdowns on this page
- * (`TranscriptHeader`'s playback-speed menu, `SpeakerDropdown`) instead of a
- * bare native `<select>`, so all three read as the same control. Each option
- * carries its own one-line description, the way a model switcher elsewhere
- * (e.g. this app's own model picker) shows trade-offs inline rather than
- * making you select-then-read.
- */
-function ModelPicker({
-  id,
-  value,
-  onChange,
-}: {
-  id: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const localize = useLocalize();
-  const [open, setOpen] = useState(false);
-  const zIndex = usePopoverZIndex();
-  const selected =
-    WHISPER_MODEL_OPTIONS.find((option) => option.value === value) ?? WHISPER_MODEL_OPTIONS[0];
-
-  return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <button
-          id={id}
-          type="button"
-          aria-label={localize('com_ui_transcribe_options_model_label')}
-          className={cn(
-            'flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary transition-colors hover:border-border-heavy focus-visible:border-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20',
-            open && 'border-blue-500 ring-2 ring-blue-500/20 dark:border-blue-400',
-          )}
-        >
-          <span className="min-w-0 truncate font-medium">{localize(selected.labelKey)}</span>
-          <ChevronDown
-            className={cn(
-              'h-4 w-4 shrink-0 text-text-secondary transition-transform',
-              open && 'rotate-180',
-            )}
-            aria-hidden="true"
-          />
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="bottom"
-          align="start"
-          sideOffset={4}
-          collisionPadding={8}
-          // Radix's DismissableLayer disables pointer-events on body while a
-          // modal Dialog is open and only re-enables the layer it considers
-          // topmost; nested one level inside OGDialog, this Popover doesn't
-          // get recognized as that layer, so it inherits `pointer-events:
-          // none` from body and becomes unclickable without this override.
-          style={{ zIndex, pointerEvents: 'auto' }}
-          className="w-[var(--radix-popover-trigger-width)] min-w-[16rem] rounded-lg border border-border-medium bg-surface-primary p-1 shadow-lg duration-150 animate-in fade-in-0 zoom-in-95"
-        >
-          {WHISPER_MODEL_OPTIONS.map((option, index) => {
-            const isSelected = option.value === value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="menuitemradio"
-                aria-checked={isSelected}
+                aria-checked={option.value === value}
                 onClick={() => {
                   onChange(option.value);
                   setOpen(false);
                 }}
                 style={{ animationDelay: `${index * 18 + 20}ms` }}
                 className={cn(
-                  'flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-150 ease-out animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40',
-                  isSelected ? 'bg-blue-500/10' : 'hover:bg-surface-hover',
+                  'flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors duration-150 ease-out animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both',
+                  option.value === value
+                    ? 'bg-blue-500/10 font-bold text-blue-600 dark:text-blue-300'
+                    : 'text-text-primary hover:bg-surface-hover',
                 )}
               >
-                <span className="min-w-0 flex-1">
-                  <span
-                    className={cn(
-                      'block text-sm font-medium',
-                      isSelected ? 'text-blue-600 dark:text-blue-300' : 'text-text-primary',
-                    )}
-                  >
-                    {localize(option.labelKey)}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-text-secondary">
-                    {localize(option.hintKey)}
-                  </span>
-                </span>
+                <span className="truncate">{option.label}</span>
                 <Check
                   className={cn(
-                    'mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600 transition-all dark:text-blue-300',
-                    isSelected ? 'scale-100 opacity-100' : 'scale-75 opacity-0',
+                    'h-3.5 w-3.5 shrink-0 transition-all',
+                    option.value === value ? 'scale-100 opacity-100' : 'scale-75 opacity-0',
                   )}
                   aria-hidden="true"
                 />
               </button>
-            );
-          })}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  );
-}
-
-/**
- * A quantity stepper (-/value/+), the same shape as a cart or headcount
- * picker elsewhere on the web - familiar enough that "how do I change this
- * number" isn't a question. `undefined` reads as "Auto"; decrementing off of
- * `MIN_SPEAKER_COUNT` returns to Auto rather than going lower, so Auto is
- * reachable from the buttons alone, not just by clearing the field by hand.
- */
-function SpeakerCountStepper({
-  id,
-  ariaLabel,
-  value,
-  onChange,
-  floor = MIN_SPEAKER_COUNT,
-  ceiling = MAX_SPEAKER_COUNT,
-}: {
-  id: string;
-  ariaLabel: string;
-  value: number | undefined;
-  onChange: (value: number | undefined) => void;
-  /** Lower bound - Min speakers stays fixed at 1; Max speakers uses the
-   *  current Min so the pair can never cross (no invalid range to silently
-   *  fix up after the fact, and no risk of the two fields fighting over
-   *  each other's value on a fast run of clicks). */
-  floor?: number;
-  /** Upper bound - Max speakers stays fixed at MAX_SPEAKER_COUNT; Min
-   *  speakers uses the current Max for the same reason. */
-  ceiling?: number;
-}) {
-  const localize = useLocalize();
-
-  const decrement = () => {
-    if (value === undefined) {
-      return;
-    }
-    onChange(value <= floor ? undefined : value - 1);
-  };
-
-  const increment = () => {
-    onChange(value === undefined ? floor : Math.min(ceiling, value + 1));
-  };
-
-  const handleInputChange = (raw: string) => {
-    if (!raw.trim()) {
-      onChange(undefined);
-      return;
-    }
-    const parsed = Number(raw);
-    if (!Number.isInteger(parsed)) {
-      return;
-    }
-    onChange(Math.min(ceiling, Math.max(floor, parsed)));
-  };
-
-  return (
-    <div className="flex h-10 items-stretch overflow-hidden rounded-lg border border-border-medium bg-transparent transition-colors focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 dark:focus-within:border-blue-400">
-      <button
-        type="button"
-        onClick={decrement}
-        disabled={value === undefined}
-        aria-label={localize('com_ui_transcribe_options_speakers_decrease')}
-        className="flex w-9 shrink-0 items-center justify-center text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40 disabled:pointer-events-none disabled:opacity-30"
-      >
-        <Minus className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
-      <input
-        id={id}
-        type="text"
-        inputMode="numeric"
-        value={value ?? ''}
-        onChange={(e) => handleInputChange(e.target.value)}
-        placeholder={localize('com_ui_transcribe_options_speakers_placeholder')}
-        aria-label={ariaLabel}
-        className="h-full min-w-0 flex-1 border-x border-border-medium bg-transparent text-center text-sm font-medium tabular-nums text-text-primary placeholder:font-normal placeholder:text-text-secondary focus-visible:outline-none"
-      />
-      <button
-        type="button"
-        onClick={increment}
-        disabled={value !== undefined && value >= ceiling}
-        aria-label={localize('com_ui_transcribe_options_speakers_increase')}
-        className="flex w-9 shrink-0 items-center justify-center text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40 disabled:pointer-events-none disabled:opacity-30"
-      >
-        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
+            ))}
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+      {hint != null && hint !== '' && <p className="text-xs text-text-secondary">{hint}</p>}
     </div>
   );
 }
 
-const SPEAKER_GROUPING_OPTIONS: {
-  value: SpeakerGrouping;
-  labelKey: TranslationKeys;
-  hintKey: TranslationKeys;
-}[] = [
-  {
-    value: 'merge',
-    labelKey: 'com_ui_transcribe_options_grouping_merge',
-    hintKey: 'com_ui_transcribe_options_grouping_merge_hint',
-  },
-  {
-    value: 'balanced',
-    labelKey: 'com_ui_transcribe_options_grouping_balanced',
-    hintKey: 'com_ui_transcribe_options_grouping_balanced_hint',
-  },
-  {
-    value: 'split',
-    labelKey: 'com_ui_transcribe_options_grouping_split',
-    hintKey: 'com_ui_transcribe_options_grouping_split_hint',
-  },
-];
-
-/**
- * A 3-way segmented control rather than a raw slider or a "clustering
- * threshold" number field - the underlying knob is a distance threshold
- * pyannote's speaker clustering uses to decide whether two voices are the
- * same person, but nobody transcribing a meeting should need to know that.
- * Framed instead by the symptom it fixes: which way the transcript is
- * currently wrong. Only the active option's hint is shown, so this doesn't
- * cost three lines of text when it's rarely touched at all.
- */
-function SpeakerGroupingControl({
-  value,
-  onChange,
-}: {
-  value: SpeakerGrouping;
-  onChange: (value: SpeakerGrouping) => void;
-}) {
-  const localize = useLocalize();
-  const active = SPEAKER_GROUPING_OPTIONS.find((option) => option.value === value);
-
-  return (
-    <div className="grid gap-1.5">
-      <span className="text-xs font-medium text-text-secondary">
-        {localize('com_ui_transcribe_options_grouping_label')}
-      </span>
-      <div
-        role="radiogroup"
-        aria-label={localize('com_ui_transcribe_options_grouping_label')}
-        className="grid grid-cols-3 gap-1 rounded-lg border border-border-medium bg-transparent p-1"
-      >
-        {SPEAKER_GROUPING_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={option.value === value}
-            onClick={() => onChange(option.value)}
-            className={cn(
-              'rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40',
-              option.value === value
-                ? 'bg-blue-500 text-white dark:bg-blue-400 dark:text-surface-primary'
-                : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary',
-            )}
-          >
-            {localize(option.labelKey)}
-          </button>
-        ))}
-      </div>
-      {active && <p className="text-xs text-text-secondary">{localize(active.hintKey)}</p>}
-    </div>
-  );
-}
-
-/**
- * A chip/tag field: click "Add term" to open a slot, type a name, hit Enter
- * and it becomes a pill - the "Add term" trigger then reappears right next
- * to it so the next one is a click away. The same explicit add-one-at-a-time
- * shape as Notion's property tags or Trello's labels, rather than a
- * continuously-open field or a raw "separate with commas" textarea.
- */
-function TagInput({
-  id,
-  ariaLabel,
-  placeholder,
-  addLabel,
-  clearAllLabel,
-  tags,
-  onChange,
-}: {
-  id: string;
-  ariaLabel: string;
-  placeholder: string;
-  addLabel: string;
-  clearAllLabel: string;
-  tags: string[];
-  onChange: (tags: string[]) => void;
-}) {
-  const localize = useLocalize();
-  const [isAdding, setIsAdding] = useState(false);
-  const [draft, setDraft] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // `autoFocus` trips the a11y lint rule (it also fires on initial mount,
-  // which is the actual harmful case); this only runs when the user's own
-  // click opens the slot, matching the same "focus follows a deliberate
-  // action" rule the lint check is protecting.
-  useEffect(() => {
-    if (isAdding) {
-      inputRef.current?.focus();
-    }
-  }, [isAdding]);
-
-  const commitDraft = () => {
-    const trimmed = draft.trim();
-    setDraft('');
-    setIsAdding(false);
-    if (!trimmed) {
-      return;
-    }
-    const isDuplicate = tags.some((tag) => tag.toLowerCase() === trimmed.toLowerCase());
-    if (!isDuplicate) {
-      onChange([...tags, trimmed]);
-    }
-  };
-
-  const cancelAdding = () => {
-    setDraft('');
-    setIsAdding(false);
-  };
-
-  const removeTag = (index: number) => {
-    onChange(tags.filter((_, i) => i !== index));
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter' || event.key === ',') {
-      event.preventDefault();
-      commitDraft();
-      return;
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelAdding();
-      return;
-    }
-    if (event.key === 'Backspace' && draft === '' && tags.length > 0) {
-      removeTag(tags.length - 1);
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex min-h-10 w-full flex-wrap items-center gap-1.5 rounded-lg border border-border-medium bg-transparent px-2.5 py-1.5 transition-colors focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20">
-        {tags.map((tag, index) => (
-          <span
-            key={`${tag}-${index}`}
-            className="flex items-center gap-1 rounded-full bg-blue-500/10 py-1 pl-2.5 pr-1.5 text-xs font-medium text-blue-600 dark:text-blue-300"
-          >
-            {tag}
-            <button
-              type="button"
-              onClick={() => removeTag(index)}
-              aria-label={localize('com_ui_transcribe_options_remove_term', { 0: tag })}
-              className="rounded-full p-0.5 text-blue-600/70 transition-colors hover:bg-blue-500/20 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 dark:text-blue-300/70 dark:hover:text-blue-200"
-            >
-              <X className="h-3 w-3" aria-hidden="true" />
-            </button>
-          </span>
-        ))}
-        {isAdding ? (
-          <input
-            ref={inputRef}
-            id={id}
-            type="text"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={handleKeyDown}
-            onBlur={commitDraft}
-            placeholder={placeholder}
-            aria-label={ariaLabel}
-            className="min-w-[8rem] flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-secondary focus-visible:outline-none"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setIsAdding(true)}
-            className="flex items-center gap-1 rounded-full border border-dashed border-border-medium px-2.5 py-1 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-          >
-            <Plus className="h-3 w-3" aria-hidden="true" />
-            {addLabel}
-          </button>
-        )}
-      </div>
-      {tags.length > 0 && (
-        <button
-          type="button"
-          onClick={() => onChange([])}
-          className="self-end rounded text-xs text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-        >
-          {clearAllLabel}
-        </button>
-      )}
-    </div>
-  );
-}
-
-/**
- * A toggle row wide enough to click anywhere on, not just the switch itself
- * (Fitts's Law - a bigger, closer target beats a precise one). The switch
- * still carries its own `aria-label` and stays independently focusable/
- * toggleable by keyboard; the wrapping `onClick` only adds a mouse-sized hit
- * area, and the inner stopPropagation keeps a click on the switch from
- * toggling twice.
- */
 function ToggleRow({
   id,
   icon: Icon,
@@ -662,43 +224,51 @@ function ToggleRow({
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
-  const labelRef = useRef<HTMLLabelElement>(null);
-  const switchWrapperRef = useRef<HTMLDivElement>(null);
-
-  // The label and switch already toggle themselves (the label natively
-  // forwards its click to the control it's `htmlFor`, and that forwarded
-  // click bubbles back up here) - only the rest of the row's padding needs
-  // this handler to do anything, otherwise a click on either one would
-  // toggle twice and cancel itself out.
-  const handleRowClick = (event: React.MouseEvent) => {
-    const target = event.target as Node;
-    if (labelRef.current?.contains(target) || switchWrapperRef.current?.contains(target)) {
-      return;
-    }
-    onCheckedChange(!checked);
-  };
-
   return (
-    <div
-      role="presentation"
-      onClick={handleRowClick}
-      className="-mx-2 flex cursor-pointer items-center justify-between gap-3 rounded-lg px-2 py-2"
-    >
+    <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-2.5">
         <Icon className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
-        <Label ref={labelRef} htmlFor={id} className="cursor-pointer text-sm font-medium">
+        <Label htmlFor={id} className="text-sm font-medium text-text-primary">
           {label}
         </Label>
       </div>
-      <div ref={switchWrapperRef}>
-        <Switch
-          id={id}
-          aria-label={label}
-          checked={checked}
-          onCheckedChange={onCheckedChange}
-          className="focus-visible:ring-blue-500/40"
-        />
-      </div>
+      <Switch id={id} aria-label={label} checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  );
+}
+
+function TermChipList({
+  tags,
+  onRemove,
+  removeLabel,
+  emptyLabel,
+}: {
+  tags: string[];
+  onRemove: (index: number) => void;
+  removeLabel: (tag: string) => string;
+  emptyLabel: string;
+}) {
+  if (tags.length === 0) {
+    return <p className="text-xs italic text-text-tertiary">{emptyLabel}</p>;
+  }
+  return (
+    <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto pr-1">
+      {tags.map((tag, index) => (
+        <span
+          key={`${tag}-${index}`}
+          className="flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 py-1 pl-3 pr-1.5 text-xs font-medium text-blue-600 dark:border-blue-400/20 dark:text-blue-300"
+        >
+          {tag}
+          <button
+            type="button"
+            onClick={() => onRemove(index)}
+            aria-label={removeLabel(tag)}
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-blue-600/70 transition-colors hover:bg-blue-500/20 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 dark:text-blue-300/70 dark:hover:text-blue-200"
+          >
+            <X className="h-3 w-3" aria-hidden="true" />
+          </button>
+        </span>
+      ))}
     </div>
   );
 }
@@ -707,35 +277,18 @@ interface TranscribeOptionsDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (options: TranscribeAudioOptions) => void;
-  /** What to open with. Absent fields fall back to this dialog's defaults.
-   *  Supplying the last-used set is what stops a second transcription in the
-   *  same session from silently reverting to Auto with no terms - the model
-   *  and vocabulary someone chose are the whole point of opening this. */
   initialOptions?: TranscribeAudioOptions;
+  /** Set once the user has already confirmed channel-based speaker
+   *  separation for this file (see `MultiChannelDialog`, one step earlier in
+   *  `UploadStep`). Speakers are then a settled fact - one per channel - so
+   *  the diarize toggle and speaker-count/grouping controls are replaced
+   *  with a short note instead of asking a question that's already been
+   *  answered. */
+  channelSplitEnabled?: boolean;
 }
 
-/** Stable identity for "no suggestions yet", so the seeding effect below does
- *  not re-run on every render while the config query is still in flight. */
 const NO_TERMS: string[] = [];
 
-/** The literal string the ASR decoder will receive, assembled the same way the
- *  server's `build_initial_prompt` assembles it: a bare comma-separated list
- *  terminated with a period, no framing sentence. Shown to the user because a
- *  prompt they cannot see is a prompt they cannot correct. */
-function previewInitialPrompt(tags: string[]): string {
-  return tags.length > 0 ? `${tags.join(', ')}.` : '';
-}
-
-/** Matches the server's own fallback counter (`estimate_tokens`, 3 chars per
- *  token). Approximate by construction - the real count comes from the model's
- *  tokenizer - so it is always rendered with a "~". */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3);
-}
-
-/** Inverse of the `termTags.join(', ')` that `handleConfirm` sends, so terms
- *  survive a round trip through a stored option set. Splits on the same
- *  separators the server's own `parse_terms` accepts. */
 function parseTermTags(contextTerms: string | undefined): string[] {
   if (!contextTerms) {
     return [];
@@ -746,15 +299,17 @@ function parseTermTags(contextTerms: string | undefined): string[] {
     .filter((term) => term.length > 0);
 }
 
-/** Reverses `handleConfirm`'s threshold mapping so a re-opened dialog shows the
- *  grouping that produced the previous run rather than resetting to balanced. */
-function groupingFromThreshold(threshold: number | undefined): SpeakerGrouping {
-  if (threshold == null) {
-    return 'balanced';
+/** Digits only, no leading zeros, clamped to `max` - so what's on screen is
+ *  always either empty or a plain positive integer no larger than what the
+ *  diarizer will actually honor. Clamping here means the number the user
+ *  sees typed is always the number that will be used, rather than a larger
+ *  one the server would silently cut down after the fact. */
+function sanitizeSpeakerCountInput(raw: string, max: number): string {
+  const digits = raw.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+  if (digits === '') {
+    return digits;
   }
-  const match = (Object.keys(CLUSTERING_THRESHOLD) as Array<Exclude<SpeakerGrouping, 'balanced'>>)
-    .find((key) => CLUSTERING_THRESHOLD[key] === threshold);
-  return match ?? 'balanced';
+  return String(Math.min(Number(digits), max));
 }
 
 export default function TranscribeOptionsDialog({
@@ -762,6 +317,7 @@ export default function TranscribeOptionsDialog({
   onOpenChange,
   onConfirm,
   initialOptions,
+  channelSplitEnabled = false,
 }: TranscribeOptionsDialogProps) {
   const localize = useLocalize();
   const [step, setStep] = useState<1 | 2>(1);
@@ -772,12 +328,15 @@ export default function TranscribeOptionsDialog({
   const [speakerRange, setSpeakerRange] = useState<{ min?: number; max?: number }>({});
   const [speakerGrouping, setSpeakerGrouping] = useState<SpeakerGrouping>('balanced');
   const [termTags, setTermTags] = useState<string[]>([]);
-  /** Held positively ("emit digits") rather than as the server's negative
-   *  `suppress_numerals`, so the control reads the way the transcript does. */
+  const [termDraft, setTermDraft] = useState('');
   const [emitNumerals, setEmitNumerals] = useState(false);
   const seededRef = useRef(false);
   const { data: transcribeConfig } = useTranscribeConfigQuery();
   const serverSuppressesNumerals = transcribeConfig?.default_suppress_numerals ?? true;
+  // Falls back to the pyannote-accuracy-driven default the server itself
+  // clamps to (see MAX_ALLOWED_SPEAKERS in speaker_bounds.py) - only used
+  // before the config has loaded, so the input is never briefly unbounded.
+  const maxSpeakerCount = transcribeConfig?.max_speakers ?? 8;
 
   const handleOpenChange = (open: boolean) => {
     if (open) {
@@ -788,11 +347,9 @@ export default function TranscribeOptionsDialog({
       setDiarize(initialOptions?.diarize ?? DEFAULT_OPTIONS.diarize);
       setSpeakerRange({ min: initialOptions?.minSpeakers, max: initialOptions?.maxSpeakers });
       setSpeakerGrouping(groupingFromThreshold(initialOptions?.clusteringThreshold));
-      // A re-run (or a repeat in this session) restores exactly what was used,
-      // including a deliberately emptied list. Only a first, fresh
-      // transcription gets seeded with the deployment vocabulary below.
       seededRef.current = initialOptions != null;
       setTermTags(parseTermTags(initialOptions?.contextTerms));
+      setTermDraft('');
       setEmitNumerals(
         initialOptions?.suppressNumerals != null
           ? !initialOptions.suppressNumerals
@@ -802,27 +359,21 @@ export default function TranscribeOptionsDialog({
     onOpenChange(open);
   };
 
-  // Each stepper is bounded by the other's current value (Min's ceiling is
-  // Max, Max's floor is Min - see the SpeakerCountStepper props below), so
-  // the pair can never describe an inverted range in the first place. No
-  // cross-field "fix it up after the fact" logic needed here.
-  const handleMinChange = (value: number | undefined) => {
-    setSpeakerRange((prev) => ({ ...prev, min: value }));
-  };
-
-  const handleMaxChange = (value: number | undefined) => {
-    setSpeakerRange((prev) => ({ ...prev, max: value }));
+  const handleSpeakerCountChange = (raw: string) => {
+    const digits = sanitizeSpeakerCountInput(raw, maxSpeakerCount);
+    if (digits === '') {
+      setSpeakerRange({ min: undefined, max: undefined });
+      return;
+    }
+    const parsed = Number(digits);
+    setSpeakerRange({ min: parsed, max: parsed });
   };
 
   const suggestedTerms = transcribeConfig?.suggested_terms ?? NO_TERMS;
   const unusedSuggestions = suggestedTerms.filter(
     (term) => !termTags.some((tag) => tag.toLowerCase() === term.toLowerCase()),
   );
-  const promptPreview = previewInitialPrompt(termTags);
 
-  /** Seeds a fresh transcription with the deployment vocabulary once the config
-   *  query lands. Runs as an effect rather than inside the open handler because
-   *  the config may still be in flight when the dialog opens. */
   useEffect(() => {
     if (!isOpen || seededRef.current || suggestedTerms.length === 0) {
       return;
@@ -833,18 +384,44 @@ export default function TranscribeOptionsDialog({
 
   const addSuggestion = (term: string) => {
     setTermTags((current) =>
-      current.some((tag) => tag.toLowerCase() === term.toLowerCase()) ? current : [...current, term],
+      current.some((tag) => tag.toLowerCase() === term.toLowerCase())
+        ? current
+        : [...current, term],
     );
   };
 
+  const commitTermDraft = () => {
+    const trimmed = termDraft.trim();
+    setTermDraft('');
+    if (!trimmed) {
+      return;
+    }
+    setTermTags((current) =>
+      current.some((tag) => tag.toLowerCase() === trimmed.toLowerCase())
+        ? current
+        : [...current, trimmed],
+    );
+  };
+
+  const handleTermKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commitTermDraft();
+    }
+  };
+
   const handleConfirm = () => {
+    // Channel-split already answered "who's speaking" one step earlier -
+    // pyannote's own toggle and its min/max/grouping hints are moot once
+    // every speaker is already a settled channel.
+    const effectiveDiarize = channelSplitEnabled ? true : diarize;
     onConfirm({
       includeTimestamps,
-      diarize,
-      minSpeakers: diarize ? speakerRange.min : undefined,
-      maxSpeakers: diarize ? speakerRange.max : undefined,
+      diarize: effectiveDiarize,
+      minSpeakers: effectiveDiarize && !channelSplitEnabled ? speakerRange.min : undefined,
+      maxSpeakers: effectiveDiarize && !channelSplitEnabled ? speakerRange.max : undefined,
       clusteringThreshold:
-        diarize && speakerGrouping !== 'balanced'
+        effectiveDiarize && !channelSplitEnabled && speakerGrouping !== 'balanced'
           ? CLUSTERING_THRESHOLD[speakerGrouping]
           : undefined,
       contextTerms: termTags.length > 0 ? termTags.join(', ') : undefined,
@@ -855,57 +432,70 @@ export default function TranscribeOptionsDialog({
     onOpenChange(false);
   };
 
+  const modelOptions = useMemo<MenuOption[]>(
+    () =>
+      WHISPER_MODEL_OPTIONS.map((option) => ({
+        value: option.value,
+        label:
+          option.value === '' && transcribeConfig?.default_model != null
+            ? localize('com_ui_transcribe_model_auto_resolved', {
+                0: transcribeConfig.default_model,
+              })
+            : localize(option.labelKey),
+      })),
+    [localize, transcribeConfig?.default_model],
+  );
+  const languageOptions = useMemo<MenuOption[]>(
+    () =>
+      LANGUAGE_OPTIONS.map((option) => ({ value: option.value, label: localize(option.labelKey) })),
+    [localize],
+  );
+  const groupingOptions = useMemo<MenuOption[]>(
+    () =>
+      SPEAKER_GROUPING_OPTIONS.map((option) => ({
+        value: option.value,
+        label: localize(option.labelKey),
+      })),
+    [localize],
+  );
+
+  const modelHint =
+    model === '' ? undefined : localize('com_ui_transcribe_options_model_hint_note');
+
   return (
     <OGDialog open={isOpen} onOpenChange={handleOpenChange}>
       <OGDialogTemplate
         title={localize('com_ui_transcribe_options_title')}
-        description={localize(
-          step === 1
-            ? 'com_ui_transcribe_options_description'
-            : 'com_ui_transcribe_options_context_description',
-        )}
+        description={step === 1 ? localize('com_ui_transcribe_options_description') : ''}
         className="w-11/12 sm:w-[28rem]"
+        mainClassName="min-w-0"
         showCloseButton
         showCancelButton={false}
         main={
-          <div className="flex w-full flex-col gap-4">
+          <div className="flex w-full min-w-0 flex-col gap-5">
             {step === 1 ? (
               <>
-                <div className="grid gap-1.5">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="grid min-w-0 gap-1.5">
-                      <Label htmlFor="transcribe-option-model" className="text-sm font-medium">
-                        {localize('com_ui_transcribe_options_model_label')}
-                      </Label>
-                      <ModelPicker id="transcribe-option-model" value={model} onChange={setModel} />
-                    </div>
-                    <div className="grid min-w-0 gap-1.5">
-                      <Label htmlFor="transcribe-option-language" className="text-sm font-medium">
-                        {localize('com_ui_transcribe_options_language_label')}
-                      </Label>
-                      <LanguagePicker
-                        id="transcribe-option-language"
-                        value={language}
-                        onChange={setLanguage}
-                      />
-                    </div>
-                  </div>
-                  <p className="text-xs text-text-secondary">
-                    {localize('com_ui_transcribe_options_model_hint_note')}
-                  </p>
-                  {model === '' && transcribeConfig?.default_model != null && (
-                    <p className="text-xs text-text-secondary">
-                      {localize('com_ui_transcribe_options_model_resolved', {
-                        0: transcribeConfig.default_model,
-                      })}
-                    </p>
-                  )}
-                  <p className="text-xs text-text-secondary">
-                    {localize('com_ui_transcribe_options_language_hint')}
-                  </p>
+                <div className="flex flex-col gap-3">
+                  <DropdownField
+                    id="transcribe-option-model"
+                    label={localize('com_ui_transcribe_options_model_label')}
+                    hint={modelHint}
+                    ariaLabel={localize('com_ui_transcribe_options_model_label')}
+                    value={model}
+                    options={modelOptions}
+                    onChange={setModel}
+                  />
+                  <DropdownField
+                    id="transcribe-option-language"
+                    label={localize('com_ui_transcribe_options_language_label')}
+                    ariaLabel={localize('com_ui_transcribe_options_language_label')}
+                    value={language}
+                    options={languageOptions}
+                    onChange={setLanguage}
+                  />
                 </div>
 
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-4 border-t border-border-light pt-4">
                   <ToggleRow
                     id="transcribe-option-timestamps"
                     icon={Clock}
@@ -913,13 +503,15 @@ export default function TranscribeOptionsDialog({
                     checked={includeTimestamps}
                     onCheckedChange={setIncludeTimestamps}
                   />
-                  <ToggleRow
-                    id="transcribe-option-diarize"
-                    icon={Users}
-                    label={localize('com_ui_transcribe_options_diarize')}
-                    checked={diarize}
-                    onCheckedChange={setDiarize}
-                  />
+                  {!channelSplitEnabled && (
+                    <ToggleRow
+                      id="transcribe-option-diarize"
+                      icon={Users}
+                      label={localize('com_ui_transcribe_options_diarize')}
+                      checked={diarize}
+                      onCheckedChange={setDiarize}
+                    />
+                  )}
                   <ToggleRow
                     id="transcribe-option-numerals"
                     icon={Hash}
@@ -928,65 +520,91 @@ export default function TranscribeOptionsDialog({
                     onCheckedChange={setEmitNumerals}
                   />
                 </div>
-                <p className="text-xs text-text-secondary">
-                  {localize('com_ui_transcribe_options_numerals_hint')}
-                </p>
 
-                {diarize && (
-                  <div className="grid gap-3 rounded-lg border border-border-light bg-surface-secondary p-3">
-                    <p className="text-xs text-text-secondary">
-                      {localize('com_ui_transcribe_options_speakers_hint')}
-                    </p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="grid gap-1.5">
-                        <Label
-                          htmlFor="transcribe-option-min-speakers"
-                          className="text-xs font-medium text-text-secondary"
-                        >
-                          {localize('com_ui_transcribe_options_min_speakers')}
-                        </Label>
-                        <SpeakerCountStepper
-                          id="transcribe-option-min-speakers"
-                          ariaLabel={localize('com_ui_transcribe_options_min_speakers')}
-                          value={speakerRange.min}
-                          onChange={handleMinChange}
-                          ceiling={speakerRange.max}
-                        />
-                      </div>
-                      <div className="grid gap-1.5">
-                        <Label
-                          htmlFor="transcribe-option-max-speakers"
-                          className="text-xs font-medium text-text-secondary"
-                        >
-                          {localize('com_ui_transcribe_options_max_speakers')}
-                        </Label>
-                        <SpeakerCountStepper
-                          id="transcribe-option-max-speakers"
-                          ariaLabel={localize('com_ui_transcribe_options_max_speakers')}
-                          value={speakerRange.max}
-                          onChange={handleMaxChange}
-                          floor={speakerRange.min}
-                        />
-                      </div>
-                    </div>
-                    <SpeakerGroupingControl value={speakerGrouping} onChange={setSpeakerGrouping} />
+                {channelSplitEnabled ? (
+                  <div className="flex items-center gap-2.5 rounded-lg border border-border-light bg-surface-secondary p-3 text-xs text-text-secondary">
+                    <Users className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>{localize('com_ui_transcribe_options_channel_split_note')}</span>
                   </div>
+                ) : (
+                  diarize && (
+                    <div className="flex flex-col gap-3 rounded-lg border border-border-light bg-surface-secondary p-3">
+                      <div className="flex min-w-0 flex-col gap-1.5">
+                        <Label
+                          htmlFor="transcribe-option-speaker-count"
+                          className="text-sm font-medium text-text-primary"
+                        >
+                          {localize('com_ui_transcribe_options_speaker_count_label')}
+                        </Label>
+                        <input
+                          id="transcribe-option-speaker-count"
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={speakerRange.min != null ? String(speakerRange.min) : ''}
+                          onChange={(event) => handleSpeakerCountChange(event.target.value)}
+                          placeholder={localize('com_ui_transcribe_options_speaker_count_auto')}
+                          aria-label={localize('com_ui_transcribe_options_speaker_count_label')}
+                          className="h-10 w-full min-w-0 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary outline-none placeholder:text-text-secondary focus-visible:border-blue-500 focus-visible:ring-2 focus-visible:ring-blue-500/20"
+                        />
+                        <p className="text-xs text-text-secondary">
+                          {localize('com_ui_transcribe_options_speakers_hint', {
+                            0: String(maxSpeakerCount),
+                          })}
+                        </p>
+                      </div>
+                      <DropdownField
+                        id="transcribe-option-grouping"
+                        label={localize('com_ui_transcribe_options_grouping_label')}
+                        ariaLabel={localize('com_ui_transcribe_options_grouping_label')}
+                        value={speakerGrouping}
+                        options={groupingOptions}
+                        onChange={(value) => setSpeakerGrouping(value as SpeakerGrouping)}
+                      />
+                    </div>
+                  )
                 )}
               </>
             ) : (
               <>
-                <TagInput
-                  id="transcribe-option-terms"
-                  ariaLabel={localize('com_ui_transcribe_options_terms_label')}
-                  placeholder={localize('com_ui_transcribe_options_terms_placeholder')}
-                  addLabel={localize('com_ui_transcribe_options_add_term')}
-                  clearAllLabel={localize('com_ui_transcribe_options_clear_terms')}
-                  tags={termTags}
-                  onChange={setTermTags}
-                />
+                <div className="flex min-w-0 flex-col gap-2">
+                  <Label htmlFor="transcribe-option-terms" className="text-sm font-medium">
+                    {localize('com_ui_transcribe_options_terms_label')}
+                  </Label>
+                  <TermChipList
+                    tags={termTags}
+                    onRemove={(index) =>
+                      setTermTags((current) => current.filter((_, i) => i !== index))
+                    }
+                    removeLabel={(tag) =>
+                      localize('com_ui_transcribe_options_remove_term', { 0: tag })
+                    }
+                    emptyLabel={localize('com_ui_transcribe_options_terms_empty')}
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      id="transcribe-option-terms"
+                      type="text"
+                      value={termDraft}
+                      onChange={(event) => setTermDraft(event.target.value)}
+                      onKeyDown={handleTermKeyDown}
+                      placeholder={localize('com_ui_transcribe_options_terms_placeholder')}
+                      aria-label={localize('com_ui_transcribe_options_terms_label')}
+                      className="h-10 min-w-0 flex-1 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary transition-colors placeholder:text-text-secondary focus-visible:border-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={commitTermDraft}
+                      className="shrink-0"
+                    >
+                      {localize('com_ui_transcribe_options_add_term')}
+                    </Button>
+                  </div>
+                </div>
 
                 {unusedSuggestions.length > 0 && (
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex min-w-0 flex-col gap-1.5">
                     <span className="text-xs font-medium text-text-secondary">
                       {localize('com_ui_transcribe_options_suggestions_label')}
                     </span>
@@ -1009,33 +627,15 @@ export default function TranscribeOptionsDialog({
                   </div>
                 )}
 
-                <div className="flex flex-col gap-1.5 rounded-lg border border-border-light bg-surface-secondary p-3">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-xs font-medium text-text-secondary">
-                      {localize('com_ui_transcribe_options_prompt_preview_label')}
-                    </span>
-                    {promptPreview !== '' && (
-                      <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-secondary">
-                        {localize('com_ui_transcribe_options_prompt_tokens', {
-                          0: String(estimateTokens(promptPreview)),
-                        })}
-                      </span>
-                    )}
-                  </div>
-                  <p
-                    className={cn(
-                      'break-words font-mono text-xs',
-                      promptPreview === '' ? 'italic text-text-tertiary' : 'text-text-primary',
-                    )}
+                {termTags.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setTermTags([])}
+                    className="self-start text-xs font-medium text-text-tertiary transition-colors hover:text-text-secondary hover:underline"
                   >
-                    {promptPreview === ''
-                      ? localize('com_ui_transcribe_options_prompt_preview_empty')
-                      : promptPreview}
-                  </p>
-                  <p className="text-xs text-text-secondary">
-                    {localize('com_ui_transcribe_options_prompt_preview_hint')}
-                  </p>
-                </div>
+                    {localize('com_ui_transcribe_options_clear_terms')}
+                  </button>
+                )}
               </>
             )}
           </div>

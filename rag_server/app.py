@@ -42,6 +42,7 @@ from auth import get_user_id
 from config import LOG_REQUESTS, embed_documents, embed_query
 from extract import UnsupportedFileType, chunk_text, extract_pages, is_supported
 from transcription.config import get_settings
+from transcription.speaker_bounds import MAX_ALLOWED_SPEAKERS
 from transcription.vocabulary import SUGGESTED_TERMS
 from transcription.schemas import TranscriptionConfig, TranscriptionResponse
 from transcription.whisperx_service import get_whisperx_service
@@ -203,6 +204,12 @@ def query_documents(request: QueryRequest, user_id: str = Depends(get_user_id)):
                     "source": hit["source"],
                     "page": hit.get("page"),
                     "file_id": hit["file_id"],
+                    # Already stored per chunk (see db.py's schema) but not
+                    # previously surfaced here - combined with file_id, a
+                    # stable identifier for exactly which chunk a retrieved
+                    # passage came from. See fileSearch.js's evidence
+                    # provenance.
+                    "chunk_index": hit.get("chunk_index"),
                 },
             },
             float(hit["_distance"]),
@@ -317,6 +324,7 @@ async def transcribe_config(user_id: str = Depends(get_user_id)) -> Transcriptio
         default_clustering_threshold=settings.diarization_clustering_threshold,
         hotwords_configured=bool(settings.hotwords),
         suggested_terms=list(SUGGESTED_TERMS),
+        max_speakers=MAX_ALLOWED_SPEAKERS,
     )
 
 
@@ -344,6 +352,11 @@ async def transcribe_audio(
     # (whisperx/asr.py:256-262), so this is the only point at which a caller who
     # needs numerals in the transcript can ask for them.
     suppress_numerals: bool | None = Form(None),
+    # True when the caller confirmed splitting by audio channel instead of
+    # pyannote clustering (see /transcribe/probe-channels) - each channel is
+    # transcribed and labelled as its own speaker, bypassing diarization
+    # entirely.
+    channel_split: bool = Form(False),
     user_id: str = Depends(get_user_id),
 ) -> TranscriptionResponse:
     """Speaker-labelled transcript via WhisperX (model set by WHISPERX_WHISPER_MODEL).
@@ -368,18 +381,28 @@ async def transcribe_audio(
 
     service = get_whisperx_service()
     try:
-        segments, detected_language, diagnostics = await run_in_threadpool(
-            service.transcribe,
-            tmp_path,
-            language=language,
-            diarize=diarize,
-            min_speakers=min_speakers,
-            max_speakers=max_speakers,
-            clustering_threshold=clustering_threshold,
-            context_terms=context_terms,
-            context=context,
-            model=model,
-            suppress_numerals=suppress_numerals,
+        (
+            segments,
+            detected_language,
+            diagnostics,
+            diarization_turns,
+            speaker_embeddings,
+            recording_profile,
+        ) = (
+            await run_in_threadpool(
+                service.transcribe,
+                tmp_path,
+                language=language,
+                diarize=diarize,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+                clustering_threshold=clustering_threshold,
+                context_terms=context_terms,
+                context=context,
+                model=model,
+                suppress_numerals=suppress_numerals,
+                channel_split=channel_split,
+            )
         )
     except Exception as error:
         logger.exception("Transcription failed for %s", file.filename)
@@ -397,7 +420,14 @@ async def transcribe_audio(
         len(segments),
         detected_language,
     )
-    return TranscriptionResponse(segments=segments, language=detected_language, diagnostics=diagnostics)
+    return TranscriptionResponse(
+        segments=segments,
+        language=detected_language,
+        diagnostics=diagnostics,
+        diarization_turns=diarization_turns,
+        speaker_embeddings=speaker_embeddings,
+        recording_profile=recording_profile,
+    )
 
 
 def _build_rows(

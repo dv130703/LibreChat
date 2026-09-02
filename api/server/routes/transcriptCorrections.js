@@ -79,6 +79,11 @@ function reembedCorrectedTranscript(req, transcriptFileId, conversationId) {
       reembedQueues.delete(transcriptFileId);
     }
   });
+  // Callers that don't need to wait (every correction route) just ignore
+  // this; the manual `/reindex` route below awaits it, still going through
+  // the same per-transcript queue as any correction-triggered re-embed so
+  // the two can never race each other.
+  return next;
 }
 
 async function performReembed(req, transcriptFileId, conversationId) {
@@ -87,29 +92,64 @@ async function performReembed(req, transcriptFileId, conversationId) {
     if (!baseFile?.text) {
       return;
     }
+    await db.updateFile({ file_id: transcriptFileId, indexStatus: 'indexing' });
+
     const corrections = await db.getTranscriptCorrections(transcriptFileId);
     const correctedText = applyTranscriptCorrections(baseFile.text, corrections);
+
+    // Read again right before the embed call itself - the closest possible
+    // snapshot to what's actually about to be embedded. A correction that
+    // lands in the narrow gap between the reads above and this one is still
+    // captured correctly: its own queued reembed (see `reembedQueues`) will
+    // run next and simply re-derive/re-embed the same-or-newer text,
+    // converging `indexVersion` to the right value either way.
+    const versionBeingEmbedded =
+      (await db.findFileById(transcriptFileId))?.transcriptVersion ?? null;
+
     const embedded = await embedTranscript({
       req,
       file_id: transcriptFileId,
       filename: baseFile.filename ?? `${transcriptFileId}.md`,
       text: correctedText,
     });
-    // Only ever upgrades `embedded` false -> true, never the reverse: a
-    // transient failure here (RAG server hiccup) shouldn't retroactively mark
-    // a previously-successful embed as gone, which would make the full raw
-    // text start riding along in every future prompt as `extractFileContext`'s
-    // fallback for anything not embedded - a much bigger regression than one
-    // correction's RAG index lagging behind by a turn.
-    if (embedded && !baseFile.embedded) {
-      await db.updateFile({ file_id: transcriptFileId, embedded: true });
+
+    if (embedded) {
+      // Only ever upgrades `embedded` false -> true, never the reverse: a
+      // transient failure here (RAG server hiccup) shouldn't retroactively
+      // mark a previously-successful embed as gone, which would make the
+      // full raw text start riding along in every future prompt as
+      // `extractFileContext`'s fallback for anything not embedded - a much
+      // bigger regression than one correction's RAG index lagging behind.
+      await db.updateFile({
+        file_id: transcriptFileId,
+        embedded: true,
+        indexStatus: 'indexed',
+        indexVersion: versionBeingEmbedded,
+      });
+    } else {
+      await db.updateFile({ file_id: transcriptFileId, indexStatus: 'index_failed' });
     }
     logger.info(
-      `[TRANSCRIPTION] re-embedded corrected transcript file_id=${transcriptFileId} conversationId=${conversationId} embedded=${embedded}`,
+      `[TRANSCRIPTION] re-embedded corrected transcript file_id=${transcriptFileId} conversationId=${conversationId} embedded=${embedded} version=${versionBeingEmbedded}`,
     );
   } catch (error) {
+    await db.updateFile({ file_id: transcriptFileId, indexStatus: 'index_failed' }).catch(() => {});
     logger.error('[transcriptCorrections] Failed to re-embed corrected transcript', error);
   }
+}
+
+/**
+ * Saves one correction event, bumps `transcriptVersion` and marks the index
+ * `'stale'` in the same request (before the un-awaited re-embed even starts -
+ * see `reembedCorrectedTranscript`), and enqueues the re-embed. Shared by
+ * every correction route below so the version/status bookkeeping can't drift
+ * between them.
+ */
+async function recordCorrectionAndReembed(req, transcriptFileId, conversationId, correctionData) {
+  const correction = await db.createTranscriptCorrection(correctionData);
+  await db.markTranscriptStale(transcriptFileId);
+  reembedCorrectedTranscript(req, transcriptFileId, conversationId);
+  return correction;
 }
 
 /** All correction events for a transcript, chronological - the client
@@ -142,7 +182,7 @@ router.post('/:transcriptFileId/speaker-rename', async (req, res) => {
     if (!speakerId || !toName) {
       return res.status(400).json({ error: 'speakerId and toName are required' });
     }
-    const correction = await db.createTranscriptCorrection({
+    const correction = await recordCorrectionAndReembed(req, transcriptFileId, conversationId, {
       transcriptFileId,
       conversationId,
       user: req.user.id,
@@ -152,7 +192,6 @@ router.post('/:transcriptFileId/speaker-rename', async (req, res) => {
       toName,
       tenantId: req.user.tenantId,
     });
-    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
     res.json(correction);
   } catch (error) {
     logger.error(
@@ -176,7 +215,7 @@ router.post('/:transcriptFileId/segment-reassign', async (req, res) => {
     if (lineIndex == null || !toSpeakerId) {
       return res.status(400).json({ error: 'lineIndex and toSpeakerId are required' });
     }
-    const correction = await db.createTranscriptCorrection({
+    const correction = await recordCorrectionAndReembed(req, transcriptFileId, conversationId, {
       transcriptFileId,
       conversationId,
       user: req.user.id,
@@ -186,7 +225,6 @@ router.post('/:transcriptFileId/segment-reassign', async (req, res) => {
       toSpeakerId,
       tenantId: req.user.tenantId,
     });
-    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
     res.json(correction);
   } catch (error) {
     logger.error(
@@ -212,7 +250,7 @@ router.post('/:transcriptFileId/text-edit', async (req, res) => {
     if (lineIndex == null || toText == null) {
       return res.status(400).json({ error: 'lineIndex and toText are required' });
     }
-    const correction = await db.createTranscriptCorrection({
+    const correction = await recordCorrectionAndReembed(req, transcriptFileId, conversationId, {
       transcriptFileId,
       conversationId,
       user: req.user.id,
@@ -222,7 +260,6 @@ router.post('/:transcriptFileId/text-edit', async (req, res) => {
       toText,
       tenantId: req.user.tenantId,
     });
-    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
     res.json(correction);
   } catch (error) {
     logger.error('[POST /api/transcript-corrections/:transcriptFileId/text-edit] Failed', error);
@@ -248,7 +285,7 @@ router.post('/:transcriptFileId/time-edit', async (req, res) => {
     if (typeof seconds !== 'number' || typeof endSeconds !== 'number' || endSeconds <= seconds) {
       return res.status(400).json({ error: 'endSeconds must be greater than seconds' });
     }
-    const correction = await db.createTranscriptCorrection({
+    const correction = await recordCorrectionAndReembed(req, transcriptFileId, conversationId, {
       transcriptFileId,
       conversationId,
       user: req.user.id,
@@ -260,7 +297,6 @@ router.post('/:transcriptFileId/time-edit', async (req, res) => {
       endSeconds,
       tenantId: req.user.tenantId,
     });
-    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
     res.json(correction);
   } catch (error) {
     logger.error('[POST /api/transcript-corrections/:transcriptFileId/time-edit] Failed', error);
@@ -288,7 +324,7 @@ router.post('/:transcriptFileId/line-insert', async (req, res) => {
         .status(400)
         .json({ error: 'lineIndex, text, seconds, and endSeconds are required' });
     }
-    const correction = await db.createTranscriptCorrection({
+    const correction = await recordCorrectionAndReembed(req, transcriptFileId, conversationId, {
       transcriptFileId,
       conversationId,
       user: req.user.id,
@@ -300,11 +336,64 @@ router.post('/:transcriptFileId/line-insert', async (req, res) => {
       endSeconds,
       tenantId: req.user.tenantId,
     });
-    reembedCorrectedTranscript(req, transcriptFileId, conversationId);
     res.json(correction);
   } catch (error) {
     logger.error('[POST /api/transcript-corrections/:transcriptFileId/line-insert] Failed', error);
     res.status(500).json({ error: 'Failed to insert transcript line' });
+  }
+});
+
+function toIndexStatusPayload(file) {
+  return {
+    transcriptVersion: file?.transcriptVersion ?? 0,
+    indexVersion: file?.indexVersion ?? null,
+    indexStatus: file?.indexStatus ?? 'not_indexed',
+  };
+}
+
+/** Current index status for a transcript - lets a client (or a developer)
+ *  check whether `file_search` has caught up to the latest correction
+ *  instead of guessing from the outside. */
+router.get('/:transcriptFileId/index-status', async (req, res) => {
+  const { transcriptFileId } = req.params;
+  const { conversationId } = req.query;
+  try {
+    if (!(await assertOwnsConversation(req, res, conversationId))) {
+      return;
+    }
+    const file = await db.findFileById(transcriptFileId);
+    if (!file) {
+      return res.status(404).json({ error: 'Transcript file not found' });
+    }
+    res.json(toIndexStatusPayload(file));
+  } catch (error) {
+    logger.error('[GET /api/transcript-corrections/:transcriptFileId/index-status] Failed', error);
+    res.status(500).json({ error: 'Failed to load index status' });
+  }
+});
+
+/**
+ * Manually retries indexing - for when it's `index_failed` or has been
+ * `stale` for longer than a correction's own automatic re-embed should take.
+ * Goes through the same per-transcript queue as every correction-triggered
+ * re-embed (`reembedCorrectedTranscript`), so it can never race one.
+ */
+router.post('/:transcriptFileId/reindex', async (req, res) => {
+  const { transcriptFileId } = req.params;
+  const { conversationId } = req.body ?? {};
+  try {
+    if (!(await assertOwnsConversation(req, res, conversationId))) {
+      return;
+    }
+    await reembedCorrectedTranscript(req, transcriptFileId, conversationId);
+    const file = await db.findFileById(transcriptFileId);
+    if (!file) {
+      return res.status(404).json({ error: 'Transcript file not found' });
+    }
+    res.json(toIndexStatusPayload(file));
+  } catch (error) {
+    logger.error('[POST /api/transcript-corrections/:transcriptFileId/reindex] Failed', error);
+    res.status(500).json({ error: 'Failed to reindex transcript' });
   }
 });
 

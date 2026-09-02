@@ -80,6 +80,11 @@ export * from './rum/proxy';
 export * from './blackBox/logger';
 /* Audio Transcriber */
 export * from './transcription/corrections';
+export * from './transcription/diarizationDetail';
+export * from './transcription/docxWatermark';
+export * from './transcription/evidence';
+export * from './transcription/interviewDocx';
+export * from './transcription/meetingMinutesDocx';
 /* types */
 export type * from './mcp/types';
 export type * from './flow/types';

@@ -47,38 +47,63 @@ function formatLine(segment, { includeTimestamps, diarize }) {
   return parts.join(' ');
 }
 
+// A RAG-server hiccup (a restart, a momentary connection reset) is the
+// realistic failure this guards against - not a persistent outage, which no
+// number of retries within one request's lifetime can paper over anyway.
+// Total added latency on a full failure is bounded (~2s) rather than left to
+// axios's own connection-level retry behavior (none) or an unbounded loop.
+const EMBED_MAX_ATTEMPTS = 3;
+const EMBED_RETRY_DELAYS_MS = [500, 1500];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Embeds a finished transcript into RAG under a deterministic, source-file-derived
  * id, scoped to nothing but that id (no entity_id) so it never surfaces via any
  * other conversation's file_search. `uploadVectors` only reads from a real path on
  * disk, so the transcript is written to a throwaway temp file for the call and
- * removed immediately after, win or lose.
+ * removed immediately after, win or lose. Retries transient failures up to
+ * `EMBED_MAX_ATTEMPTS` times before giving up - see `EMBED_MAX_ATTEMPTS`.
  *
  * @param {Object} params
  * @param {ServerRequest} params.req
  * @param {string} params.file_id - Deterministic id, e.g. `${sourceFileId}-transcript`.
  * @param {string} params.filename
  * @param {string} params.text
- * @returns {Promise<boolean>} Whether the RAG server accepted and embedded it.
+ * @returns {Promise<boolean>} Whether the RAG server accepted and embedded it,
+ *   after retries.
  */
 async function embedTranscript({ req, file_id, filename, text }) {
   const tmpPath = path.join(os.tmpdir(), `transcribe-${file_id}-${Date.now()}.md`);
   try {
     await fsPromises.writeFile(tmpPath, text, 'utf8');
-    const result = await uploadVectors({
-      req,
-      file: {
-        path: tmpPath,
-        originalname: filename,
-        mimetype: 'text/markdown',
-        size: Buffer.byteLength(text, 'utf8'),
-      },
-      file_id,
-      logLabel: 'TRANSCRIPTION',
-    });
-    return Boolean(result?.embedded);
-  } catch (error) {
-    logAxiosError({ message: 'Error embedding transcript into RAG', error });
+    for (let attempt = 1; attempt <= EMBED_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const result = await uploadVectors({
+          req,
+          file: {
+            path: tmpPath,
+            originalname: filename,
+            mimetype: 'text/markdown',
+            size: Buffer.byteLength(text, 'utf8'),
+          },
+          file_id,
+          logLabel: 'TRANSCRIPTION',
+        });
+        return Boolean(result?.embedded);
+      } catch (error) {
+        logAxiosError({
+          message: `Error embedding transcript into RAG (attempt ${attempt}/${EMBED_MAX_ATTEMPTS})`,
+          error,
+        });
+        if (attempt === EMBED_MAX_ATTEMPTS) {
+          return false;
+        }
+        await sleep(EMBED_RETRY_DELAYS_MS[attempt - 1]);
+      }
+    }
     return false;
   } finally {
     await fsPromises.unlink(tmpPath).catch(() => {});
@@ -97,11 +122,14 @@ async function embedTranscript({ req, file_id, filename, text }) {
  * @param {string} params.sourceFileId - id of the persisted source file; the transcript's
  *   own id is derived from it (`${sourceFileId}-transcript`) so re-transcribing the same
  *   source overwrites its transcript instead of leaking a duplicate.
- * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; clusteringThreshold?: number; language?: string; contextTerms?: string; context?: string; model?: string; suppressNumerals?: boolean}} [params.options]
+ * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; clusteringThreshold?: number; language?: string; contextTerms?: string; context?: string; model?: string; suppressNumerals?: boolean; channelSplit?: boolean}} [params.options]
  * @returns {Promise<{
- *   segments: Array<{start: number; end: number; speaker: string; text: string}>,
+ *   segments: Array<{start: number; end: number; speaker: string; text: string; assignmentMethod?: string; words?: Array<{word: string; start?: number; end?: number; speaker?: string; assignmentMethod: string}>}>,
  *   language: string | undefined,
  *   diagnostics: Record<string, unknown> | undefined,
+ *   diarizationTurns: Array<{start: number; end: number; speaker: string}>,
+ *   speakerEmbeddings: Record<string, number[]> | null,
+ *   recordingProfile: Record<string, unknown> | null,
  *   text: string,
  *   transcriptFileId: string | null,
  *   embedded: boolean,
@@ -125,6 +153,7 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
     context,
     model,
     suppressNumerals,
+    channelSplit,
   } = options;
 
   const jwtToken = generateShortLivedToken(req.user.id);
@@ -134,13 +163,19 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
     contentType: file.mimetype,
   });
   formData.append('diarize', String(diarize));
-  if (diarize && minSpeakers != null) {
+  // Channel-split replaces pyannote clustering outright (each channel is its
+  // own speaker) - the min/max/threshold hints exist to tune clustering, so
+  // they have nothing to apply to here and are left off the request.
+  if (channelSplit) {
+    formData.append('channel_split', 'true');
+  }
+  if (diarize && !channelSplit && minSpeakers != null) {
     formData.append('min_speakers', String(minSpeakers));
   }
-  if (diarize && maxSpeakers != null) {
+  if (diarize && !channelSplit && maxSpeakers != null) {
     formData.append('max_speakers', String(maxSpeakers));
   }
-  if (diarize && clusteringThreshold != null) {
+  if (diarize && !channelSplit && clusteringThreshold != null) {
     formData.append('clustering_threshold', String(clusteringThreshold));
   }
   if (language) {
@@ -185,12 +220,22 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
     timeout: 15 * 60 * 1000,
   });
 
-  const { segments = [], language: detectedLanguage, diagnostics } = response.data ?? {};
+  const {
+    segments = [],
+    language: detectedLanguage,
+    diagnostics,
+    diarization_turns: diarizationTurns = [],
+    speaker_embeddings: speakerEmbeddings = null,
+    recording_profile: recordingProfile = null,
+  } = response.data ?? {};
   if (segments.length === 0) {
     return {
       segments,
       language: detectedLanguage,
       diagnostics,
+      diarizationTurns,
+      speakerEmbeddings,
+      recordingProfile,
       text: '',
       transcriptFileId: null,
       embedded: false,
@@ -208,7 +253,17 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
     text,
   });
 
-  return { segments, language: detectedLanguage, diagnostics, text, transcriptFileId, embedded };
+  return {
+    segments,
+    language: detectedLanguage,
+    diagnostics,
+    diarizationTurns,
+    speakerEmbeddings,
+    recordingProfile,
+    text,
+    transcriptFileId,
+    embedded,
+  };
 }
 
 module.exports = { transcribeAndEmbed, embedTranscript, formatTimestamp, formatLine };

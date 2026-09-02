@@ -14,10 +14,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# One speaker is a monologue; past twenty the hint is doing more harm than good
-# and the clustering should be left to decide for itself.
+# One speaker is a monologue; pyannote's own accuracy falls off past eight,
+# so past that point the hint is doing more harm than good and the
+# clustering should be left to decide for itself.
 MIN_ALLOWED_SPEAKERS = 1
-MAX_ALLOWED_SPEAKERS = 20
+MAX_ALLOWED_SPEAKERS = 8
 
 
 @dataclass
