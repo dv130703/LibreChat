@@ -22,6 +22,7 @@ _CONCERNS = {
     "guidance": "rag",
     "config": "rag",
     "auth": "auth",
+    "net_diagnostics": "network",
     # Request logging spans every route this process serves, so it is its own
     # concern - tagging it with either service would be wrong for the other.
     "http": "http",

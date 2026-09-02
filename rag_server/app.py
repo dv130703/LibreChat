@@ -24,6 +24,15 @@ import time
 import uuid
 from pathlib import Path
 
+# Installed before any other local or third-party import - some libraries
+# (huggingface_hub, sentence-transformers, etc.) make their own connection
+# attempts at *import* time, not just when a route handler runs, so anything
+# imported after this point still needs to be logged, which means this can't
+# wait until after the imports it's trying to observe.
+import net_diagnostics
+
+net_diagnostics.install()
+
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
