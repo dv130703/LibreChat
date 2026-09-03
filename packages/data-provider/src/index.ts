@@ -59,3 +59,4 @@ export * from './parameterSettings';
 export * from './codeEnvRef';
 export * from './interviewTranscript';
 export * from './meetingMinutes';
+export * from './transcript';

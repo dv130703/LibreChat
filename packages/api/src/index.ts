@@ -85,6 +85,7 @@ export * from './transcription/docxWatermark';
 export * from './transcription/evidence';
 export * from './transcription/interviewDocx';
 export * from './transcription/meetingMinutesDocx';
+export * from './transcription/meta';
 /* types */
 export type * from './mcp/types';
 export type * from './flow/types';

@@ -101,7 +101,7 @@ function setupMocks(overrides: { provider?: string } = {}) {
     com_ui_upload_file_search: 'Upload for File Search',
     com_ui_upload_image_input: 'Upload Image',
     com_ui_upload_ocr_text: 'Upload as Text',
-    com_ui_upload_provider: 'Upload to Provider',
+    com_ui_upload_provider: 'Attach Files',
   };
   mockUseLocalize.mockReturnValue((key: string) => translations[key] || key);
   mockUseAgentCapabilities.mockReturnValue({
@@ -156,7 +156,7 @@ describe('AttachFileMenu', () => {
       setupMocks({ provider: 'Moonshot' });
       renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.getByText('Attach Files')).toBeInTheDocument();
       expect(screen.queryByText('Upload Image')).not.toBeInTheDocument();
     });
 
@@ -164,21 +164,21 @@ describe('AttachFileMenu', () => {
       setupMocks({ provider: EModelEndpoint.openAI });
       renderMenu({ endpointType: EModelEndpoint.openAI });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.getByText('Attach Files')).toBeInTheDocument();
     });
 
     it('shows "Upload to Provider" when endpointType is anthropic', () => {
       setupMocks({ provider: EModelEndpoint.anthropic });
       renderMenu({ endpointType: EModelEndpoint.anthropic });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.getByText('Attach Files')).toBeInTheDocument();
     });
 
     it('shows "Upload to Provider" when endpointType is google', () => {
       setupMocks({ provider: Providers.GOOGLE });
       renderMenu({ endpointType: EModelEndpoint.google });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.getByText('Attach Files')).toBeInTheDocument();
     });
 
     it('shows "Upload Image" when endpointType is agents (no provider resolution)', () => {
@@ -186,7 +186,7 @@ describe('AttachFileMenu', () => {
       renderMenu({ endpointType: EModelEndpoint.agents });
       openMenu();
       expect(screen.getByText('Upload Image')).toBeInTheDocument();
-      expect(screen.queryByText('Upload to Provider')).not.toBeInTheDocument();
+      expect(screen.queryByText('Attach Files')).not.toBeInTheDocument();
     });
 
     it('shows "Upload Image" when neither endpointType nor provider supports documents', () => {
@@ -200,7 +200,7 @@ describe('AttachFileMenu', () => {
       setupMocks({ provider: EModelEndpoint.azureOpenAI });
       renderMenu({ endpointType: EModelEndpoint.azureOpenAI, useResponsesApi: true });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.getByText('Attach Files')).toBeInTheDocument();
     });
 
     it('shows "Upload to Provider" for azureOpenAI endpointType with useResponsesApi', () => {
@@ -211,7 +211,7 @@ describe('AttachFileMenu', () => {
         useResponsesApi: true,
       });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.getByText('Attach Files')).toBeInTheDocument();
     });
 
     it('shows "Upload Image" for azureOpenAI without useResponsesApi', () => {
@@ -230,7 +230,7 @@ describe('AttachFileMenu', () => {
         endpointType: EModelEndpoint.custom,
       });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.getByText('Attach Files')).toBeInTheDocument();
     });
 
     it('shows "Upload Image" when agents endpoint has no resolved provider type', () => {
@@ -241,6 +241,74 @@ describe('AttachFileMenu', () => {
       });
       openMenu();
       expect(screen.getByText('Upload Image')).toBeInTheDocument();
+    });
+  });
+
+  describe('"Attach Files" accepts audio/video (no separate transcription route from here)', () => {
+    /** `handleUploadClick` sets `accept`, calls `.click()` (real browsers read
+     *  it there, to populate the native picker), then immediately resets it
+     *  to `''` - a real click briefly opens a dialog, giving no observable
+     *  gap, but jsdom's `.click()` is a synchronous no-op, so by the time a
+     *  test reads `input.accept` after `fireEvent.click`, the reset has
+     *  already run. Spying on `.click()` captures the value at the instant
+     *  it's actually used, matching what a real browser's picker would see. */
+    let acceptAtClickTime: string | null = null;
+    let clickSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      acceptAtClickTime = null;
+      clickSpy = jest.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
+        this: HTMLInputElement,
+      ) {
+        acceptAtClickTime = this.accept;
+      });
+    });
+
+    afterEach(() => {
+      clickSpy.mockRestore();
+    });
+
+    it('includes audio/video in the file picker for a generic provider (image_document)', () => {
+      setupMocks({ provider: EModelEndpoint.openAI });
+      renderMenu({ endpointType: EModelEndpoint.openAI });
+      openMenu();
+      fireEvent.click(screen.getByText('Attach Files'));
+      expect(acceptAtClickTime).toContain('audio/*');
+      expect(acceptAtClickTime).toContain('video/*');
+    });
+
+    it('includes audio/video in the file picker for Bedrock (image_document_extended)', () => {
+      setupMocks({ provider: Providers.BEDROCK });
+      renderMenu({ endpointType: EModelEndpoint.bedrock });
+      openMenu();
+      fireEvent.click(screen.getByText('Attach Files'));
+      expect(acceptAtClickTime).toContain('audio/*');
+      expect(acceptAtClickTime).toContain('video/*');
+    });
+
+    it('includes audio/video in the file picker for Google (image_document_video_audio)', () => {
+      setupMocks({ provider: Providers.GOOGLE });
+      renderMenu({ endpointType: EModelEndpoint.google });
+      openMenu();
+      fireEvent.click(screen.getByText('Attach Files'));
+      expect(acceptAtClickTime).toContain('audio/*');
+      expect(acceptAtClickTime).toContain('video/*');
+    });
+
+    it('routes the upload as a plain attachment, not a tool resource', () => {
+      const mockHandleFileChange = jest.fn();
+      setupMocks({ provider: EModelEndpoint.openAI });
+      mockUseFileHandlingNoChatContext.mockReturnValue({ handleFileChange: mockHandleFileChange });
+      renderMenu({ endpointType: EModelEndpoint.openAI });
+      openMenu();
+      fireEvent.click(screen.getByText('Attach Files'));
+
+      const audioFile = new File(['x'], 'recording.mp3', { type: 'audio/mpeg' });
+      fireEvent.change(screen.getByTestId('file-input'), { target: { files: [audioFile] } });
+
+      expect(mockHandleFileChange).toHaveBeenCalledTimes(1);
+      const [, toolResource] = mockHandleFileChange.mock.calls[0];
+      expect(toolResource).toBeUndefined();
     });
   });
 
@@ -337,7 +405,7 @@ describe('AttachFileMenu', () => {
       });
       renderMenu({ endpointType: EModelEndpoint.openAI });
       openMenu();
-      expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
+      expect(screen.getByText('Attach Files')).toBeInTheDocument();
       expect(screen.getByText('Upload as Text')).toBeInTheDocument();
       expect(screen.getByText('Upload for File Search')).toBeInTheDocument();
       expect(screen.getByText('Upload to Code Environment')).toBeInTheDocument();
@@ -373,7 +441,7 @@ describe('AttachFileMenu', () => {
       try {
         renderMenu({ endpointType: EModelEndpoint.openAI });
         openMenu();
-        fireEvent.click(screen.getByText('Upload to Provider'));
+        fireEvent.click(screen.getByText('Attach Files'));
         fireEvent.click(screen.getByText('Upload for File Search'));
       } finally {
         HTMLInputElement.prototype.click = originalClick;

@@ -8,44 +8,11 @@ const axios = require('axios');
 const FormData = require('form-data');
 const { logger } = require('@librechat/data-schemas');
 const { generateShortLivedToken, logAxiosError } = require('@librechat/api');
+const {
+  formatTranscriptLine: formatLine,
+  formatTranscriptTimestamp: formatTimestamp,
+} = require('librechat-data-provider');
 const { uploadVectors } = require('~/server/services/Files/VectorDB/crud');
-
-/** "125.34" seconds -> "02:05.3". Kept to tenths of a second (not rounded to
- *  a whole second) so the client can bound single-line/turn playback without
- *  cutting into, or leaking audio from, the next line - whole-second
- *  precision left up to half a second of slack on each side of a boundary,
- *  which is audible. All-integer tenths math avoids float rollover bugs
- *  (e.g. 59.96s must become 01:00.0, not 00:59.10). Segments run well past
- *  an hour for long recordings. */
-function formatTimestamp(seconds) {
-  const totalTenths = Math.max(0, Math.round(seconds * 10));
-  const totalSeconds = Math.floor(totalTenths / 10);
-  const tenths = totalTenths % 10;
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  const mm = String(m).padStart(2, '0');
-  const ss = `${String(s).padStart(2, '0')}.${tenths}`;
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
-/** Renders one transcript line, honoring the user's timestamp/diarization choices
- *  independently - either, both, or neither may be on. Both the segment's start
- *  AND its own end are written out - the client bounds single-line/turn playback
- *  against this segment's real end, not (as before) the next segment's start,
- *  which is a different value that can sit noticeably later than where this
- *  segment's speech actually stops, letting the next speaker's audio bleed in. */
-function formatLine(segment, { includeTimestamps, diarize }) {
-  const parts = [];
-  if (includeTimestamps) {
-    parts.push(`[${formatTimestamp(segment.start)}-${formatTimestamp(segment.end)}]`);
-  }
-  if (diarize) {
-    parts.push(`${segment.speaker}:`);
-  }
-  parts.push(segment.text);
-  return parts.join(' ');
-}
 
 // A RAG-server hiccup (a restart, a momentary connection reset) is the
 // realistic failure this guards against - not a persistent outage, which no

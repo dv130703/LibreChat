@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react';
-import { useRecoilValue } from 'recoil';
 import { TooltipAnchor } from '@librechat/client';
 import { getConfigDefaults } from 'librechat-data-provider';
 import type { ModelSelectorProps } from '~/common';
@@ -15,8 +14,6 @@ import { ModelSelectorChatProvider } from './ModelSelectorChatContext';
 import { getSelectedIcon, getDisplayValue } from './utils';
 import { CustomMenu as Menu } from './CustomMenu';
 import DialogManager from './DialogManager';
-import { useChatContext } from '~/Providers/ChatContext';
-import { isAudioTranscriberConvo } from '~/store';
 import { useLocalize } from '~/hooks';
 
 const defaultInterface = getConfigDefaults().interface;
@@ -56,17 +53,7 @@ function ModelSelectorContent() {
     [mappedEndpoints, selectedValues, modelSpecs, endpointsConfig],
   );
 
-  /** A raw backend model id (e.g. "qwen3-14b-8k:latest") reads as a dev-time
-   *  detail here, not something a forensic reviewer of this transcript needs
-   *  to know or should have to trust their evidence to by name. */
-  const { conversation } = useChatContext();
-  const isTranscriberConvo = useRecoilValue(
-    isAudioTranscriberConvo(conversation?.conversationId ?? ''),
-  );
   const selectedDisplayValue = useMemo(() => {
-    if (isTranscriberConvo) {
-      return localize('com_ui_transcript_model_label');
-    }
     return getDisplayValue({
       localize,
       agentsMap,
@@ -74,7 +61,7 @@ function ModelSelectorContent() {
       selectedValues,
       mappedEndpoints,
     });
-  }, [isTranscriberConvo, localize, agentsMap, modelSpecs, selectedValues, mappedEndpoints]);
+  }, [localize, agentsMap, modelSpecs, selectedValues, mappedEndpoints]);
 
   const trigger = (
     <TooltipAnchor

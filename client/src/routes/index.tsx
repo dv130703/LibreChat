@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
+import { createBrowserRouter, Navigate, Outlet, useParams } from 'react-router-dom';
 import {
   Login,
   VerifyEmail,
@@ -31,6 +31,18 @@ const AuthLayout = () => (
   </AuthContextProvider>
 );
 
+/** Phase 5 cutover (transcription/ARCHITECTURE.md §9) - the standalone
+ *  `/audio-transcriber/:id` page is retired; bookmarked/shared links to it
+ *  keep working by landing on the same conversation with the transcript
+ *  panel open, which is now the canonical place to view one. No `?file=`
+ *  param: `TranscriptPanel` resolves it itself from the conversation's file
+ *  list (`splitFileIds`), same as it already does for any bare
+ *  `?panel=transcript` link. */
+const AudioTranscriberRedirect = () => {
+  const { conversationId } = useParams();
+  return <Navigate to={`/c/${conversationId}?panel=transcript`} replace={true} />;
+};
+
 const loadInlinePromptsView = () =>
   import('~/components/Prompts/layouts/InlinePromptsView').then((m) => ({
     Component: m.default,
@@ -49,11 +61,6 @@ const loadProjectsView = () =>
 const loadProjectWorkspace = () =>
   import('~/components/Projects').then((m) => ({
     Component: m.ProjectWorkspace,
-  }));
-
-const loadAudioTranscriberView = () =>
-  import('~/components/AudioTranscriber/AudioTranscriberPage').then((m) => ({
-    Component: m.default,
   }));
 
 const baseEl = document.querySelector('base');
@@ -176,12 +183,8 @@ export const router = createBrowserRouter(
               lazy: loadProjectWorkspace,
             },
             {
-              path: 'audio-transcriber',
-              lazy: loadAudioTranscriberView,
-            },
-            {
               path: 'audio-transcriber/:conversationId',
-              lazy: loadAudioTranscriberView,
+              element: <AudioTranscriberRedirect />,
             },
             {
               path: 'agents',

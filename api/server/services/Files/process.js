@@ -1326,9 +1326,19 @@ async function saveBase64Image(
  * @param {string} params.text
  * @param {string} [params.conversationId]
  * @param {boolean} [params.embedded] - Whether the matching RAG embed call succeeded.
+ * @param {string} [params.sourceFileId] - Explicit back-reference to the source
+ *   audio File this transcript belongs to (transcription/ARCHITECTURE.md §4.2/I3).
  * @returns {Promise<MongoFile>}
  */
-async function saveTranscriptFile({ req, file_id, filename, text, conversationId, embedded }) {
+async function saveTranscriptFile({
+  req,
+  file_id,
+  filename,
+  text,
+  conversationId,
+  embedded,
+  sourceFileId,
+}) {
   const bytes = Buffer.byteLength(text, 'utf8');
   // `createFile`'s upsert is a MongoDB *replacement* update (no `$set`), so
   // any field not explicitly included here is dropped, not left alone -
@@ -1356,6 +1366,7 @@ async function saveTranscriptFile({ req, file_id, filename, text, conversationId
       // and `indexStatus` says so explicitly instead of leaving it ambiguous.
       indexVersion: embedded ? transcriptVersion : (existing?.indexVersion ?? null),
       indexStatus: embedded ? 'indexed' : 'index_failed',
+      sourceFileId: sourceFileId ?? existing?.sourceFileId,
       user: req.user.id,
       conversationId,
       ...(await getRetentionExpiry(req)),
@@ -1384,18 +1395,70 @@ async function saveTranscriptFile({ req, file_id, filename, text, conversationId
  * @param {string} [params.conversationId]
  * @returns {Promise<MongoFile>}
  */
+/**
+ * Above this, the JSON blob risks pushing the Mongo document at or past the
+ * 16MB BSON document limit on its own - reachable on a long, heavily
+ * diarized recording, where per-word speaker-assignment detail for every
+ * segment adds up. Left with real headroom under the hard 16MB ceiling for
+ * the rest of the document's fields (see transcription/ARCHITECTURE.md R8).
+ */
+const DIARIZATION_DETAIL_INLINE_MAX_BYTES = 14 * 1024 * 1024;
+
 async function saveDiarizationDetailFile({ req, file_id, filename, detail, conversationId }) {
   const text = JSON.stringify(detail);
   const bytes = Buffer.byteLength(text, 'utf8');
+
+  if (bytes <= DIARIZATION_DETAIL_INLINE_MAX_BYTES) {
+    return await db.createFile(
+      {
+        type: 'application/json',
+        source: FileSources.text,
+        context: FileContext.transcript_diarization_detail,
+        file_id,
+        filepath: `transcript-diarization-detail://${file_id}`,
+        filename,
+        text,
+        bytes,
+        embedded: false,
+        user: req.user.id,
+        conversationId,
+        ...(await getRetentionExpiry(req)),
+        tenantId: req.user.tenantId,
+      },
+      true,
+    );
+  }
+
+  // Over the guard: fall back to real file storage (the same strategy used
+  // for the source audio) instead of the inline `text` field. `filepath`
+  // becomes a real, resolvable path rather than the synthetic
+  // `transcript-diarization-detail://` marker used for the inline case -
+  // nothing currently reads this content back programmatically (it's a
+  // forensic/audit artifact only), so there is no read path to update to
+  // match.
+  logger.warn(
+    `[saveDiarizationDetailFile] Diarization detail for file_id=${file_id} is ${bytes} bytes, ` +
+      `over the ${DIARIZATION_DETAIL_INLINE_MAX_BYTES}-byte inline guard - storing on disk instead.`,
+  );
+  const appConfig = req.config;
+  const source = getFileStrategy(appConfig, { isImage: false });
+  const { saveBuffer } = getStrategyFunctions(source);
+  const filepath = await saveBuffer({
+    userId: req.user.id,
+    fileName: filename,
+    buffer: Buffer.from(text, 'utf8'),
+    tenantId: req.user.tenantId,
+  });
+  const storageMetadata = getStorageMetadata({ filepath, source });
   return await db.createFile(
     {
       type: 'application/json',
-      source: FileSources.text,
+      source,
       context: FileContext.transcript_diarization_detail,
       file_id,
-      filepath: `transcript-diarization-detail://${file_id}`,
+      filepath,
+      ...storageMetadata,
       filename,
-      text,
       bytes,
       embedded: false,
       user: req.user.id,

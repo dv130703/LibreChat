@@ -1,5 +1,15 @@
 import type { Document, Types } from 'mongoose';
 
+/**
+ * @deprecated As of the transcription-to-file migration (see
+ * `transcription/ARCHITECTURE.md` D3/D4/§4.3), this now lives on the
+ * *source audio* `File` doc as `IFileTranscriptionJob['effectiveOptions']`
+ * instead - a single-conversation sub-document can't represent more than
+ * one recording, and Audio Transcriber conversations may now hold several.
+ * Kept, and still written, for one release as a dual-write/dual-read
+ * fallback for conversations transcribed before the migration; slated for
+ * removal in Phase 6.
+ */
 export interface ITranscriptionMeta {
   model?: string;
   requestedModel?: string;

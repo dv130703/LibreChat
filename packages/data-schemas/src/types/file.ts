@@ -1,5 +1,55 @@
 import { Document, Types } from 'mongoose';
-import type { CodeEnvRef } from 'librechat-data-provider';
+import type { CodeEnvRef, TTranscribeOptions } from 'librechat-data-provider';
+import type { ITranscriptionMeta } from './convo';
+
+/**
+ * Per-recording transcription job state, carried on the *source audio*
+ * File doc (not the transcript file, and not `Conversation.transcription` -
+ * see `transcription/ARCHITECTURE.md` D3/D4). Anchoring here means a
+ * Audio Transcriber card always has something to read the instant an
+ * upload lands, before any transcript exists, and still has something to
+ * read in a failure state where no transcript will ever exist.
+ *
+ * `Conversation.transcription` (`ITranscriptionMeta`) is deprecated in
+ * favor of this field as of the same migration - see
+ * `IConversation.transcription`'s own doc comment.
+ */
+export interface IFileTranscriptionJob {
+  status: 'queued' | 'transcribing' | 'ready' | 'failed';
+  /** uuid, for log correlation - not a Mongo `_id`. */
+  jobId: string;
+  /** Which process last held this job. Meaningful once dispatch is
+   *  coordinated across more than one instance; until then it identifies
+   *  the single instance every job runs on. */
+  instanceId: string;
+  /** Updated while `status === 'transcribing'`; the reconciliation sweep
+   *  (Phase 2) uses staleness here to detect a job an instance abandoned
+   *  mid-run (e.g. a process restart) rather than one still in progress. */
+  heartbeatAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  /** Server diagnosis text, shown on the card - set only when `status === 'failed'`. */
+  error?: string;
+  /** The options this job was asked to run with. Optional, not just in the
+   *  historical-migration case (`Conversation.transcription` never captured
+   *  the original request, only the server-resolved values) but in general:
+   *  every field of `TTranscribeOptions` is itself optional, so a caller
+   *  requesting every default produces `{}` - and Mongoose's default
+   *  `minimize` behavior strips an empty object out of a `Mixed` field
+   *  entirely before it's ever persisted, so "no options were requested"
+   *  and "this field is absent" are the same observable state on read.
+   *  Absence should be read as "nothing beyond defaults was requested",
+   *  not as missing data. */
+  requestedOptions?: TTranscribeOptions;
+  /** The options the pipeline actually resolved and ran under - seeds
+   *  Re-transcribe's option dialog with what really produced the current
+   *  transcript rather than the request's possibly-"auto" values. */
+  effectiveOptions?: ITranscriptionMeta;
+  transcriptFileId?: string;
+  diarizationDetailFileId?: string;
+  durationS?: number;
+  speakerCount?: number;
+}
 
 export interface IMongoFile extends Omit<Document, 'model'> {
   user: Types.ObjectId;
@@ -80,6 +130,16 @@ export interface IMongoFile extends Omit<Document, 'model'> {
    * kinds that were never meant to be indexed, or before the first attempt.
    */
   indexStatus?: 'not_indexed' | 'stale' | 'indexing' | 'indexed' | 'index_failed';
+  /** Audio Transcriber: present only on a *source audio* File doc, present
+   *  from the moment the upload is accepted through job completion or
+   *  failure. See `IFileTranscriptionJob`. */
+  transcription?: IFileTranscriptionJob;
+  /** Audio Transcriber: present only on a *transcript* File doc - explicit
+   *  back-reference to the source audio File this transcript belongs to.
+   *  Replaces inferring it by elimination (transcript/diarization-detail
+   *  ids are known suffixes; whatever file id remains on the conversation
+   *  was assumed to be the source) - see `transcription/ARCHITECTURE.md` I3. */
+  sourceFileId?: string;
   type: string;
   context?: string;
   usage: number;

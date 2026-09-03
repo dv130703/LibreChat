@@ -5,6 +5,7 @@ export * from './context';
 export * from './documents/crud';
 export * from './encode';
 export * from './extractAudio';
+export * from './probeAudioChannels';
 export * from './filter';
 export * from './mistral/crud';
 export * from './ocr';

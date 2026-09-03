@@ -63,6 +63,48 @@ const file: Schema<IMongoFile> = new Schema(
       type: String,
       enum: ['not_indexed', 'stale', 'indexing', 'indexed', 'index_failed'],
     },
+    /* Audio Transcriber job state - see IFileTranscriptionJob. Present only
+     * on a source audio File doc. `_id: false` since this is always read/
+     * written as a whole sub-document, never queried by its own array
+     * index (it isn't an array). */
+    transcription: {
+      type: new Schema(
+        {
+          status: {
+            type: String,
+            enum: ['queued', 'transcribing', 'ready', 'failed'],
+            required: true,
+          },
+          jobId: { type: String, required: true },
+          instanceId: { type: String, required: true },
+          heartbeatAt: { type: Date, required: true },
+          startedAt: { type: Date },
+          completedAt: { type: Date },
+          error: { type: String },
+          // Not `required` despite IFileTranscriptionJob's comment on why:
+          // an empty `{}` (every option left at default, or a migrated
+          // historical record) is indistinguishable from "absent" once
+          // Mongoose's default `minimize` strips it - `required` would only
+          // ever reject the one case (`undefined`/`null`) that's already
+          // meaningful to allow through.
+          requestedOptions: { type: Schema.Types.Mixed },
+          effectiveOptions: { type: Schema.Types.Mixed },
+          transcriptFileId: { type: String },
+          diarizationDetailFileId: { type: String },
+          durationS: { type: Number },
+          speakerCount: { type: Number },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
+    /* Audio Transcriber - present only on a transcript File doc, back-
+     * reference to its source audio File. Indexed: the retranscribe/
+     * status-poll paths look transcript files up by source. */
+    sourceFileId: {
+      type: String,
+      index: true,
+    },
     type: {
       type: String,
       required: true,

@@ -400,18 +400,54 @@ export type TTranscriptFileStatus = {
   indexStatus: TTranscriptIndexStatus;
 };
 
-/** Response shape for `POST /api/transcribe` (Audio Transcriber section). */
-export type TTranscribeResponse = {
+/** A source-audio File's transcription job state - `IFileTranscriptionJob`
+ *  on the server, transcription/ARCHITECTURE.md §4.1. */
+export type TTranscribeJobStatus = 'queued' | 'transcribing' | 'ready' | 'failed';
+
+/** Response shape for `POST /api/transcribe/probe` (Phase 4,
+ *  transcription/ARCHITECTURE.md §6.2) - the server-side `ffprobe` channel
+ *  count replacing the composer's old client-side Web Audio API heuristic. */
+export type TAudioChannelProbeResponse = {
+  channelCount: number;
+};
+
+/**
+ * Response shape for `POST /api/transcribe`, `POST /:sourceFileId/retry`,
+ * and `POST /:sourceFileId/retranscribe` (Phase 2, async job model - see
+ * transcription/ARCHITECTURE.md §5.1). The job has been accepted and
+ * queued, not completed - there are no `segments`/`diagnostics` here
+ * anymore, since transcription hasn't run yet at the time this responds.
+ * Poll `GET /api/transcribe/status` for the outcome.
+ */
+export type TTranscribeQueuedResponse = {
   conversationId: string;
-  segments: TTranscriptSegment[];
-  language?: string;
-  diagnostics?: Record<string, unknown>;
   sourceFile: { file_id: string; filename: string };
-  transcriptFile: TTranscriptFileStatus | null;
+  status: TTranscribeJobStatus;
+  /** Jobs ahead of this one (including one already in flight), at the
+   *  moment this was enqueued - a one-time estimate, not a live counter. */
+  queuePosition: number;
+};
+
+/** One source file's current job state, as returned by
+ *  `GET /api/transcribe/status` - the batch poll for the cards/panel of an
+ *  open conversation. */
+export type TTranscribeStatusEntry = {
+  file_id: string;
+  status: TTranscribeJobStatus;
+  /** Server diagnosis text - set only when `status === 'failed'`. */
+  error: string | null;
+  transcriptFileId: string | null;
   /** The forensic/audit record described by `TTranscriptionDiarizationDetail` -
    *  fetch and parse its `text` field (via the regular files API) to read it;
    *  never embedded into RAG, never shown in the transcript pane. */
-  diarizationDetailFile: { file_id: string; filename: string } | null;
+  diarizationDetailFileId: string | null;
+};
+
+export type TTranscribeStatusResponse = {
+  /** Only ids the caller owns are ever present - an id that doesn't resolve
+   *  (not found, not owned, or not a source file) is silently omitted
+   *  rather than erroring the whole poll. */
+  files: TTranscribeStatusEntry[];
 };
 
 /** One append-only correction event against an Audio Transcriber transcript -

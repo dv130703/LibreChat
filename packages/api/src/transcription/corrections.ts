@@ -1,3 +1,4 @@
+import { formatTranscriptTimestamp, parseTranscriptText } from 'librechat-data-provider';
 import type { TTranscriptCorrection } from 'librechat-data-provider';
 
 /**
@@ -9,65 +10,19 @@ import type { TTranscriptCorrection } from 'librechat-data-provider';
  * `reduceCorrections` + `TranscriptPanel.tsx`'s `effectiveLines`) exactly, so the
  * text handed to the model matches what the reviewer actually sees on screen.
  *
- * The line-level format (`[start-end] Speaker N: text`) is unchanged from
- * `formatLine` in `api/server/services/Transcription/index.js` - only the
- * lines an actual correction touches differ from the base parse.
+ * The line-level format (`[start-end] Speaker N: text`) and its parser live
+ * in `librechat-data-provider`'s `transcript` module - the one place all
+ * three consumers (this file, the Node bridge in
+ * `api/server/services/Transcription/index.js`, and the client's
+ * `TranscriptPanel.tsx`) can share, since `packages/api` can depend on
+ * `librechat-data-provider` but not on `/api` or `client` (see workspace
+ * boundaries in CLAUDE.md). `parseTranscriptText`/`ParsedTranscriptLine` are
+ * re-exported below so `interviewDocx.ts`/`meetingMinutesDocx.ts` don't need
+ * to change their own imports.
  */
 
-/** Mirrors `LINE_PATTERN` in `TranscriptPanel.tsx` exactly - any drift between
- *  the two would silently desync what the reviewer sees from what gets embedded. */
-const LINE_PATTERN = /^(?:\[([0-9:.]+)(?:-([0-9:.]+))?\] )?(?:(Speaker \d+): )?(.*)$/;
-
-export interface ParsedTranscriptLine {
-  lineIndex: number;
-  seconds?: number;
-  endSeconds?: number;
-  speaker?: string;
-  text: string;
-}
-
-function parseTimestampToSeconds(timestamp: string): number | undefined {
-  const parts = timestamp.split(':').map(Number);
-  if (parts.length === 0 || parts.some((part) => Number.isNaN(part))) {
-    return undefined;
-  }
-  return parts.reduce((total, part) => total * 60 + part, 0);
-}
-
-/** Ports `formatTimestamp` from `api/server/services/Transcription/index.js` -
- *  duplicated rather than imported since `packages/api` can't depend on `/api`
- *  (see workspace boundaries), and it's a tiny, self-contained pure function. */
-function formatTimestamp(seconds: number): string {
-  const totalTenths = Math.max(0, Math.round(seconds * 10));
-  const totalSeconds = Math.floor(totalTenths / 10);
-  const tenths = totalTenths % 10;
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const secs = totalSeconds % 60;
-  const mm = String(minutes).padStart(2, '0');
-  const ss = `${String(secs).padStart(2, '0')}.${tenths}`;
-  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
-export function parseTranscriptText(text: string): ParsedTranscriptLine[] {
-  return text
-    .split('\n')
-    .filter((line) => line.length > 0)
-    .map((line, lineIndex) => {
-      const match = LINE_PATTERN.exec(line);
-      if (!match) {
-        return { lineIndex, text: line };
-      }
-      const [, timestamp, endTimestamp, speaker, rest] = match;
-      return {
-        lineIndex,
-        seconds: timestamp ? parseTimestampToSeconds(timestamp) : undefined,
-        endSeconds: endTimestamp ? parseTimestampToSeconds(endTimestamp) : undefined,
-        speaker,
-        text: rest,
-      };
-    });
-}
+export type { ParsedTranscriptLine } from 'librechat-data-provider';
+export { parseTranscriptText };
 
 /** Same replay rule as `reduceCorrections` on the client - chronological,
  *  last write per key wins, log itself never mutated. */
@@ -183,8 +138,8 @@ function serializeTranscriptLines(lines: ParsedTranscriptLine[]): string {
     .map((line) => {
       const parts: string[] = [];
       if (line.seconds != null) {
-        const end = line.endSeconds != null ? `-${formatTimestamp(line.endSeconds)}` : '';
-        parts.push(`[${formatTimestamp(line.seconds)}${end}]`);
+        const end = line.endSeconds != null ? `-${formatTranscriptTimestamp(line.endSeconds)}` : '';
+        parts.push(`[${formatTranscriptTimestamp(line.seconds)}${end}]`);
       }
       if (line.speaker != null) {
         parts.push(`${line.speaker}:`);

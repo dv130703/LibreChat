@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as Popover from '@radix-ui/react-popover';
 import { isEqual } from 'lodash';
@@ -26,12 +26,17 @@ import {
   useRetranscribeAudioMutation,
   useExportInterviewDocxMutation,
   useExportMeetingMinutesDocxMutation,
+  useTranscribeStatusQuery,
+  useRetryTranscriptionMutation,
 } from '~/data-provider';
+import { parseTranscriptText } from 'librechat-data-provider';
 import type { InterviewTranscriptForm, MeetingMinutesForm } from 'librechat-data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 import type { MouseEvent } from 'react';
 import type { ParsedLine, SpeakerOption } from './types';
+import { useChatHeaderSlot } from './panelHostContext';
+import type { PanelComponentProps } from './panelHostContext';
 import { computeInsertionSlots, formatSlotTimestamp } from './lineInsert';
 import { reduceCorrections, createCustomSpeakerId } from './corrections';
 import { getSpeakerDotColor } from './speakerColors';
@@ -44,16 +49,6 @@ import TranscriptRow from './TranscriptRow';
 import { splitFileIds } from './fileIds';
 import SpeakerRosterModal from './SpeakerRosterModal';
 
-/** Matches exactly what `formatLine` (api/server/services/Transcription/index.js)
- *  produces: an optional `[start-end]` (the end half is only present on
- *  transcripts saved after end timestamps started being persisted - older
- *  ones just have `[start]`), an optional `Speaker N:` label, then the spoken
- *  text. The label is the RAG server's own human-readable rewrite of
- *  WhisperX's raw diarization ids (see `_speaker_label` in
- *  `transcription/whisperx_service.py`) - not raw `SPEAKER_00`-style output -
- *  so this can't false-match ordinary sentences that happen to contain a colon. */
-const LINE_PATTERN = /^(?:\[([0-9:.]+)(?:-([0-9:.]+))?\] )?(?:(Speaker \d+): )?(.*)$/;
-
 /** How far short of a bounded-playback boundary to stop, so the next line
  *  never gets a chance to register as "currently playing." */
 const BOUNDARY_BACKOFF_SECONDS = 0.15;
@@ -63,41 +58,6 @@ const BOUNDARY_BACKOFF_SECONDS = 0.15;
  *  only needs to keep it from hanging off the viewport edge, not be exact. */
 const CONTEXT_MENU_WIDTH = 192;
 const CONTEXT_MENU_HEIGHT = 76;
-
-/** "02:05.3" or "1:02:05.0" -> seconds, for seeking the `<audio>` element and
- *  for comparing against its `currentTime` to find the active line.
- *  Tenths-of-a-second precision (see `formatTimestamp` in
- *  `api/server/services/Transcription/index.js`) matters here: a whole-second
- *  boundary leaves up to half a second of slack, which is audible as either
- *  an early cutoff or a bleed into the next line during bounded playback. */
-function parseTimestampToSeconds(timestamp: string): number | undefined {
-  const parts = timestamp.split(':').map(Number);
-  if (parts.length === 0 || parts.some((part) => Number.isNaN(part))) {
-    return undefined;
-  }
-  return parts.reduce((total, part) => total * 60 + part, 0);
-}
-
-function parseTranscript(text: string): ParsedLine[] {
-  return text
-    .split('\n')
-    .filter((line) => line.length > 0)
-    .map((line, lineIndex) => {
-      const match = LINE_PATTERN.exec(line);
-      if (!match) {
-        return { lineIndex, text: line };
-      }
-      const [, timestamp, endTimestamp, speaker, rest] = match;
-      return {
-        lineIndex,
-        timestamp,
-        seconds: timestamp ? parseTimestampToSeconds(timestamp) : undefined,
-        endSeconds: endTimestamp ? parseTimestampToSeconds(endTimestamp) : undefined,
-        speaker,
-        text: rest,
-      };
-    });
-}
 
 function downloadTextFile(text: string, filename: string): void {
   const blob = new Blob([text], { type: 'text/plain' });
@@ -134,7 +94,7 @@ const RETRANSCRIBE_LABEL_MIN_WIDTH = 470;
 const SPEAKERS_LABEL_MIN_WIDTH = 400;
 const EXPORT_LABEL_MIN_WIDTH = 330;
 
-/** This header lives in a user-resizable split pane (`Workspace.tsx`,
+/** This header lives in a user-resizable split pane (`ChatPanelHost.tsx`,
  *  minSize 320px with no upper bound), not a fixed viewport, so a CSS media
  *  query would never fire just from the user dragging the divider - it
  *  needs to answer to its own measured width instead. A `ResizeObserver` on
@@ -335,17 +295,24 @@ function TranscriptPanelHeader({
   );
 }
 
-export default function TranscriptPanel({
+/**
+ * Memoized: `ChatPanelHost` re-rendering (e.g. from `useChatHeaderSlot`'s own
+ * `setHeaderSlot` call below settling) must not cascade into re-executing
+ * this component's body when its actual props haven't changed - `onResolved`/
+ * `onUnresolvable` are stable (`useCallback`'d in `ChatPanelHost`), so a
+ * shallow prop comparison correctly bails out. Without this, every
+ * `setHeaderSlot` call re-renders the panel, which recreates the header JSX
+ * node it passes to `useChatHeaderSlot`, whose effect dependency on that
+ * node's identity re-fires `setHeaderSlot` again - an infinite loop that
+ * only `act()`'s "Maximum update depth exceeded" in tests makes obvious;
+ * outside a test it just pegs a render loop silently.
+ */
+function TranscriptPanel({
   conversationId,
-  headerContainer,
-}: {
-  conversationId: string;
-  /** DOM node (owned by `Workspace`, sized to the chat pane) to portal the
-   *  audio player into, so it renders above the chat rather than inside the
-   *  scrollable transcript pane. `null` until `Workspace`'s ref callback
-   *  attaches, so the player briefly renders nowhere on first paint. */
-  headerContainer: HTMLDivElement | null;
-}) {
+  fileId,
+  onResolved,
+  onUnresolvable,
+}: PanelComponentProps) {
   const localize = useLocalize();
   const { user, isAuthenticated } = useAuthContext();
   const {
@@ -359,9 +326,49 @@ export default function TranscriptPanel({
     [conversation],
   );
 
+  /** A source file with no transcript yet is either mid-job or landed here
+   *  before the job even had a chance to be picked up (e.g. navigating
+   *  straight into `?panel=transcript` right after queuing a brand-new
+   *  conversation's transcription - the composer's "transcribe this?" flow
+   *  does exactly that, rather than waiting out the whole job before the
+   *  user sees anything). Polls the same status endpoint `TranscriptCard`
+   *  does; once it reports `ready`, the transcript file itself has been
+   *  attached to the conversation server-side, so refetching picks up the
+   *  now-real `transcriptFileId` from `splitFileIds` above. */
+  const { data: jobStatusData } = useTranscribeStatusQuery(sourceFileId ? [sourceFileId] : [], {
+    enabled: sourceFileId != null && transcriptFileId == null,
+  });
+  const jobStatus = jobStatusData?.files.find((entry) => entry.file_id === sourceFileId);
+  const retryTranscription = useRetryTranscriptionMutation();
+
+  useEffect(() => {
+    if (jobStatus?.status === 'ready') {
+      refetchConvo();
+    }
+  }, [jobStatus?.status, refetchConvo]);
+
+  /** Reports this panel's real target back to `ChatPanelHost` once the
+   *  conversation has loaded - `fileId` (from the `?file=` URL param, if
+   *  present) not matching what the conversation actually resolves to is
+   *  treated as "this specific target doesn't exist for this viewer"
+   *  (closed with a toast, ChatPanelHost §6.3), distinct from a query error
+   *  (transient, retryable, handled by the existing `isConvoError` state
+   *  below). Waits for a definite load outcome rather than firing on every
+   *  intermediate render, so a briefly-stale cache read can't misfire this. */
+  useEffect(() => {
+    if (isConvoLoading || isConvoError || !sourceFileId) {
+      return;
+    }
+    if (fileId != null && fileId !== sourceFileId) {
+      onUnresolvable();
+      return;
+    }
+    onResolved(sourceFileId);
+  }, [isConvoLoading, isConvoError, sourceFileId, fileId, onResolved, onUnresolvable]);
+
   const { data: preview, isLoading: isPreviewLoading } = useFilePreview(transcriptFileId);
   const lines = useMemo(
-    () => (preview?.text ? parseTranscript(preview.text) : []),
+    () => (preview?.text ? parseTranscriptText(preview.text) : []),
     [preview?.text],
   );
 
@@ -392,9 +399,12 @@ export default function TranscriptPanel({
 
   const handleRetranscribe = useCallback(
     (options: TranscribeAudioOptions) => {
-      retranscribe.mutate({ conversationId, options });
+      if (!sourceFileId) {
+        return;
+      }
+      retranscribe.mutate({ sourceFileId, options });
     },
-    [conversationId, retranscribe],
+    [sourceFileId, retranscribe],
   );
   const { speakerNames, segmentReassignments, textEdits, timeEdits, insertedLines } = useMemo(
     () => reduceCorrections(corrections ?? []),
@@ -667,6 +677,16 @@ export default function TranscriptPanel({
     boundaryLineIndexRef.current = null;
     stopBoundaryWatch();
   }, [stopBoundaryWatch]);
+
+  // Contributes the audio player into the chat pane's header region - see
+  // `useChatHeaderSlot`'s own comment on why this replaced a DOM portal.
+  useChatHeaderSlot(
+    <TranscriptHeader
+      audioSrc={audioQuery.data}
+      audioRef={audioRef}
+      onUnboundedPlaybackRequested={clearBoundary}
+    />,
+  );
 
   useEffect(() => {
     const audioEl = audioRef.current;
@@ -1207,9 +1227,12 @@ export default function TranscriptPanel({
 
   const handleExportInterview = useCallback(
     (form: InterviewTranscriptForm) => {
+      if (!sourceFileId) {
+        return;
+      }
       const title = conversation?.title ?? 'transcript';
       exportInterviewDocx.mutate(
-        { conversationId, form, speakers: speakerOptions },
+        { sourceFileId, form, speakers: speakerOptions },
         {
           onSuccess: (blob) => {
             const safeTitle = title.replace(/[/:*?"<>|]/g, '_');
@@ -1218,7 +1241,7 @@ export default function TranscriptPanel({
         },
       );
     },
-    [conversationId, conversation?.title, speakerOptions, exportInterviewDocx],
+    [sourceFileId, conversation?.title, speakerOptions, exportInterviewDocx],
   );
 
   const [meetingMinutesDialogOpen, setMeetingMinutesDialogOpen] = useState(false);
@@ -1226,9 +1249,12 @@ export default function TranscriptPanel({
 
   const handleExportMeetingMinutes = useCallback(
     (form: MeetingMinutesForm) => {
+      if (!sourceFileId) {
+        return;
+      }
       const title = conversation?.title ?? 'transcript';
       exportMeetingMinutesDocx.mutate(
-        { conversationId, form, speakers: speakerOptions },
+        { sourceFileId, form, speakers: speakerOptions },
         {
           onSuccess: (blob) => {
             const safeTitle = title.replace(/[/:*?"<>|]/g, '_');
@@ -1237,7 +1263,7 @@ export default function TranscriptPanel({
         },
       );
     },
-    [conversationId, conversation?.title, speakerOptions, exportMeetingMinutesDocx],
+    [sourceFileId, conversation?.title, speakerOptions, exportMeetingMinutesDocx],
   );
 
   const isLoading =
@@ -1245,15 +1271,6 @@ export default function TranscriptPanel({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {headerContainer &&
-        createPortal(
-          <TranscriptHeader
-            audioSrc={audioQuery.data}
-            audioRef={audioRef}
-            onUnboundedPlaybackRequested={clearBoundary}
-          />,
-          headerContainer,
-        )}
       {!isLoading && lines.length > 0 && (
         <TranscriptPanelHeader
           lineCount={lines.length}
@@ -1319,22 +1336,67 @@ export default function TranscriptPanel({
             </p>
           </div>
         )}
-        {!isLoading && !isConvoError && lines.length === 0 && preview?.status !== 'failed' && (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <span
-              aria-hidden="true"
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-hover text-text-secondary"
-            >
-              <FileText className="h-5 w-5" />
-            </span>
-            <p className="text-sm font-medium text-text-primary">
-              {localize('com_ui_transcript_empty_title')}
-            </p>
-            <p className="max-w-xs text-xs text-text-secondary">
-              {localize('com_ui_transcript_empty')}
-            </p>
-          </div>
-        )}
+        {!isLoading &&
+          !isConvoError &&
+          transcriptFileId == null &&
+          (jobStatus?.status === 'queued' || jobStatus?.status === 'transcribing') && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <Spinner className="text-text-primary" />
+              <p className="text-sm font-medium text-text-primary">
+                {jobStatus.status === 'transcribing'
+                  ? localize('com_ui_transcript_card_transcribing')
+                  : localize('com_ui_transcript_card_queued')}
+              </p>
+            </div>
+          )}
+        {!isLoading &&
+          !isConvoError &&
+          transcriptFileId == null &&
+          jobStatus?.status === 'failed' && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <span
+                aria-hidden="true"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-500"
+              >
+                <AlertCircle className="h-5 w-5" />
+              </span>
+              <p role="alert" className="max-w-xs text-sm text-red-500">
+                {jobStatus.error ?? localize('com_ui_transcript_error')}
+              </p>
+              {sourceFileId && (
+                <button
+                  type="button"
+                  onClick={() => retryTranscription.mutate({ sourceFileId })}
+                  disabled={retryTranscription.isLoading}
+                  className="rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+                >
+                  {localize('com_ui_transcript_card_retry')}
+                </button>
+              )}
+            </div>
+          )}
+        {!isLoading &&
+          !isConvoError &&
+          lines.length === 0 &&
+          preview?.status !== 'failed' &&
+          jobStatus?.status !== 'queued' &&
+          jobStatus?.status !== 'transcribing' &&
+          jobStatus?.status !== 'failed' && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <span
+                aria-hidden="true"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-hover text-text-secondary"
+              >
+                <FileText className="h-5 w-5" />
+              </span>
+              <p className="text-sm font-medium text-text-primary">
+                {localize('com_ui_transcript_empty_title')}
+              </p>
+              <p className="max-w-xs text-xs text-text-secondary">
+                {localize('com_ui_transcript_empty')}
+              </p>
+            </div>
+          )}
         {!isLoading && lines.length > 0 && (
           <>
             <div className="flex flex-col gap-1">
@@ -1446,3 +1508,5 @@ export default function TranscriptPanel({
     </div>
   );
 }
+
+export default memo(TranscriptPanel);

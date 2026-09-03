@@ -1,6 +1,6 @@
 import { AudioLines } from 'lucide-react';
 import { OGDialog, OGDialogTemplate, Button } from '@librechat/client';
-import { useLocalize } from '~/hooks';
+import useLocalize from '~/hooks/useLocalize';
 
 interface MultiChannelDialogProps {
   isOpen: boolean;
@@ -50,6 +50,7 @@ export default function MultiChannelDialog({
         className="w-11/12 sm:w-[26rem]"
         showCloseButton={false}
         showCancelButton={false}
+        footerClassName="[&>*]:flex-1 [&>*]:justify-center"
         main={
           <div className="flex flex-col gap-3">
             <div className="flex items-start gap-2.5">

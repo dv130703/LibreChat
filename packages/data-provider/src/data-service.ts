@@ -480,19 +480,18 @@ export const uploadFile = (
 };
 
 /** Uploads an audio/video file for transcription (Audio Transcriber section).
- *  A plain REST action the user triggers directly, not an agent tool call -
- *  transcription and RAG embedding both happen synchronously server-side
- *  before this resolves. Real transcriptions take 30-90s+, so give this a
- *  generous timeout via `requestConfig` if the caller needs one. */
+ *  A plain REST action the user triggers directly, not an agent tool call.
+ *  Async job model (Phase 2, transcription/ARCHITECTURE.md §5.1): this
+ *  resolves once the upload is stored and the job is queued, not once
+ *  transcription finishes - poll `getTranscribeStatus` for the outcome.
+ *  The 20-minute timeout below is generous headroom for the upload leg
+ *  itself on a large file over a slow connection, not for transcription. */
 export const transcribeAudio = (
   data: FormData,
   signal?: AbortSignal | null,
-  /** Real, byte-level progress for the upload leg only - the server has no
-   *  progress signal at all for transcription/embedding once the upload
-   *  completes, so callers should treat 100% here as "uploaded, now
-   *  processing," not "done." */
+  /** Real, byte-level progress for the upload leg only. */
   onUploadProgress?: (percent: number) => void,
-): Promise<f.TTranscribeResponse> => {
+): Promise<f.TTranscribeQueuedResponse> => {
   const requestConfig = {
     ...(signal ? { signal } : {}),
     timeout: 20 * 60 * 1000,
@@ -509,10 +508,26 @@ export const transcribeAudio = (
   return request.postMultiPart(endpoints.transcribe(), data, requestConfig);
 };
 
-/** Re-runs transcription on the audio already stored for a conversation,
- *  replacing that conversation's transcript in place - same conversation, same
- *  URL, one transcript. No upload leg, so there is no progress signal at all:
- *  callers show an indeterminate state for the whole run. */
+/** Server-side channel-count probe (Phase 4, §6.2) - replaces the composer's
+ *  old client-side Web Audio API decode/heuristic in `UploadStep.tsx`, which
+ *  had a size ceiling and could mis-detect on codecs the browser can't
+ *  decode. Stateless: no File record created, no job queued. */
+export const probeAudioChannels = (data: FormData): Promise<f.TAudioChannelProbeResponse> => {
+  return request.postMultiPart(endpoints.probeAudioChannels(), data);
+};
+
+/** Batch status poll for one or more source-audio file ids - the cards/panel
+ *  of an open conversation use this to watch a queued/transcribing job settle. */
+export const getTranscribeStatus = (fileIds: string[]): Promise<f.TTranscribeStatusResponse> => {
+  return request.get(endpoints.transcribeStatus(fileIds));
+};
+
+/** Re-enqueues a failed job with the options it originally ran with. Only
+ *  valid when the job's current status is `'failed'`. */
+export const retryTranscription = (sourceFileId: string): Promise<f.TTranscribeQueuedResponse> => {
+  return request.post(endpoints.retryTranscription(sourceFileId), {});
+};
+
 /** This deployment's effective transcription defaults - see
  *  `GET /api/transcribe/config`. Read once and reused; it changes only when the
  *  server is reconfigured. */
@@ -524,31 +539,37 @@ export const getTranscribeConfig = (): Promise<f.TTranscribeConfig> => {
  *  a plain-text approximation. `speakers` is the display-name list the
  *  dialog already has on screen; the server independently re-derives the
  *  corrected transcript body from the stored correction log rather than
- *  trust text the client might send stale. */
+ *  trust text the client might send stale. Keyed by `sourceFileId` (§5.2) -
+ *  a conversation may hold more than one recording. */
 export const exportInterviewDocx = (
-  conversationId: string,
+  sourceFileId: string,
   form: InterviewTranscriptForm,
   speakers: NamedSpeaker[],
 ): Promise<Blob> => {
-  return request.postForBlob(endpoints.interviewDocx(conversationId), { form, speakers });
+  return request.postForBlob(endpoints.interviewDocx(sourceFileId), { form, speakers });
 };
 
 /** The meeting-minutes export - same server-side re-derivation of the
  *  corrected transcript as `exportInterviewDocx`, just a plainer form (no
  *  witnesses/roles) and a friendlier document layout on the server side. */
 export const exportMeetingMinutesDocx = (
-  conversationId: string,
+  sourceFileId: string,
   form: MeetingMinutesForm,
   speakers: NamedSpeaker[],
 ): Promise<Blob> => {
-  return request.postForBlob(endpoints.meetingMinutesDocx(conversationId), { form, speakers });
+  return request.postForBlob(endpoints.meetingMinutesDocx(sourceFileId), { form, speakers });
 };
 
+/** Re-runs transcription on the audio already stored for a source file,
+ *  replacing its conversation's transcript in place - rekeyed from
+ *  `conversationId` to `sourceFileId` (§5.2), since a conversation may now
+ *  hold more than one recording. Async, same as `transcribeAudio`: resolves
+ *  once the job is queued, not once it finishes. */
 export const retranscribeAudio = (
-  conversationId: string,
+  sourceFileId: string,
   options: f.TTranscribeOptions,
-): Promise<f.TTranscribeResponse> => {
-  return request.post(endpoints.retranscribe(conversationId), { options });
+): Promise<f.TTranscribeQueuedResponse> => {
+  return request.post(endpoints.retranscribe(sourceFileId), { options });
 };
 
 /** Every correction event recorded against a transcript (speaker renames,

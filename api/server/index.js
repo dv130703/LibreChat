@@ -38,6 +38,7 @@ const {
   seedDatabase,
 } = require('~/models');
 const initializeOAuthReconnectManager = require('./services/initializeOAuthReconnectManager');
+const { startTranscriptionReconciliation } = require('./services/Transcription/reconciliation');
 const { capabilityContextMiddleware } = require('./middleware/roles/capabilities');
 const createValidateImageRequest = require('./middleware/validateImageRequest');
 const { startExpiredFileSweep } = require('./services/Files/process');
@@ -342,6 +343,13 @@ const startServer = async () => {
         await initializeOAuthReconnectManager();
       });
       await checkMigrations();
+      /* Recovers Audio Transcriber jobs stuck `'transcribing'` from a crash
+       * mid-run - see transcription/ARCHITECTURE.md §5.3. Not awaited: its
+       * own initial sweep failing shouldn't block server readiness, same
+       * reasoning as `sweepOrphanedPreviews` above. */
+      startTranscriptionReconciliation().catch((err) => {
+        logger.error('[startTranscriptionReconciliation] Failed to start:', err);
+      });
 
       const inspectFlags = process.execArgv.some((arg) => arg.startsWith('--inspect'));
       if (inspectFlags || isEnabled(process.env.MEM_DIAG)) {

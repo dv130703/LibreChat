@@ -14,7 +14,13 @@ import {
   useQueueDrain,
   useLocalize,
 } from '~/hooks';
-import { ChatContext, AddedChatContext, ChatFormProvider, useFileMapContext } from '~/Providers';
+import {
+  ChatContext,
+  AddedChatContext,
+  ChatFormProvider,
+  useFileMapContext,
+  TranscribeIntentProvider,
+} from '~/Providers';
 import ConversationStarters from './Input/ConversationStarters';
 import { useGetMessagesByConvoId } from '~/data-provider';
 import ProjectLandingChip from './ProjectLandingChip';
@@ -119,33 +125,35 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
     <ChatFormProvider {...methods}>
       <ChatContext.Provider value={chatHelpers}>
         <AddedChatContext.Provider value={addedChatHelpers}>
-          <Presentation>
-            <div className="relative flex h-full w-full flex-col">
-              <Header />
-              <>
-                <div
-                  className={cn(
-                    'flex flex-col',
-                    isLandingPage
-                      ? 'flex-1 items-center justify-end sm:justify-center'
-                      : 'h-full overflow-y-auto',
-                  )}
-                >
-                  {content}
+          <TranscribeIntentProvider>
+            <Presentation>
+              <div className="relative flex h-full w-full flex-col">
+                <Header />
+                <>
                   <div
                     className={cn(
-                      'w-full',
-                      isLandingPage && 'max-w-3xl transition-all duration-200 xl:max-w-4xl',
+                      'flex flex-col',
+                      isLandingPage
+                        ? 'flex-1 items-center justify-end sm:justify-center'
+                        : 'h-full overflow-y-auto',
                     )}
                   >
-                    {isProjectLandingPage && project && <ProjectLandingChip project={project} />}
-                    {isLandingPage && <ConversationStarters />}
-                    <ChatForm index={index} placeholder={chatFormPlaceholder} />
+                    {content}
+                    <div
+                      className={cn(
+                        'w-full',
+                        isLandingPage && 'max-w-3xl transition-all duration-200 xl:max-w-4xl',
+                      )}
+                    >
+                      {isProjectLandingPage && project && <ProjectLandingChip project={project} />}
+                      {isLandingPage && <ConversationStarters />}
+                      <ChatForm index={index} placeholder={chatFormPlaceholder} />
+                    </div>
                   </div>
-                </div>
-              </>
-            </div>
-          </Presentation>
+                </>
+              </div>
+            </Presentation>
+          </TranscribeIntentProvider>
         </AddedChatContext.Provider>
       </ChatContext.Provider>
     </ChatFormProvider>

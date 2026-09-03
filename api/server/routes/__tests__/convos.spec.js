@@ -87,6 +87,24 @@ describe('Convos Routes', () => {
       });
     });
 
+    // I4 (transcription/ARCHITECTURE.md §8): every delete-conversation path
+    // must remove transcript-context files AND the correction log - the file
+    // cleanup above was already covered, but nothing previously asserted
+    // this second half actually gets called, only that it was mocked.
+    it('deletes the transcript correction log for all deleted conversations (I4)', async () => {
+      const conversationIds = ['conv-a', 'conv-b'];
+      const { deleteTranscriptCorrections } = require('~/models');
+
+      deleteConvos.mockResolvedValue({ deletedCount: 2, conversationIds });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteAllSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+
+      const response = await request(app).delete('/api/convos/all');
+
+      expect(response.status).toBe(201);
+      expect(deleteTranscriptCorrections).toHaveBeenCalledWith(conversationIds);
+    });
+
     it('should delete all conversations, tool calls, and shared links for a user', async () => {
       const mockDbResponse = {
         deletedCount: 5,
@@ -325,6 +343,27 @@ describe('Convos Routes', () => {
         req: expect.anything(),
         files: [transcriptFile],
       });
+    });
+
+    // I4 (transcription/ARCHITECTURE.md §8): same requirement as the bulk
+    // route above, for the single-conversation path.
+    it('deletes the transcript correction log for the deleted conversation (I4)', async () => {
+      const mockConversationId = 'conv-corrections';
+      const { deleteTranscriptCorrections } = require('~/models');
+
+      deleteConvos.mockResolvedValue({
+        deletedCount: 1,
+        conversationIds: [mockConversationId],
+      });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteConvoSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+
+      const response = await request(app)
+        .delete('/api/convos')
+        .send({ arg: { conversationId: mockConversationId } });
+
+      expect(response.status).toBe(201);
+      expect(deleteTranscriptCorrections).toHaveBeenCalledWith([mockConversationId]);
     });
 
     it('does not call processDeleteRequest when the conversation has no transcript files', async () => {

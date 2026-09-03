@@ -3,7 +3,7 @@ import { QueryKeys, MutationKeys, dataService } from 'librechat-data-provider';
 import type { UseMutationResult } from '@tanstack/react-query';
 import type {
   TTranscribeOptions,
-  TTranscribeResponse,
+  TTranscribeQueuedResponse,
   TTranscriptCorrection,
   InterviewTranscriptForm,
   MeetingMinutesForm,
@@ -19,15 +19,17 @@ export interface TranscribeAudioVariables {
   formData: FormData;
   /** Real, byte-level progress for the upload leg only - see `transcribeAudio`
    *  in `data-service.ts`. There's no signal at all for the transcription/
-   *  embedding leg that follows; callers show an indeterminate state for that. */
+   *  embedding leg that follows; callers poll `useTranscribeStatusQuery`
+   *  (Phase 2, async job model) for that. */
   onUploadProgress?: (percent: number) => void;
 }
 
 /** Uploads an audio/video file for transcription and RAG embedding, scoped to
  *  one conversation. A direct REST action (see `POST /api/transcribe`), not an
- *  agent tool call - real transcriptions take 30-90s+. */
+ *  agent tool call. Resolves once the job is queued, not once it finishes -
+ *  see `TTranscribeQueuedResponse`. */
 export const useTranscribeAudioMutation = (): UseMutationResult<
-  TTranscribeResponse,
+  TTranscribeQueuedResponse,
   unknown,
   TranscribeAudioVariables,
   unknown
@@ -37,14 +39,15 @@ export const useTranscribeAudioMutation = (): UseMutationResult<
     mutationFn: ({ formData, onUploadProgress }: TranscribeAudioVariables) =>
       dataService.transcribeAudio(formData, null, onUploadProgress),
     onSuccess: (data) => {
-      // The conversation is created by the route only once the transcript
-      // exists, so the moment this resolves is the first moment it is real.
-      // Nothing else will go looking for it: the sidebar list is an infinite
-      // query that refetches on its own schedule, and `useGetConvoIdQuery`
-      // reads that same cache first and is configured `refetchOnMount: false`.
-      // Left uninvalidated, the finished conversation is simply absent from the
-      // sidebar, and the one query that decides whether this is a transcriber
-      // conversation at all answers from a cache written before it existed.
+      // The conversation is created the instant the job is queued (Phase 2 -
+      // it no longer waits for transcription to finish), so the moment this
+      // resolves is the first moment it is real. Nothing else will go
+      // looking for it: the sidebar list is an infinite query that refetches
+      // on its own schedule, and `useGetConvoIdQuery` reads that same cache
+      // first and is configured `refetchOnMount: false`. Left uninvalidated,
+      // the new conversation is simply absent from the sidebar, and the one
+      // query that decides whether this is a transcriber conversation at all
+      // answers from a cache written before it existed.
       queryClient.invalidateQueries([QueryKeys.allConversations]);
       queryClient.invalidateQueries([QueryKeys.conversation, data.conversationId]);
     },
@@ -52,34 +55,72 @@ export const useTranscribeAudioMutation = (): UseMutationResult<
 };
 
 export interface RetranscribeAudioVariables {
-  conversationId: string;
+  sourceFileId: string;
   options: TTranscribeOptions;
 }
 
-/** Re-runs transcription on the audio already stored for a conversation,
- *  replacing that transcript in place. There is no upload leg and no progress
- *  signal, so callers show an indeterminate state for the whole run. */
+/** Re-runs transcription on the audio already stored for a source file,
+ *  replacing its conversation's transcript in place - keyed by
+ *  `sourceFileId`, not `conversationId` (a conversation may hold more than
+ *  one recording). Resolves once the job is queued, not once it finishes. */
 export const useRetranscribeAudioMutation = (): UseMutationResult<
-  TTranscribeResponse,
+  TTranscribeQueuedResponse,
   unknown,
   RetranscribeAudioVariables,
   unknown
 > => {
   const queryClient = useQueryClient();
   return useMutation([MutationKeys.retranscribeAudio], {
-    mutationFn: ({ conversationId, options }: RetranscribeAudioVariables) =>
-      dataService.retranscribeAudio(conversationId, options),
+    mutationFn: ({ sourceFileId, options }: RetranscribeAudioVariables) =>
+      dataService.retranscribeAudio(sourceFileId, options),
     onSuccess: (data) => {
-      // The transcript file keeps its id but its content is wholly replaced,
-      // so the preview cache is the one thing guaranteed to be wrong here.
-      // Corrections are cleared server-side (their line indices address text
-      // that no longer exists), and the conversation carries the new model.
+      // The status poll needs to restart from `queued` for this source file,
+      // and once the job finishes, the transcript's own preview/corrections
+      // caches are guaranteed stale (content wholly replaced, corrections
+      // cleared server-side). There's no new transcriptFileId to target
+      // directly here (this response doesn't carry one - Phase 2), so the
+      // conversation invalidation covers the transcript-panel's own refetch
+      // once `useTranscribeStatusQuery` reports `ready`.
       queryClient.invalidateQueries([QueryKeys.conversation, data.conversationId]);
-      queryClient.invalidateQueries([QueryKeys.filePreview, data.transcriptFile?.file_id]);
-      queryClient.invalidateQueries([
-        QueryKeys.transcriptCorrections,
-        data.transcriptFile?.file_id,
-      ]);
+      // Not `[QueryKeys.transcribeStatus, variables.sourceFileId]` - that
+      // exact key only matches a query polling *this one* file in isolation.
+      // `Files.tsx` polls every audio/video file on a message in a single
+      // batched query keyed `[transcribeStatus, ...allFileIds]`; react-query's
+      // partial-key matching requires each element to line up at the same
+      // index, so a single-id invalidation only ever matches a batch where
+      // this file happens to be first. For a message with more than one
+      // recording, retrying/re-transcribing anything but the first silently
+      // never refreshed the UI - it kept showing the stale status until the
+      // next unrelated cache event. Invalidating the bare prefix matches
+      // every batched or single-file poll regardless of composition or
+      // order, at the cost of also refreshing unrelated conversations' polls
+      // - a network no-op for anyone not actively viewing one.
+      queryClient.invalidateQueries([QueryKeys.transcribeStatus]);
+    },
+  });
+};
+
+export interface RetryTranscriptionVariables {
+  sourceFileId: string;
+}
+
+/** Re-enqueues a failed job with the options it originally ran with. Only
+ *  valid when the job's current status is `'failed'`. */
+export const useRetryTranscriptionMutation = (): UseMutationResult<
+  TTranscribeQueuedResponse,
+  unknown,
+  RetryTranscriptionVariables,
+  unknown
+> => {
+  const queryClient = useQueryClient();
+  return useMutation([MutationKeys.retryTranscription], {
+    mutationFn: ({ sourceFileId }: RetryTranscriptionVariables) =>
+      dataService.retryTranscription(sourceFileId),
+    onSuccess: () => {
+      // See the matching comment in `useRetranscribeAudioMutation` - a
+      // single-id key here would miss any batched poll where this file
+      // isn't first.
+      queryClient.invalidateQueries([QueryKeys.transcribeStatus]);
     },
   });
 };
@@ -87,14 +128,16 @@ export const useRetranscribeAudioMutation = (): UseMutationResult<
 /** Renames a speaker - applies to every line from that speaker at once, since
  *  the name is a property of the speaker id, not any individual line. */
 export interface ExportInterviewDocxVariables {
-  conversationId: string;
+  sourceFileId: string;
   form: InterviewTranscriptForm;
   speakers: NamedSpeaker[];
 }
 
 /** The interview cover-sheet export - a real .docx from the server, not a
- *  client-built .txt approximation of one. No cache to invalidate: this
- *  produces a file, not a change to the conversation. */
+ *  client-built .txt approximation of one. Keyed by `sourceFileId`, not
+ *  `conversationId` (a conversation may hold more than one recording). No
+ *  cache to invalidate: this produces a file, not a change to the
+ *  conversation. */
 export const useExportInterviewDocxMutation = (): UseMutationResult<
   Blob,
   unknown,
@@ -102,13 +145,13 @@ export const useExportInterviewDocxMutation = (): UseMutationResult<
   unknown
 > => {
   return useMutation([MutationKeys.exportInterviewDocx], {
-    mutationFn: ({ conversationId, form, speakers }: ExportInterviewDocxVariables) =>
-      dataService.exportInterviewDocx(conversationId, form, speakers),
+    mutationFn: ({ sourceFileId, form, speakers }: ExportInterviewDocxVariables) =>
+      dataService.exportInterviewDocx(sourceFileId, form, speakers),
   });
 };
 
 export interface ExportMeetingMinutesDocxVariables {
-  conversationId: string;
+  sourceFileId: string;
   form: MeetingMinutesForm;
   speakers: NamedSpeaker[];
 }
@@ -122,8 +165,8 @@ export const useExportMeetingMinutesDocxMutation = (): UseMutationResult<
   unknown
 > => {
   return useMutation([MutationKeys.exportMeetingMinutesDocx], {
-    mutationFn: ({ conversationId, form, speakers }: ExportMeetingMinutesDocxVariables) =>
-      dataService.exportMeetingMinutesDocx(conversationId, form, speakers),
+    mutationFn: ({ sourceFileId, form, speakers }: ExportMeetingMinutesDocxVariables) =>
+      dataService.exportMeetingMinutesDocx(sourceFileId, form, speakers),
   });
 };
 

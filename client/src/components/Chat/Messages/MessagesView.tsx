@@ -12,7 +12,7 @@ import { fontSizeAtom } from '~/store/fontSize';
 import MultiMessage from './MultiMessage';
 import MessageNav from './MessageNav';
 import { cn } from '~/utils';
-import store, { isAudioTranscriberConvo } from '~/store';
+import store from '~/store';
 
 const intersectionThreshold = 0.85;
 const visibilityDebounceRate = 150;
@@ -101,10 +101,14 @@ function MessagesViewContent({
   } = useMessageScrolling(_messagesTree);
 
   const { conversationId } = conversation ?? {};
-  /** A fresh Audio Transcriber conversation has no chat messages until the
-   *  user actually asks the model something - that's the normal starting
-   *  state, not a failed search, so "Nothing found" doesn't apply here. */
-  const isTranscriberConvo = useRecoilValue(isAudioTranscriberConvo(conversationId ?? ''));
+  /** A real, already-persisted conversation (created via a REST action -
+   *  today only the audio transcriber's `POST /api/transcribe`, historically -
+   *  rather than the normal first-message flow) can legitimately have zero
+   *  chat messages until the user actually asks the model something. `ChatView`
+   *  already routes a genuinely new, unsaved draft (`Constants.NEW_CONVO` or no
+   *  id) to `Landing` instead of this component, so by the time an empty tree
+   *  reaches here it's always this case, not a failed search. */
+  const isRestCreatedEmptyStart = conversationId != null && conversationId !== Constants.NEW_CONVO;
 
   /** The in-flight steer overlay floats above the composer over the bottom of
    *  the thread (see `InFlightSteers`); reserve an equal band here so the
@@ -137,7 +141,7 @@ function MessagesViewContent({
               }
             >
               {((_messagesTree && _messagesTree.length == 0) || _messagesTree === null) &&
-              !isTranscriberConvo ? (
+              !isRestCreatedEmptyStart ? (
                 <div
                   className={cn(
                     'flex w-full items-center justify-center p-3 text-text-secondary',

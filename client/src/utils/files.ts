@@ -27,6 +27,12 @@ import type { ExtendedFile } from '~/common';
 
 export const partialTypes = ['text/x-'];
 
+/** Audio Transcriber composer integration (Phase 4, transcription/
+ *  ARCHITECTURE.md §6.1) - a file this codebase might route to
+ *  `POST /api/transcribe` instead of (or before) a normal attachment. */
+export const isAudioOrVideoMimeType = (type?: string | null): boolean =>
+  type != null && (type.startsWith('audio/') || type.startsWith('video/'));
+
 const textDocument = {
   paths: TextPaths,
   fill: '#FF5588',

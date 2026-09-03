@@ -52,11 +52,12 @@ const convoSchema: Schema<IConversation> = new Schema(
     pinned: {
       type: Boolean,
     },
-    /** How this conversation's transcript was produced, for the Audio
-     *  Transcriber. `model` is what the ASR server actually loaded (never the
-     *  caller's possibly-absent request), and the rest is the option set the
-     *  transcript came from - kept so a re-transcribe starts from what was
-     *  used rather than from the dialog's defaults. */
+    /** @deprecated Superseded by `transcription` on the source audio File
+     *  doc (`IFileTranscriptionJob.effectiveOptions`) - see
+     *  `transcription/ARCHITECTURE.md` D3/D4/§4.3. A conversation may now
+     *  hold more than one recording, which this single sub-document can't
+     *  represent. Still written and read as a fallback for one release;
+     *  removed in Phase 6. */
     transcription: {
       model: { type: String },
       requestedModel: { type: String },

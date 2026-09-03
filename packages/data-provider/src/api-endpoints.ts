@@ -307,13 +307,29 @@ export const transcribe = () => `${BASE_URL}/api/transcribe`;
 
 export const transcribeConfig = () => `${BASE_URL}/api/transcribe/config`;
 
-export const retranscribe = (conversationId: string) =>
-  `${BASE_URL}/api/transcribe/${encodeURIComponent(conversationId)}/retranscribe`;
+/** Stateless channel-count probe (Phase 4, §6.2) - no File record, no job
+ *  queued, just `ffprobe` on an uploaded temp file. */
+export const probeAudioChannels = () => `${BASE_URL}/api/transcribe/probe`;
 
-export const interviewDocx = (conversationId: string) =>
-  `${BASE_URL}/api/transcribe/${encodeURIComponent(conversationId)}/interview-docx`;
-export const meetingMinutesDocx = (conversationId: string) =>
-  `${BASE_URL}/api/transcribe/${encodeURIComponent(conversationId)}/meeting-minutes-docx`;
+/** Batch status poll (Phase 2, transcription/ARCHITECTURE.md §5.2) - source
+ *  audio file ids, comma-joined. */
+export const transcribeStatus = (fileIds: string[]) =>
+  `${BASE_URL}/api/transcribe/status${buildQuery({ fileIds: fileIds.join(',') })}`;
+
+/** Re-enqueues a failed job with the options it originally ran with. */
+export const retryTranscription = (sourceFileId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/retry`;
+
+/** Rekeyed from `:conversationId` to `:sourceFileId` (§5.2) - a conversation
+ *  may hold more than one recording, so `:conversationId` alone no longer
+ *  says which one. */
+export const retranscribe = (sourceFileId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/retranscribe`;
+
+export const interviewDocx = (sourceFileId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/interview-docx`;
+export const meetingMinutesDocx = (sourceFileId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/meeting-minutes-docx`;
 const transcriptCorrectionsRoot = `${BASE_URL}/api/transcript-corrections`;
 export const transcriptCorrections = (transcriptFileId: string, conversationId: string) =>
   `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}${buildQuery({ conversationId })}`;

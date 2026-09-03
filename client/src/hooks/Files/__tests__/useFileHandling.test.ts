@@ -21,6 +21,16 @@ beforeAll(() => {
 const mockShowToast = jest.fn();
 const mockSetFilesLoading = jest.fn();
 const mockMutate = jest.fn();
+const mockNavigate = jest.fn();
+const mockHasSetConversation = { current: true };
+
+jest.mock('react-router-dom', () => ({
+  useNavigate: () => mockNavigate,
+}));
+
+jest.mock('~/Providers/SetConvoContext', () => ({
+  useSetConvoContext: () => mockHasSetConversation,
+}));
 const mockProcessFileForUpload = jest.fn(
   async (_file: File, _quality?: number, _onProgress?: (progress: number) => void) => _file,
 );
@@ -63,11 +73,27 @@ jest.mock('@tanstack/react-query', () => ({
   })),
 }));
 
+const mockTranscribeMutateAsync = jest.fn();
+type MockInterceptResult =
+  | { action: 'attach' }
+  | { action: 'cancel' }
+  | { action: 'transcribe'; options: Record<string, unknown> };
+const mockInterceptAudioVideo = jest.fn<Promise<MockInterceptResult>, [File, boolean]>(
+  async () => ({ action: 'attach' }),
+);
+
 jest.mock('~/data-provider', () => ({
   useGetFileConfig: jest.fn(() => ({ data: null })),
   useUploadFileMutation: jest.fn((_opts: Record<string, unknown>) => ({
     mutate: mockMutate,
   })),
+  useTranscribeAudioMutation: jest.fn(() => ({
+    mutateAsync: mockTranscribeMutateAsync,
+  })),
+}));
+
+jest.mock('~/Providers/TranscribeIntentContext', () => ({
+  useTranscribeIntent: () => ({ interceptAudioVideo: mockInterceptAudioVideo }),
 }));
 
 jest.mock('~/hooks/useLocalize', () => {
@@ -111,6 +137,10 @@ jest.mock('~/utils', () => ({
   validateFiles: jest.fn(() => true),
   cachePreview: jest.fn(),
   getCachedPreview: jest.fn(() => undefined),
+  isAudioOrVideoMimeType: jest.fn(
+    (type?: string | null) =>
+      type != null && (type.startsWith('audio/') || type.startsWith('video/')),
+  ),
 }));
 
 const mockValidateFiles = jest.requireMock('~/utils').validateFiles;
@@ -121,6 +151,10 @@ describe('useFileHandling', () => {
     mockProcessFileForUpload.mockImplementation(async (file: File) => file);
     mockConversation = {};
     mockIsTemporary = false;
+    // Mirrors the real-world starting state: the draft the user typed into
+    // before dropping the file already hydrated once, same as ChatRoute
+    // leaves it set for every conversation after the first.
+    mockHasSetConversation.current = true;
   });
 
   const loadHook = async () => (await import('../useFileHandling')).default;
@@ -433,6 +467,124 @@ describe('useFileHandling', () => {
       const uploadedFile = formData.get('file') as File;
       expect(uploadedFile.name).toBe('photo.jpg');
       expect(uploadedFile.type).toBe('image/jpeg');
+    });
+  });
+
+  describe('audio/video transcription interception', () => {
+    it('mints a new conversation, queues the job, and navigates into it when dropped on a brand-new draft', async () => {
+      mockConversation = {
+        conversationId: Constants.NEW_CONVO as string,
+        endpoint: 'openAI',
+        endpointType: 'openAI',
+      };
+      mockInterceptAudioVideo.mockResolvedValueOnce({
+        action: 'transcribe',
+        options: { includeTimestamps: true, diarize: true },
+      });
+      mockTranscribeMutateAsync.mockResolvedValueOnce({
+        conversationId: 'minted-convo-id',
+        sourceFile: { file_id: 'source-file-1', filename: 'recording.mp3' },
+        status: 'queued',
+        queuePosition: 1,
+      });
+
+      const useFileHandling = await loadHook();
+      const { result } = renderHook(() => useFileHandling());
+
+      const audioFile = new File(['x'], 'recording.mp3', { type: 'audio/mpeg' });
+
+      await act(async () => {
+        await result.current.handleFiles([audioFile]);
+      });
+
+      expect(mockTranscribeMutateAsync).toHaveBeenCalledTimes(1);
+      const formData: FormData = mockTranscribeMutateAsync.mock.calls[0][0].formData;
+      // A real, minted id - not the literal "new" placeholder the draft carried.
+      expect(formData.get('conversationId')).not.toBe(Constants.NEW_CONVO);
+      expect(formData.get('conversationId')).toEqual(expect.any(String));
+      expect(mockMutate).not.toHaveBeenCalled();
+      expect(mockNavigate).toHaveBeenCalledWith('/c/minted-convo-id?panel=transcript', {
+        replace: true,
+      });
+      // Real bug this guards: without this reset, `ChatRoute`'s hydration
+      // effect skips re-initializing the conversation for the new id (it
+      // was already `true` from the draft being left behind), so the URL
+      // changes but the chat pane silently keeps rendering the old empty
+      // draft - "Nothing found" in the message pane, "Failed to load the
+      // transcript" in the panel (which inherits the still-stale id).
+      expect(mockHasSetConversation.current).toBe(false);
+    });
+
+    it('stops processing further files in the same drop once one of them navigates to a new conversation', async () => {
+      mockConversation = {
+        conversationId: Constants.NEW_CONVO as string,
+        endpoint: 'openAI',
+        endpointType: 'openAI',
+      };
+      mockInterceptAudioVideo.mockResolvedValueOnce({
+        action: 'transcribe',
+        options: { includeTimestamps: true, diarize: true },
+      });
+      mockTranscribeMutateAsync.mockResolvedValueOnce({
+        conversationId: 'minted-convo-id',
+        sourceFile: { file_id: 'source-file-1', filename: 'recording-1.mp3' },
+        status: 'queued',
+        queuePosition: 1,
+      });
+
+      const useFileHandling = await loadHook();
+      const { result } = renderHook(() => useFileHandling());
+
+      const firstFile = new File(['x'], 'recording-1.mp3', { type: 'audio/mpeg' });
+      const secondFile = new File(['y'], 'recording-2.mp3', { type: 'audio/mpeg' });
+
+      await act(async () => {
+        await result.current.handleFiles([firstFile, secondFile]);
+      });
+
+      // The first file navigated away - real bug this guards against: the
+      // second file would otherwise keep running against a `ChatView`/
+      // `TranscribeIntentProvider` instance that's already unmounted, whose
+      // dialog can never actually be shown to (or clicked through by) the
+      // user, leaving it stuck mid-upload forever with no visible chip and
+      // no way to finish or cancel it.
+      expect(mockInterceptAudioVideo).toHaveBeenCalledTimes(1);
+      expect(mockTranscribeMutateAsync).toHaveBeenCalledTimes(1);
+      expect(mockNavigate).toHaveBeenCalledTimes(1);
+    });
+
+    it('queues against the existing conversation and adds a composer chip, without navigating', async () => {
+      mockConversation = {
+        conversationId: 'existing-convo-id',
+        endpoint: 'openAI',
+        endpointType: 'openAI',
+      };
+      mockInterceptAudioVideo.mockResolvedValueOnce({
+        action: 'transcribe',
+        options: { includeTimestamps: true, diarize: true },
+      });
+      mockTranscribeMutateAsync.mockResolvedValueOnce({
+        conversationId: 'existing-convo-id',
+        sourceFile: { file_id: 'source-file-1', filename: 'recording.mp3' },
+        status: 'queued',
+        queuePosition: 1,
+      });
+
+      const useFileHandling = await loadHook();
+      const { result } = renderHook(() => useFileHandling());
+
+      const audioFile = new File(['x'], 'recording.mp3', { type: 'audio/mpeg' });
+
+      await act(async () => {
+        await result.current.handleFiles([audioFile]);
+      });
+
+      expect(mockTranscribeMutateAsync).toHaveBeenCalledTimes(1);
+      const formData: FormData = mockTranscribeMutateAsync.mock.calls[0][0].formData;
+      expect(formData.get('conversationId')).toBe('existing-convo-id');
+      expect(mockNavigate).not.toHaveBeenCalled();
+      // No navigation, no reason to touch the hydration flag.
+      expect(mockHasSetConversation.current).toBe(true);
     });
   });
 });

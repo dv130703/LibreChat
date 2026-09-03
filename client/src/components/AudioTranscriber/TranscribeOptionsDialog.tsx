@@ -11,7 +11,7 @@ import {
   usePopoverZIndex,
 } from '@librechat/client';
 import { useTranscribeConfigQuery } from '~/data-provider';
-import { useLocalize } from '~/hooks';
+import useLocalize from '~/hooks/useLocalize';
 import type { TranslationKeys } from '~/hooks/useLocalize';
 import { cn } from '~/utils';
 
@@ -26,8 +26,8 @@ export interface TranscribeAudioOptions {
   model?: string;
   suppressNumerals?: boolean;
   language?: string;
-  /** Set by `UploadStep` after the multi-channel confirm dialog, not by this
-   *  dialog itself - see `channelSplitEnabled`. */
+  /** Set by the caller (`TranscribeIntentContext.tsx`) after the multi-channel
+   *  confirm dialog, not by this dialog itself - see `channelSplitEnabled`. */
   channelSplit?: boolean;
 }
 
@@ -280,10 +280,10 @@ interface TranscribeOptionsDialogProps {
   initialOptions?: TranscribeAudioOptions;
   /** Set once the user has already confirmed channel-based speaker
    *  separation for this file (see `MultiChannelDialog`, one step earlier in
-   *  `UploadStep`). Speakers are then a settled fact - one per channel - so
-   *  the diarize toggle and speaker-count/grouping controls are replaced
-   *  with a short note instead of asking a question that's already been
-   *  answered. */
+   *  the caller's own dialog sequence). Speakers are then a settled fact -
+   *  one per channel - so the diarize toggle and speaker-count/grouping
+   *  controls are replaced with a short note instead of asking a question
+   *  that's already been answered. */
   channelSplitEnabled?: boolean;
 }
 

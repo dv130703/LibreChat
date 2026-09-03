@@ -1,15 +1,9 @@
-export interface ParsedLine {
-  /** Index into the flat, unreassigned parse of the transcript - stable
-   *  identity for a line, used to target segment-reassign/text-edit corrections. */
-  lineIndex: number;
-  timestamp?: string;
-  seconds?: number;
-  /** This segment's own end time - the real boundary for bounded playback.
-   *  Absent on transcripts saved before end timestamps were persisted. */
-  endSeconds?: number;
-  speaker?: string;
-  text: string;
-}
+import type { ParsedTranscriptLine } from 'librechat-data-provider';
+
+/** Alias, not a copy: the shape is defined once in `librechat-data-provider`'s
+ *  `transcript` module (shared with the Node bridge and the correction-replay
+ *  engine) so a field added there doesn't need a second edit here to match. */
+export type ParsedLine = ParsedTranscriptLine;
 
 export interface SpeakerOption {
   id: string;

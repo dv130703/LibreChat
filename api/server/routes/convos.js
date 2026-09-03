@@ -55,6 +55,22 @@ async function cleanupTranscriptFiles(req, conversationIds) {
   }
 }
 
+/**
+ * The one place every delete-conversation route routes its transcript
+ * cleanup through, so a future route can't add a third path that forgets
+ * one of the two steps below - see `transcription/ARCHITECTURE.md` §5.4/I4.
+ * There is currently only one other route to keep in sync (`DELETE /all`);
+ * this exists so that stays true rather than becoming an assumption nobody
+ * checks.
+ *
+ * @param {ServerRequest} req
+ * @param {string[]} conversationIds
+ */
+async function deleteConversationCascade(req, conversationIds) {
+  await cleanupTranscriptFiles(req, conversationIds);
+  await db.deleteTranscriptCorrections(conversationIds);
+}
+
 const assistantClients = {
   [EModelEndpoint.azureAssistants]: require('~/server/services/Endpoints/azureAssistants'),
   [EModelEndpoint.assistants]: require('~/server/services/Endpoints/assistants'),
@@ -189,8 +205,7 @@ router.delete('/', configMiddleware, async (req, res) => {
       await deleteConvoSharedLinksWithCleanup(req.user.id, filter.conversationId);
     }
     await checkpointsCleanup;
-    await cleanupTranscriptFiles(req, dbResponse.conversationIds);
-    await db.deleteTranscriptCorrections(dbResponse.conversationIds);
+    await deleteConversationCascade(req, dbResponse.conversationIds);
     res.status(201).json(dbResponse);
   } catch (error) {
     logger.error('Error clearing conversations', error);
@@ -211,8 +226,7 @@ router.delete('/all', configMiddleware, async (req, res) => {
     await db.deleteToolCalls(req.user.id);
     await deleteAllSharedLinksWithCleanup(req.user.id);
     await checkpointsCleanup;
-    await cleanupTranscriptFiles(req, dbResponse.conversationIds);
-    await db.deleteTranscriptCorrections(dbResponse.conversationIds);
+    await deleteConversationCascade(req, dbResponse.conversationIds);
     res.status(201).json(dbResponse);
   } catch (error) {
     logger.error('Error clearing conversations', error);

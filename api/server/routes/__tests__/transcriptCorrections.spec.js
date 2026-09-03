@@ -155,6 +155,52 @@ describe('transcript-corrections version/index-status lifecycle', () => {
     expect(reindexResponse.body.indexVersion).toBe(1);
   });
 
+  // I5 (transcription/ARCHITECTURE.md §8): `embedded` only ever upgrades
+  // false -> true, never the reverse. A file that was successfully embedded
+  // once must stay `embedded: true` even after a later re-embed attempt
+  // fails - otherwise a transient RAG hiccup would make the (still valid,
+  // still-searchable) previous embedding look like it never happened,
+  // pulling in the much bigger regression of raw unembedded text riding
+  // along as a fallback in every future prompt. `GET .../index-status`
+  // doesn't surface `embedded` in its response shape, so this reads the
+  // Mongo document directly rather than relying on that endpoint.
+  it('never reverts embedded to false when a re-embed fails after a prior success (I5)', async () => {
+    const conversationId = `convo-${Date.now()}`;
+    const transcriptFileId = `transcript-${Date.now()}`;
+    await seedTranscript({
+      transcriptFileId,
+      conversationId,
+      text: 'Speaker 1: Hello there.',
+    });
+
+    const File = mongoose.models.File;
+    expect((await File.findOne({ file_id: transcriptFileId })).embedded).toBe(true);
+
+    // A later correction whose re-embed fails.
+    mockEmbedTranscript.mockResolvedValue(false);
+    await request(app)
+      .post(`/api/transcript-corrections/${transcriptFileId}/text-edit`)
+      .send({ conversationId, lineIndex: 0, toText: 'Hello there, everyone.' });
+    const failedReindex = await request(app)
+      .post(`/api/transcript-corrections/${transcriptFileId}/reindex`)
+      .send({ conversationId });
+    expect(failedReindex.body.indexStatus).toBe('index_failed');
+
+    const afterFailure = await File.findOne({ file_id: transcriptFileId });
+    expect(afterFailure.embedded).toBe(true);
+
+    // A second correction whose re-embed also fails - still never flips.
+    await request(app)
+      .post(`/api/transcript-corrections/${transcriptFileId}/text-edit`)
+      .send({ conversationId, lineIndex: 0, toText: 'Hello there, everyone, again.' });
+    await request(app)
+      .post(`/api/transcript-corrections/${transcriptFileId}/reindex`)
+      .send({ conversationId });
+
+    const afterSecondFailure = await File.findOne({ file_id: transcriptFileId });
+    expect(afterSecondFailure.embedded).toBe(true);
+  });
+
   it('404s index-status for an unknown transcript file', async () => {
     const conversationId = `convo-${Date.now()}`;
     const Conversation = mongoose.models.Conversation;

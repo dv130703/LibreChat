@@ -30,6 +30,7 @@ import {
   useLocalize,
 } from '~/hooks';
 import { ToolCallsMapProvider } from '~/Providers';
+import ChatPanelHost from '~/components/AudioTranscriber/ChatPanelHost';
 import ChatView from '~/components/Chat/ChatView';
 import { NotificationSeverity } from '~/common';
 import useAuthRedirect from './useAuthRedirect';
@@ -301,7 +302,28 @@ export default function ChatRoute() {
 
   return (
     <ToolCallsMapProvider conversationId={conversation.conversationId ?? ''}>
-      <ChatView index={index} project={verifiedChatProjectId ? projectQuery.data : undefined} />
+      {/* Mounted here rather than in `ChatView` - originally so the (now
+       * retired, Phase 5) standalone Audio Transcriber page's own `Workspace`
+       * wrapper, which also rendered this same route component at
+       * `/audio-transcriber/:id`, didn't end up with two nested hosts both
+       * reading the same `?panel=` URL param. Kept here since it's the
+       * correct place regardless: every conversation on `/c/:id` gets one
+       * host - see transcription/ARCHITECTURE.md §6.3/Phase 4. A no-op split
+       * for every conversation until something sets `?panel=`.
+       *
+       * Takes the URL's own `conversationId` (from `useParams`), not
+       * `conversation.conversationId` (the hydrated atom, `ToolCallsMapProvider`'s
+       * choice just above) - deliberately different here. The atom lags behind
+       * a `navigate()` to a freshly-created conversation until the async
+       * hydration effect above actually resolves (a real gap: `TranscriptPanel`
+       * inherited the *previous* conversation's stale id for that entire
+       * window, which could 404 mid-flight and closed the panel via
+       * `onUnresolvable` before the real conversation ever got a chance to
+       * load - see transcription/ARCHITECTURE.md §12). The URL param is
+       * correct the instant `navigate()` runs, with no async gap to race. */}
+      <ChatPanelHost conversationId={conversationId}>
+        <ChatView index={index} project={verifiedChatProjectId ? projectQuery.data : undefined} />
+      </ChatPanelHost>
     </ToolCallsMapProvider>
   );
 }

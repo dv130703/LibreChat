@@ -16,43 +16,6 @@ export const ephemeralAgentByConvoId = atomFamily<TEphemeralAgent | null, string
   ] as const,
 });
 
-/**
- * Marks a conversation as belonging to the Audio Transcriber flow. `ChatRoute`'s
- * own hydration effect calls `newConversation()` for any conversation it loads,
- * which unconditionally navigates to `/c/:conversationId` - harmless on that
- * route itself, but it hijacks the URL away from `/audio-transcriber/:conversationId`
- * when `ChatRoute` is reused there. `AudioTranscriberRedirectGuard` (mounted once
- * at the app root, so it survives the resulting route swap) watches for exactly
- * that and redirects back.
- */
-export const isAudioTranscriberConvo = atomFamily<boolean, string>({
-  key: 'isAudioTranscriberConvo',
-  default: false,
-});
-
-/**
- * Flags a conversation as the Audio Transcriber's from outside the route that
- * renders it. `Workspace` and `RedirectGuard` can both set the atom directly,
- * because they only ever deal with the conversation currently in the URL. The
- * upload flow cannot: it mints the id inside an event handler, long after hook
- * order is fixed, and needs the flag set the instant the transcription returns -
- * before `Workspace` mounts and before any conversation query resolves. Without
- * that, recognition falls to `RedirectGuard`'s fetch, and until it lands the
- * conversation renders as a plain chat: Presets and the model selector back in
- * the header, no audio player.
- */
-export function useFlagAudioTranscriberConvo() {
-  const flagAudioTranscriberConvo = useRecoilCallback(
-    ({ set }) =>
-      (convoId: string) => {
-        set(isAudioTranscriberConvo(convoId), true);
-      },
-    [],
-  );
-
-  return flagAudioTranscriberConvo;
-}
-
 export function useUpdateEphemeralAgent() {
   const updateEphemeralAgent = useRecoilCallback(
     ({ set }) =>

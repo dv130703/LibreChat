@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { v4 } from 'uuid';
 import debounce from 'lodash/debounce';
 import { useToastContext } from '@librechat/client';
@@ -11,16 +12,30 @@ import {
   mergeFileConfig,
   isAssistantsEndpoint,
   getEndpointFileConfig,
+  getConfiguredMimeAccept,
   defaultAssistantsVersion,
 } from 'librechat-data-provider';
 import type { EModelEndpoint, TEndpointsConfig, TError } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
 import type { ExtendedFile, FileSetter } from '~/common';
-import { logger, validateFiles, cachePreview, getCachedPreview, removePreviewEntry } from '~/utils';
-import { useGetFileConfig, useUploadFileMutation } from '~/data-provider';
+import {
+  logger,
+  validateFiles,
+  cachePreview,
+  getCachedPreview,
+  removePreviewEntry,
+  isAudioOrVideoMimeType,
+} from '~/utils';
+import {
+  useGetFileConfig,
+  useUploadFileMutation,
+  useTranscribeAudioMutation,
+} from '~/data-provider';
 import useLocalize, { TranslationKeys } from '~/hooks/useLocalize';
 import { useDelayedUploadToast } from './useDelayedUploadToast';
 import { useChatContext } from '~/Providers/ChatContext';
+import { useTranscribeIntent } from '~/Providers/TranscribeIntentContext';
+import { useSetConvoContext } from '~/Providers/SetConvoContext';
 import store, { ephemeralAgentByConvoId } from '~/store';
 import useClientResize from './useClientResize';
 import useUpdateFiles from './useUpdateFiles';
@@ -62,6 +77,10 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
     params?.fileSetter ?? setFiles,
   );
   const { resizeImageIfNeeded } = useClientResize();
+  const { interceptAudioVideo } = useTranscribeIntent();
+  const navigate = useNavigate();
+  const hasSetConversation = useSetConvoContext();
+  const transcribeAudioMutation = useTranscribeAudioMutation();
 
   const agent_id = params?.additionalMetadata?.agent_id ?? '';
   const assistant_id = params?.additionalMetadata?.assistant_id ?? '';
@@ -283,6 +302,101 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
     img.src = preview;
   };
 
+  /**
+   * Composer entry point for transcription (Phase 4, transcription/
+   * ARCHITECTURE.md §6.1/§6.4) - asks `TranscribeIntentProvider` whether the
+   * user wants to transcribe or just attach, and on "transcribe" calls
+   * `POST /api/transcribe` in place of the normal `startUpload` path.
+   *
+   * Two cases, because `POST /api/transcribe` always needs a real
+   * `conversationId` up front (the async job has to know where to attach),
+   * unlike a normal file upload, which can stay unassociated until the
+   * conversation itself is created at first-message-send time:
+   *  - An already-existing conversation: call it against that id directly,
+   *    add the result to the composer's file strip like any other
+   *    attachment - it becomes a `TranscriptCard` once the message is sent.
+   *  - A brand-new, not-yet-sent draft (`Constants.NEW_CONVO`): there is no
+   *    real id yet, so one is minted here and the job is queued against it
+   *    immediately, then the app navigates into that conversation with the
+   *    transcript panel open - mirroring what the standalone page always
+   *    did for this exact case, rather than silently declining to transcribe
+   *    it (the gap this used to fall into: the file would attach as a plain,
+   *    inert upload the model has no way to actually read).
+   */
+  const maybeInterceptAudioVideo = async (
+    extendedFile: ExtendedFile,
+    originalFile: File,
+  ): Promise<'attach' | 'handled' | 'navigated'> => {
+    // `conversation` is only populated for the real chat composer (`useFileHandling`,
+    // backed by `useChatContext`) - `useFileHandlingNoChatContext` callers like the
+    // agent/assistant builder's Knowledge/CodeFiles panels pass no `conversation` at
+    // all, and have no chat to queue a transcription job against.
+    if (!isAudioOrVideoMimeType(originalFile.type) || conversation == null) {
+      return 'attach';
+    }
+
+    const endpointFileConfig = getEndpointFileConfig({ endpoint, fileConfig, endpointType });
+    const canAttachNatively =
+      getConfiguredMimeAccept(endpointFileConfig?.supportedMimeTypes, {
+        categories: ['audio', 'video'],
+      }) != null;
+
+    const result = await interceptAudioVideo(originalFile, canAttachNatively);
+    if (result.action === 'attach') {
+      return 'attach';
+    }
+    if (result.action === 'cancel') {
+      deleteFileById(extendedFile.file_id);
+      return 'handled';
+    }
+
+    const existingConversationId = conversation.conversationId;
+    const isNewConversation =
+      !existingConversationId || existingConversationId === Constants.NEW_CONVO;
+    const targetConversationId = isNewConversation ? v4() : existingConversationId;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', originalFile);
+      formData.append('conversationId', targetConversationId);
+      if (endpoint) {
+        formData.append('endpoint', endpoint);
+      }
+      if (conversation?.agent_id) {
+        formData.append('agent_id', conversation.agent_id);
+      }
+      formData.append('options', JSON.stringify(result.options));
+      const data = await transcribeAudioMutation.mutateAsync({ formData });
+      deleteFileById(extendedFile.file_id);
+      if (isNewConversation) {
+        // `ChatRoute`'s own hydration effect only re-fetches/re-initializes
+        // the conversation when `!hasSetConversation.current` (or a narrow
+        // same-id project-mismatch case) - it was already `true` from the
+        // draft this navigate is leaving, so without this reset the URL
+        // changes but the chat pane silently keeps rendering the old empty
+        // "new" draft's state (a `TranscriptPanel` for a conversation id it
+        // never actually loaded, and "Nothing found" in the main pane) -
+        // exactly the bug `Workspace.tsx` used to guard against for the
+        // standalone page's own equivalent navigate, via the same ref.
+        hasSetConversation.current = false;
+        navigate(`/c/${data.conversationId}?panel=transcript`, { replace: true });
+        return 'navigated';
+      }
+      addFile({
+        file_id: data.sourceFile.file_id,
+        filename: data.sourceFile.filename,
+        type: originalFile.type,
+        size: originalFile.size,
+        progress: 1,
+      });
+    } catch (error) {
+      console.error('transcribe upload error', error);
+      deleteFileById(extendedFile.file_id);
+      setError('com_ui_audio_transcriber_error');
+    }
+    return 'handled';
+  };
+
   const handleFiles = async (_files: FileList | File[], _toolResource?: string) => {
     abortControllerRef.current = new AbortController();
     const fileList = Array.from(_files);
@@ -430,6 +544,26 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
 
           if (isImage) {
             loadImage(readyExtendedFile, initialPreview);
+            continue;
+          }
+
+          const interceptResult = await maybeInterceptAudioVideo(readyExtendedFile, originalFile);
+          if (interceptResult === 'navigated') {
+            // The transcribe flow just minted a brand-new conversation and
+            // navigated into it - this component instance (and the whole
+            // `ChatView`/`TranscribeIntentProvider` tree under it) is on its
+            // way out. Any remaining files in this same drop/paste batch
+            // would otherwise keep running against now-detached closures:
+            // `addFile`/`setFiles` writing into an orphaned Recoil atom
+            // nothing renders anymore, and `interceptAudioVideo` opening a
+            // dialog inside a provider instance that's already unmounted -
+            // which never resolves, since nothing is left to click through
+            // it. Stopping here instead of continuing to the next file
+            // avoids silently stranding it in an upload state the user can
+            // never see or finish.
+            break;
+          }
+          if (interceptResult === 'handled') {
             continue;
           }
 

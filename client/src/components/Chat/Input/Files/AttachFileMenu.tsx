@@ -53,13 +53,19 @@ type FileUploadType =
   | 'image_document_extended'
   | 'image_document_video_audio';
 
-/** What each provider upload path can actually send, used to scope the picker filter to selectable files. */
+/** What each provider upload path can actually send, used to scope the picker filter to selectable files.
+ *  Every variant includes audio/video: a provider that can't natively attach a raw audio/video file
+ *  can still receive it as a plain upload (`tool_resource` unset here, same as any other "Upload to
+ *  Provider" file), and dropping/uploading an audio/video file elsewhere in the composer can route it
+ *  into transcription instead - this menu is the explicit "just attach it, as-is" escape hatch, so it
+ *  shouldn't be narrower than what the server already accepts (audio/video are in the default
+ *  `supportedMimeTypes`, packages/data-provider/src/file-config.ts). */
 const fileTypeCapabilities: Record<FileUploadType, MimeUploadCapability> = {
   image: { categories: ['image'] },
   document: { categories: ['document'] },
-  image_document: { categories: ['image', 'document'] },
+  image_document: { categories: ['image', 'document', 'audio', 'video'] },
   image_document_extended: {
-    categories: ['image', 'document'],
+    categories: ['image', 'document', 'audio', 'video'],
     documentMimeTypes: bedrockDocumentMimeTypes,
   },
   /** Google/Vertex/OpenRouter media path: documents are limited to PDF (see isProviderAttachType). */
@@ -155,9 +161,9 @@ const AttachFileMenu = ({
       } else if (fileType === 'document') {
         inputRef.current.accept = '.pdf,application/pdf';
       } else if (fileType === 'image_document') {
-        inputRef.current.accept = 'image/*,.heif,.heic,.pdf,application/pdf';
+        inputRef.current.accept = 'image/*,.heif,.heic,.pdf,application/pdf,video/*,audio/*';
       } else if (fileType === 'image_document_extended') {
-        inputRef.current.accept = `image/*,.heif,.heic,${bedrockDocumentExtensions}`;
+        inputRef.current.accept = `image/*,.heif,.heic,${bedrockDocumentExtensions},video/*,audio/*`;
       } else if (fileType === 'image_document_video_audio') {
         inputRef.current.accept = 'image/*,.heif,.heic,.pdf,application/pdf,video/*,audio/*';
       } else {

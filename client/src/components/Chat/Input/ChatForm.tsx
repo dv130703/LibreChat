@@ -27,7 +27,6 @@ import useAskAnswerMode from '~/hooks/Input/useAskAnswerMode';
 import AskUserQuestionPopover from './AskUserQuestionPopover';
 import { cn, getModelSpec, removeFocusRings } from '~/utils';
 import DuringRunSendButton from './DuringRunSendButton';
-import ModelSelector from '../Menus/Endpoints/ModelSelector';
 import { useGetStartupConfig } from '~/data-provider';
 import { mainTextareaId, BadgeItem } from '~/common';
 import PendingSteerChips from './PendingSteerChips';
@@ -49,7 +48,7 @@ import SendButton from './SendButton';
 import EditBadges from './EditBadges';
 import BadgeRow from './BadgeRow';
 import Mention from './Mention';
-import store, { isAudioTranscriberConvo } from '~/store';
+import store from '~/store';
 
 interface ChatFormProps {
   index: number;
@@ -127,10 +126,6 @@ const ChatForm = memo(function ChatForm({
     () => conversation?.conversationId ?? Constants.NEW_CONVO,
     [conversation?.conversationId],
   );
-  /** The Audio Transcriber's model picker lives here, next to the send
-   *  button - matching Claude's placement - instead of in the page header,
-   *  which hides its own copy for these conversations (see `Header.tsx`). */
-  const isTranscriberConvo = useRecoilValue(isAudioTranscriberConvo(conversationId));
   /**
    * The quote feature merges excerpts server-side in `BaseClient.sendMessage`,
    * which the Assistants endpoints bypass — so hide the UI there rather than
@@ -660,20 +655,6 @@ const ChatForm = memo(function ChatForm({
                 />
                 <div className="mx-auto flex" />
                 <TokenUsage index={index} conversation={conversation} isSubmitting={isSubmitting} />
-                {/* Right next to the send button, matching where Claude puts
-                 *  its own model picker - grouped with the transport controls
-                 *  on this side of the `mx-auto` spacer instead of the
-                 *  attach-file/badges group on the left, where a `max-w-[9rem]`
-                 *  box used to truncate "Transcript Assistant" down to
-                 *  "Transcript A…", easy to mistake for an attachment chip
-                 *  rather than the model picker it actually is. Ordered before
-                 *  the mic, not after - model choice comes first, then how
-                 *  you're sending the message, then send itself. */}
-                {isTranscriberConvo && (
-                  <div className="max-w-[13rem]">
-                    <ModelSelector startupConfig={startupConfig} />
-                  </div>
-                )}
                 {SpeechToText && (
                   <AudioRecorder
                     methods={methods}
