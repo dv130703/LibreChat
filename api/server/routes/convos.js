@@ -56,17 +56,15 @@ async function cleanupTranscriptFiles(req, conversationIds) {
 }
 
 /**
- * Deletes `execute_code`-context files (Code Interpreter output, and
- * OfficeCLI output which deliberately reuses this context — see
- * `api/server/services/Files/Office/process.js`'s `processOfficeCliOutput`)
- * for the given conversations.
+ * Deletes `execute_code`-context files (Code Interpreter output) for the
+ * given conversations.
  *
  * Neither `deleteConvos` nor `deleteMessages` (the two collections this
  * cascade otherwise touches) ever reference the `File` collection — verified
- * by reading both, not assumed — so without this, every code-interpreter or
- * OfficeCLI-produced file outlives its conversation forever: no Mongo `File`
- * doc removed, no on-disk/storage-strategy bytes reclaimed. `expiredAt`-based
- * retention (`getRetentionExpiry`) is a separate, opt-in policy (temp chats /
+ * by reading both, not assumed — so without this, every code-interpreter
+ * file outlives its conversation forever: no Mongo `File` doc removed, no
+ * on-disk/storage-strategy bytes reclaimed. `expiredAt`-based retention
+ * (`getRetentionExpiry`) is a separate, opt-in policy (temp chats /
  * enterprise retention) — most deployments never set it, so it does not
  * substitute for this. Best-effort, mirrors `cleanupTranscriptFiles`: never
  * blocks conversation deletion on cleanup failure.

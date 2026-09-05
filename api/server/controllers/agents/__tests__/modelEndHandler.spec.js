@@ -14,9 +14,6 @@ jest.mock('~/server/services/Files/Code/process', () => ({
   processCodeOutput: jest.fn(),
   runPreviewFinalize: jest.fn(),
 }));
-jest.mock('~/server/services/Files/Office/process', () => ({
-  processOfficeCliOutput: jest.fn(),
-}));
 jest.mock('~/server/services/Files/process', () => ({
   saveBase64Image: jest.fn(),
 }));

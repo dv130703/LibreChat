@@ -85,7 +85,7 @@ describe('Convos Routes', () => {
       });
     });
 
-    it('cleans up execute_code files (Code Interpreter and OfficeCLI output) across all deleted conversations', async () => {
+    it('cleans up execute_code files (Code Interpreter output) across all deleted conversations', async () => {
       const conversationIds = ['conv-a', 'conv-b'];
       const { getFiles } = require('~/models');
       const { processDeleteRequest } = require('~/server/services/Files/process');

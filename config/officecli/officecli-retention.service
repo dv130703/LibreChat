@@ -1,9 +1,0 @@
-[Unit]
-Description=Sweep idle OfficeCLI per-user workspace directories
-
-[Service]
-Type=oneshot
-User=daniel
-ExecStart=/home/daniel/LibreChat/config/officecli/retention-sweep.sh
-# Override the defaults baked into retention-sweep.sh here if needed, e.g.:
-# Environment=OFFICECLI_RETENTION_HOURS=4

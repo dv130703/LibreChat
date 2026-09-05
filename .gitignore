@@ -177,9 +177,3 @@ hive-mind-prompt-*.txt
 CLAUDE.md
 .gsd
 codedb.snapshot
-
-# .NET build output (vendor/officecli fork) — regenerable, ~260MB, never commit
-vendor/officecli/**/bin/
-vendor/officecli/**/obj/
-vendor/officecli/**/.vs/
-vendor/officecli/**/TestResults/
