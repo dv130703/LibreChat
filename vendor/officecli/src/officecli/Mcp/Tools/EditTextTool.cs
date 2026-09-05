@@ -35,6 +35,10 @@ public sealed class EditTextTool(ILogger<EditTextTool> logger)
         return ToolErrors.Run(logger, "edit_text", () =>
         {
             var filePath = PathGuard.ResolveWithinWorkspace(file_path);
+            if (filePath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+            {
+                ParseHelpers.ValidateNoMarkdownListMarker(new_str, "new_str");
+            }
             using var handler = DocumentHandlerFactory.Open(filePath, editable: true);
 
             var node = handler.Get(path, depth: 1);

@@ -14,8 +14,9 @@ const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio
 const { scenarios, setupFixture, FIXTURE_TIMELINE_TEXT } = require('./scenarios');
 const checks = require('./checks');
 
+const ARM = process.argv[2] || 'control';
 const WRAPPER = '/home/daniel/LibreChat/config/officecli/mcp-wrapper.sh';
-const WORKSPACE_ID = 'harness-control';
+const WORKSPACE_ID = `harness-${ARM}`;
 const WORKSPACE_DIR = `/home/daniel/.local/share/officecli/users/${WORKSPACE_ID}`;
 const OLLAMA_URL = 'http://localhost:11434/api/chat';
 const MODEL = 'qwen3-14b-8k:latest';
@@ -30,7 +31,7 @@ const OFFICE_EXTS = ['.docx', '.xlsx', '.pptx'];
 const SERVER_INSTRUCTIONS =
   "Your OfficeCLI working directory is scoped to this conversation's user — use relative paths only (e.g. \"report.xlsx\"), never absolute paths.";
 
-const resultsDir = path.join(__dirname, 'results', 'control');
+const resultsDir = path.join(__dirname, 'results', ARM);
 fs.mkdirSync(resultsDir, { recursive: true });
 
 function ollamaToolFromMcp(tool) {
@@ -236,10 +237,10 @@ async function main() {
     num_ctx: NUM_CTX,
     kv_cache_type: 'q8_0',
     temperature: TEMPERATURE,
-    skills_enabled_on_agent: false,
+    skills_enabled_on_agent: false, // this harness drives Ollama+MCP directly; LibreChat's agent flag isn't in the loop
     skill_dir_contents: fs.readdirSync(path.join('/home/daniel/LibreChat', 'skill')),
     prompt_overhead_tokens: promptOverheadTokens,
-    arm: 'control',
+    arm: ARM,
     axis2_note: 'PROXY — file written to workspace, not verified promoted through processOfficeCliOutput/claimCodeFile (see OFFICECLI_HARNESS.md)',
   };
   fs.writeFileSync(path.join(resultsDir, '_header.json'), JSON.stringify(header, null, 2));

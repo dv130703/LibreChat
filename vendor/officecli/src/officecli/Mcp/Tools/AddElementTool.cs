@@ -72,6 +72,11 @@ public sealed class AddElementTool(ILogger<AddElementTool> logger)
             }
 
             var filePath = PathGuard.ResolveWithinWorkspace(file_path);
+            if (filePath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)
+                && properties is not null && properties.TryGetValue("text", out var newElementText))
+            {
+                ParseHelpers.ValidateNoMarkdownListMarker(newElementText, "properties.text");
+            }
             InsertPosition? position = (after, before) switch
             {
                 (not null, not null) => throw new CliException("Pass only one of after or before, not both.") { Code = "invalid_value" },

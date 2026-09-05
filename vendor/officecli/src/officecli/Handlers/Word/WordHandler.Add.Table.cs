@@ -700,6 +700,18 @@ public partial class WordHandler
             InsertTblPrChildInOrder(tblProps, new BiDiVisual());
         }
 
+        // DEFAULT(header-row-bold): a table with more than one row visually
+        // needs its first row distinguished as a header — measured against a
+        // live control run, models reliably build a structurally-correct
+        // table but leave the header row unstyled unless told to bold it
+        // (~75% of trials — see officecli-harness/results/control/SUMMARY.md,
+        // "table-insertion" scenario). A sentence in the tool description
+        // only helps when the model remembers to act on it every time;
+        // defaulting the behavior means it doesn't have to. Opt out with
+        // properties["headerRow"]="false".
+        bool boldHeaderRow = rows > 1
+            && (!properties.TryGetValue("headerRow", out var headerRowVal) || IsTruthy(headerRowVal));
+
         for (int r = 0; r < rows; r++)
         {
             var row = new TableRow();
@@ -716,7 +728,12 @@ public partial class WordHandler
                 var cellPara = new Paragraph();
                 AssignParaId(cellPara);
                 if (!string.IsNullOrEmpty(cellText))
-                    cellPara.AppendChild(new Run(new Text(cellText) { Space = SpaceProcessingModeValues.Preserve }));
+                {
+                    var cellRun = new Run(new Text(cellText) { Space = SpaceProcessingModeValues.Preserve });
+                    if (r == 0 && boldHeaderRow)
+                        cellRun.PrependChild(new RunProperties(new Bold()));
+                    cellPara.AppendChild(cellRun);
+                }
                 var cell = new TableCell(cellPara);
                 // BUG-R6-06 / BUG-R6-01: do NOT stamp an explicit
                 // <w:tcW> on every cell when the user supplied colWidths

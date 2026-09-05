@@ -929,4 +929,35 @@ internal static class ParseHelpers
                     $"{propName} contains the XML-illegal noncharacter U+{(int)c:X4} at position {i}.");
         }
     }
+
+    /// <summary>
+    /// Rejects a literal markdown list/heading marker ("- ", "1. ", "## ", "&gt; ")
+    /// at the start of user-supplied Word text. Word text is never enumerated or
+    /// outlined by literal characters — only real formatting (numPr/listStyle,
+    /// pStyle=Heading*) renders as a list or heading. The tool descriptions
+    /// already tell the model this in prose; measured against a live control
+    /// run it still happened in roughly half of multi-item-list trials (see
+    /// officecli-harness/results/control/SUMMARY.md), so this makes the same
+    /// rule mechanical instead of advisory.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex MarkdownListMarkerRegex =
+        new(@"^\s*([-*+•]\s|\d+[.)]\s|#{1,6}\s|>\s)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    public static void ValidateNoMarkdownListMarker(string? value, string propName)
+    {
+        if (string.IsNullOrEmpty(value)) return;
+        var match = MarkdownListMarkerRegex.Match(value);
+        if (!match.Success) return;
+        throw new CliException(
+            $"{propName} starts with \"{match.Value.TrimEnd()}\", a literal markdown list/heading marker. " +
+            "Word text is never enumerated, numbered, or outlined by literal characters — only real " +
+            "formatting renders that way.")
+        {
+            Code = "markdown_marker_in_text",
+            Suggestion = "For a list item, remove the marker and set properties.listStyle to \"bullet\" or " +
+                "\"ordered\" instead — consecutive paragraphs with the same listStyle continue the same " +
+                "list. For a heading, remove the marker and set properties.style to \"Heading1\"/\"Heading2\"/" +
+                "\"Heading3\" instead.",
+        };
+    }
 }

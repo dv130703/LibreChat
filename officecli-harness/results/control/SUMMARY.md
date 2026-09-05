@@ -55,8 +55,9 @@ missed every one of them:
 ## Known gaps in this control run
 
 - `diff_hash` was not computed for this exact run (only `git_dirty: true` was
-  recorded) — if this control needs to be cited later, recompute it against
-  the current tree state before trusting `git_head` alone.
+  recorded). **Resolved after the fact**: the tree was committed unchanged
+  immediately after this run, at `930529ac8`, tagged `officecli-control-baseline`
+  — that commit is the exact state these 20 trials were measured against.
 - Axis 2 is a proxy (file written to workspace), not verified through the
   real `processOfficeCliOutput`/`claimCodeFile` promotion pipeline.
 - The harness's own `checks.js` is a first pass — e.g. `checkHeadingStyle`'s

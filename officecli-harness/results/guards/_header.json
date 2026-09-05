@@ -1,0 +1,17 @@
+{
+  "date": "2026-09-05T10:21:30.950Z",
+  "git_head": "930529ac8fafb1f427787dc6ef6c851a63b3ea9a",
+  "git_dirty": true,
+  "model_tag": "qwen3-14b-8k:latest",
+  "quant": "Q4_K_M",
+  "num_ctx": 8192,
+  "kv_cache_type": "q8_0",
+  "temperature": 0.3,
+  "skills_enabled_on_agent": false,
+  "skill_dir_contents": [
+    "README.md"
+  ],
+  "prompt_overhead_tokens": 3049,
+  "arm": "guards",
+  "axis2_note": "PROXY — file written to workspace, not verified promoted through processOfficeCliOutput/claimCodeFile (see OFFICECLI_HARNESS.md)"
+}

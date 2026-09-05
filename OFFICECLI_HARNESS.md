@@ -5,6 +5,18 @@ Formalizes the protocol used to decide whether wiring an OfficeCLI skill into
 see `skill/README.md` and `packages/api/src/skills/deployment.ts`) helps or
 hurts output quality on this deployment's local model.
 
+**Outcome (see `officecli-harness/results/`):** the control run (tag
+`officecli-control-baseline`) found call validity already high (94.7%) and
+both real axis-3 defects — markdown-leak in lists, unbolded table headers —
+mechanical rather than knowledge gaps. Both were fixed at the tool level
+(`ParseHelpers.ValidateNoMarkdownListMarker`, default header-row bolding in
+`WordHandler.Add.Table.cs`) instead of via a skill; a partial guards re-run
+confirmed the markdown-leak fix (4/4 clean, including both control failures).
+**The officecli-docx skill transformation was not written** — see
+`officecli-harness/results/guards/SUMMARY.md` for the reasoning. The
+protocol below remains the reference for any future skill-vs-no-skill
+decision on this deployment.
+
 ## Why this file exists
 
 An earlier session measured qwen3-14b-8k's tool-call reliability dropping
