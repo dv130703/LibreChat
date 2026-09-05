@@ -72,8 +72,15 @@ async function main() {
     });
     const df = sh(`df -h ${WORKSPACE_ROOT} | tail -1`);
     const freeCol = df ? df.split(/\s+/)[3] : '?';
+    const sweepScriptExists = fs.existsSync(path.join(REPO_ROOT, 'config/officecli/retention-sweep.sh'));
+    const sweepTimerLive = !!sh('systemctl is-enabled officecli-retention.timer 2>/dev/null') || !!sh("crontab -l 2>/dev/null | grep -i retention-sweep");
     report('workspace root', `${entries.length} dirs, ${freeCol} free on volume`,
-      entries.length > 0 ? `${staleDirs.length} dir(s) older than ${STALE_DAYS_THRESHOLD}d — no retention sweep exists yet (mcp-wrapper.sh says to pair one; none is installed — checked cron/systemd timers, found none)` : null);
+      staleDirs.length > 0 && !sweepTimerLive
+        ? `${staleDirs.length} dir(s) older than ${STALE_DAYS_THRESHOLD}d and no sweep is actually running` +
+          (sweepScriptExists ? ' (retention-sweep.sh exists in config/officecli/ but is not installed as a cron/systemd job — see its header)' : ' (retention-sweep.sh not found — see config/officecli/)')
+        : !sweepTimerLive && entries.length > 0
+          ? 'retention-sweep.sh exists but is not installed as a live cron/systemd job yet — nothing is stale now, but nothing will stop it accumulating again'
+          : null);
   }
 
   // --- Ollama / model ---
