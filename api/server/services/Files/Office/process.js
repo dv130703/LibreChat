@@ -1,5 +1,7 @@
 const fs = require('fs/promises');
 const path = require('path');
+const { promisify } = require('util');
+const { execFile } = require('child_process');
 const { v4 } = require('uuid');
 const { logger } = require('@librechat/data-schemas');
 const {
@@ -20,6 +22,70 @@ const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { getRetentionExpiry } = require('~/server/services/Files/retention');
 const { determineFileType } = require('~/server/utils');
 const { finalizePreview } = require('~/server/services/Files/Code/process');
+
+const execFileAsync = promisify(execFile);
+const OFFICECLI_BIN =
+  process.env.OFFICECLI_BIN ||
+  path.join(
+    __dirname,
+    '../../../../../vendor/officecli/src/officecli/bin/Release/net10.0/linux-x64/officecli',
+  );
+const VALIDATION_TIMEOUT_MS = 10000;
+
+/**
+ * Best-effort, non-blocking OpenXML validation attached to the file's
+ * metadata. There is no delivery gate in this integration — the model can
+ * call `validate_document`/`view_issues` but nothing requires it to before
+ * a changed file gets promoted as an attachment (see ARCHITECTURE.md's
+ * "known gaps"). This doesn't add that gate — blocking promotion is a
+ * bigger, riskier behavior change than one file's worth of hardening
+ * justifies — but it does mean an invalid delivered file is now visible in
+ * its own metadata instead of silently unknown. Never throws: a validation
+ * failure (binary missing, timeout, bad JSON) just means `officeCliValid`
+ * stays undefined, not that the attachment is blocked.
+ *
+ * @param {string} absolutePath
+ * @returns {Promise<{ valid: boolean, message: string } | null>}
+ */
+/**
+ * `officecli validate --json`'s shape differs between resident and
+ * non-resident mode (verified by hand: resident returns `data`/`message` as
+ * a string like "Validation passed: no errors found."; non-resident — used
+ * here, see the `OFFICECLI_NO_AUTO_RESIDENT` call site below — returns
+ * `data: { count, errors: [...] }` with no top-level `message` at all).
+ * Handles both rather than assuming the one seen in manual testing is the
+ * only one this binary ever produces.
+ */
+const extractValidationMessage = (result) => {
+  if (typeof result.message === 'string') return result.message;
+  if (typeof result.data === 'string') return result.data;
+  if (Array.isArray(result.data?.errors)) {
+    return result.data.errors.length === 0
+      ? 'Validation passed: no errors found.'
+      : result.data.errors.map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('; ');
+  }
+  return result.error?.error ?? '';
+};
+
+const runOfficeCliValidation = async (absolutePath) => {
+  try {
+    const { stdout } = await execFileAsync(OFFICECLI_BIN, ['validate', absolutePath, '--json'], {
+      timeout: VALIDATION_TIMEOUT_MS,
+      // This is a one-off, isolated call — resident mode (officecli's
+      // default) would otherwise leave a background process holding the
+      // file open for "faster subsequent commands" that never come,
+      // silently leaking a process per validated file (found by hand while
+      // testing this: two orphaned `__resident-serve__` processes turned up
+      // in `ps aux` from just the manual verification + one test run).
+      env: { ...process.env, OFFICECLI_NO_AUTO_RESIDENT: '1' },
+    });
+    const result = JSON.parse(stdout);
+    return { valid: result.success === true, message: extractValidationMessage(result) };
+  } catch (error) {
+    logger.warn(`[processOfficeCliOutput] Best-effort validation failed for "${absolutePath}":`, error);
+    return null;
+  }
+};
 
 /** OfficeCLI only ever produces these three formats (see `OFFICE_CLI_EXTENSIONS`
  * in `@librechat/api`'s office/detect module, which gates what reaches here). */
@@ -119,7 +185,10 @@ const processOfficeCliOutput = async ({
     return null;
   }
 
-  const detectedType = await determineFileType(buffer, true);
+  const [detectedType, officeCliValidation] = await Promise.all([
+    determineFileType(buffer, true),
+    runOfficeCliValidation(absolutePath),
+  ]);
   const mimeType = detectedType?.mime || fallbackMimeType;
 
   const isSupportedMimeType = fileConfig.checkType(mimeType, endpointFileConfig.supportedMimeTypes);
@@ -180,7 +249,13 @@ const processOfficeCliOutput = async ({
     status: 'pending',
     previewError: null,
     previewRevision,
-    metadata: { officeCliWorkspace: workspaceDir },
+    metadata: {
+      officeCliWorkspace: workspaceDir,
+      ...(officeCliValidation && {
+        officeCliValid: officeCliValidation.valid,
+        officeCliValidationMessage: officeCliValidation.message,
+      }),
+    },
     ...(await getRetentionExpiry(req)),
   };
 

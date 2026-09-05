@@ -1,6 +1,12 @@
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
+
+const OFFICECLI_BIN = path.join(
+  __dirname,
+  '../../../../../vendor/officecli/src/officecli/bin/Release/net10.0/linux-x64/officecli',
+);
 
 // Configurable file size limit for the "exceeds limit" test case.
 const fileSizeLimitConfig = { value: 20 * 1024 * 1024 };
@@ -170,6 +176,37 @@ describe('processOfficeCliOutput', () => {
     // it after the first call left every later call unable to find the file.
     await expect(fs.access(path.join(workspaceDir, 'report.xlsx'))).resolves.toBeUndefined();
   });
+
+  it('attaches best-effort OpenXML validation results to the file metadata', async () => {
+    // Real officecli binary, real valid docx — not a mock, per this repo's
+    // testing philosophy. Confirms the metadata.officeCliValid wiring added
+    // for ARCHITECTURE.md's "no delivery gate" gap actually reaches the
+    // created file record end to end.
+    execFileSync(OFFICECLI_BIN, ['create', 'valid.docx', '--type', 'docx'], { cwd: workspaceDir });
+    execFileSync(
+      OFFICECLI_BIN,
+      ['add', 'valid.docx', '/body', '--type', 'paragraph', '--prop', 'text=Hello'],
+      { cwd: workspaceDir },
+    );
+    execFileSync(OFFICECLI_BIN, ['close', 'valid.docx'], { cwd: workspaceDir });
+
+    await processOfficeCliOutput({
+      req: makeReq(),
+      workspaceDir,
+      fileName: 'valid.docx',
+      ...baseParams,
+    });
+
+    expect(mockCreateFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          officeCliValid: true,
+          officeCliValidationMessage: expect.stringContaining('Validation passed'),
+        }),
+      }),
+      true,
+    );
+  }, 20000);
 
   it('reuses the same file_id when the same filename is edited again in the same conversation (regression: avoided E11000 on the files unique index)', async () => {
     const { v4 } = require('uuid');
