@@ -949,15 +949,18 @@ internal static class ParseHelpers
         var match = MarkdownListMarkerRegex.Match(value);
         if (!match.Success) return;
         throw new CliException(
-            $"{propName} starts with \"{match.Value.TrimEnd()}\", a literal markdown list/heading marker. " +
-            "Word text is never enumerated, numbered, or outlined by literal characters — only real " +
-            "formatting renders that way.")
+            $"{propName} has a literal markdown marker (\"{match.Value.TrimEnd()}\"). Remove it.")
         {
             Code = "markdown_marker_in_text",
-            Suggestion = "For a list item, remove the marker and set properties.listStyle to \"bullet\" or " +
-                "\"ordered\" instead — consecutive paragraphs with the same listStyle continue the same " +
-                "list. For a heading, remove the marker and set properties.style to \"Heading1\"/\"Heading2\"/" +
-                "\"Heading3\" instead.",
+            // Kept deliberately short — see ValidateNoDirectFormattedHeading's comment on the
+            // same tradeoff. A longer, more explanatory version of this message previously
+            // shipped here; shortened after a real production trial where the model's retry,
+            // right after receiving this error, degraded into a malformed non-tool-call text
+            // blob instead of a clean second attempt. Not proven causal (this class of failure
+            // is inherently non-deterministic), but error-message length is one lever that's
+            // free to pull and costs nothing if wrong.
+            Suggestion = "Use properties.listStyle=\"bullet\"/\"ordered\" for lists, or " +
+                "properties.style=\"Heading1/2/3\" for headings.",
         };
     }
 
@@ -992,15 +995,17 @@ internal static class ParseHelpers
         var sizePt = LenientDouble(sizeVal);
         if (sizePt is null || sizePt < DirectFormattedHeadingMinSizePt) return;
 
-        throw new CliException(
-            $"This paragraph sets bold=true and size={sizeVal} with no style — that renders as a " +
-            "heading-looking paragraph with none of a real heading's structure (no outline level, no " +
-            "TOC entry, won't re-style if the template changes).")
+        throw new CliException("Direct-formatted heading rejected (bold+large size, no style).")
         {
             Code = "direct_formatted_heading",
-            Suggestion = "Remove bold/size and set properties.style to \"Heading1\", \"Heading2\", or " +
-                "\"Heading3\" instead — pick the level matching this heading's place in the document's " +
-                "outline.",
+            // Kept short deliberately — this repo's own librechat.yaml carries a measured note
+            // that verbose prose measurably degrades this model's tool-call reliability (qwen3-
+            // 14b-8k dropped from 10/10 to 4/10 valid calls under a verbose serverInstructions
+            // block). The full explanation (no outline level, no TOC entry, won't re-style) was
+            // cut for the same reason after a production trial where the model's retry, right
+            // after receiving the longer version of this error, degraded into a malformed
+            // non-tool-call text blob. Not proven causal on one incident, but cheap to try.
+            Suggestion = "Use properties.style=\"Heading1/2/3\" instead of bold+size.",
         };
     }
 
