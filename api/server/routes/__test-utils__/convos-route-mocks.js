@@ -58,7 +58,7 @@ module.exports = {
       text: 'text',
       document_parser: 'document_parser',
     },
-    FileContext: { transcript_rag: 'transcript_rag' },
+    FileContext: { transcript_rag: 'transcript_rag', execute_code: 'execute_code' },
     ...overrides,
   }),
 

@@ -56,6 +56,42 @@ async function cleanupTranscriptFiles(req, conversationIds) {
 }
 
 /**
+ * Deletes `execute_code`-context files (Code Interpreter output, and
+ * OfficeCLI output which deliberately reuses this context — see
+ * `api/server/services/Files/Office/process.js`'s `processOfficeCliOutput`)
+ * for the given conversations.
+ *
+ * Neither `deleteConvos` nor `deleteMessages` (the two collections this
+ * cascade otherwise touches) ever reference the `File` collection — verified
+ * by reading both, not assumed — so without this, every code-interpreter or
+ * OfficeCLI-produced file outlives its conversation forever: no Mongo `File`
+ * doc removed, no on-disk/storage-strategy bytes reclaimed. `expiredAt`-based
+ * retention (`getRetentionExpiry`) is a separate, opt-in policy (temp chats /
+ * enterprise retention) — most deployments never set it, so it does not
+ * substitute for this. Best-effort, mirrors `cleanupTranscriptFiles`: never
+ * blocks conversation deletion on cleanup failure.
+ *
+ * @param {ServerRequest} req
+ * @param {string[]} conversationIds
+ */
+async function cleanupExecuteCodeFiles(req, conversationIds) {
+  if (!conversationIds?.length) {
+    return;
+  }
+  try {
+    const files = await db.getFiles({
+      conversationId: { $in: conversationIds },
+      context: FileContext.execute_code,
+    });
+    if (files?.length) {
+      await processDeleteRequest({ req, files });
+    }
+  } catch (error) {
+    logger.error('[cleanupExecuteCodeFiles] Failed to clean up execute_code files', error);
+  }
+}
+
+/**
  * The one place every delete-conversation route routes its transcript
  * cleanup through, so a future route can't add a third path that forgets
  * one of the two steps below - see `transcription/ARCHITECTURE.md` §5.4/I4.
@@ -68,6 +104,7 @@ async function cleanupTranscriptFiles(req, conversationIds) {
  */
 async function deleteConversationCascade(req, conversationIds) {
   await cleanupTranscriptFiles(req, conversationIds);
+  await cleanupExecuteCodeFiles(req, conversationIds);
   await db.deleteTranscriptCorrections(conversationIds);
 }
 

@@ -85,6 +85,32 @@ describe('Convos Routes', () => {
       });
     });
 
+    it('cleans up execute_code files (Code Interpreter and OfficeCLI output) across all deleted conversations', async () => {
+      const conversationIds = ['conv-a', 'conv-b'];
+      const { getFiles } = require('~/models');
+      const { processDeleteRequest } = require('~/server/services/Files/process');
+
+      deleteConvos.mockResolvedValue({ deletedCount: 2, conversationIds });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteAllSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+      const executeCodeFiles = [{ file_id: 'e1' }, { file_id: 'e2' }];
+      getFiles.mockImplementation(({ context }) =>
+        Promise.resolve(context === 'execute_code' ? executeCodeFiles : []),
+      );
+
+      const response = await request(app).delete('/api/convos/all');
+
+      expect(response.status).toBe(201);
+      expect(getFiles).toHaveBeenCalledWith({
+        conversationId: { $in: conversationIds },
+        context: 'execute_code',
+      });
+      expect(processDeleteRequest).toHaveBeenCalledWith({
+        req: expect.anything(),
+        files: executeCodeFiles,
+      });
+    });
+
     // I4 (transcription/ARCHITECTURE.md §8): every delete-conversation path
     // must remove transcript-context files AND the correction log - the file
     // cleanup above was already covered, but nothing previously asserted
@@ -340,6 +366,37 @@ describe('Convos Routes', () => {
       expect(processDeleteRequest).toHaveBeenCalledWith({
         req: expect.anything(),
         files: [transcriptFile],
+      });
+    });
+
+    it('cleans up execute_code files scoped to the deleted conversation', async () => {
+      const mockConversationId = 'conv-office-1';
+      const { getFiles } = require('~/models');
+      const { processDeleteRequest } = require('~/server/services/Files/process');
+
+      deleteConvos.mockResolvedValue({
+        deletedCount: 1,
+        conversationIds: [mockConversationId],
+      });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteConvoSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+      const officeFile = { file_id: 'office-1', context: 'execute_code' };
+      getFiles.mockImplementation(({ context }) =>
+        Promise.resolve(context === 'execute_code' ? [officeFile] : []),
+      );
+
+      const response = await request(app)
+        .delete('/api/convos')
+        .send({ arg: { conversationId: mockConversationId } });
+
+      expect(response.status).toBe(201);
+      expect(getFiles).toHaveBeenCalledWith({
+        conversationId: { $in: [mockConversationId] },
+        context: 'execute_code',
+      });
+      expect(processDeleteRequest).toHaveBeenCalledWith({
+        req: expect.anything(),
+        files: [officeFile],
       });
     });
 

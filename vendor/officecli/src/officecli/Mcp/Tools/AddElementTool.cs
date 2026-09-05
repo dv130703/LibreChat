@@ -72,10 +72,16 @@ public sealed class AddElementTool(ILogger<AddElementTool> logger)
             }
 
             var filePath = PathGuard.ResolveWithinWorkspace(file_path);
-            if (filePath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)
-                && properties is not null && properties.TryGetValue("text", out var newElementText))
+            if (filePath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase) && properties is not null)
             {
-                ParseHelpers.ValidateNoMarkdownListMarker(newElementText, "properties.text");
+                if (properties.TryGetValue("text", out var newElementText))
+                {
+                    ParseHelpers.ValidateNoMarkdownListMarker(newElementText, "properties.text");
+                }
+                if (string.Equals(type, "paragraph", StringComparison.OrdinalIgnoreCase))
+                {
+                    ParseHelpers.ValidateNoDirectFormattedHeading(properties);
+                }
             }
             InsertPosition? position = (after, before) switch
             {

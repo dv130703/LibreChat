@@ -960,4 +960,54 @@ internal static class ParseHelpers
                 "\"Heading3\" instead.",
         };
     }
+
+    /// <summary>
+    /// Rejects a new paragraph that fakes a heading with direct character
+    /// formatting (bold + large size) instead of a named style — confirmed by
+    /// direct construction to produce a bare &lt;w:b/&gt;&lt;w:sz .../&gt; run with
+    /// no &lt;w:pStyle/&gt;, which looks like a heading on screen but carries none
+    /// of a real Heading style's semantics (no outline level, no TOC entry, no
+    /// consistent re-styling if the house template changes). Scoped narrowly —
+    /// only fires when a NEW paragraph is created with both bold and a
+    /// heading-sized font and no style at all, so ordinary bold emphasis within
+    /// body text (no size override, or a normal body size) is never touched.
+    /// Unlike <see cref="ValidateNoMarkdownListMarker"/>, this guard has no
+    /// measured occurrence in this deployment's control run — it exists as
+    /// defense-in-depth, not a fix for an observed failure.
+    /// </summary>
+    private const double DirectFormattedHeadingMinSizePt = 18;
+
+    public static void ValidateNoDirectFormattedHeading(Dictionary<string, string> properties)
+    {
+        var hasStyle = properties.Keys.Any(k =>
+            k.Equals("style", StringComparison.OrdinalIgnoreCase) ||
+            k.Equals("styleId", StringComparison.OrdinalIgnoreCase) ||
+            k.Equals("styleName", StringComparison.OrdinalIgnoreCase));
+        if (hasStyle) return;
+
+        var isBold = properties.TryGetValue("bold", out var boldVal) && IsTruthySafe(boldVal);
+        if (!isBold) return;
+
+        if (!properties.TryGetValue("size", out var sizeVal)) return;
+        var sizePt = LenientDouble(sizeVal);
+        if (sizePt is null || sizePt < DirectFormattedHeadingMinSizePt) return;
+
+        throw new CliException(
+            $"This paragraph sets bold=true and size={sizeVal} with no style — that renders as a " +
+            "heading-looking paragraph with none of a real heading's structure (no outline level, no " +
+            "TOC entry, won't re-style if the template changes).")
+        {
+            Code = "direct_formatted_heading",
+            Suggestion = "Remove bold/size and set properties.style to \"Heading1\", \"Heading2\", or " +
+                "\"Heading3\" instead — pick the level matching this heading's place in the document's " +
+                "outline.",
+        };
+    }
+
+    private static double? LenientDouble(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim().TrimEnd('p', 't', 'P', 'T');
+        return double.TryParse(trimmed, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null;
+    }
 }

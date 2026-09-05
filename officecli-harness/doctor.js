@@ -146,6 +146,11 @@ async function main() {
     const badCall = await client.callTool({ name: 'add_element', arguments: { file_path: 'doctor.docx', parent_path: '/body', type: 'paragraph', properties: { text: '1. should be rejected' } } });
     report('guard: markdown-leak', badCall.isError ? 'firing correctly (rejected)' : 'NOT FIRING', badCall.isError ? null : 'ValidateNoMarkdownListMarker is not rejecting — check ParseHelpers.cs / AddElementTool.cs wiring');
 
+    const badHeading = await client.callTool({ name: 'add_element', arguments: { file_path: 'doctor.docx', parent_path: '/body', type: 'paragraph', properties: { text: 'Fake Heading', bold: 'true', size: '32' } } });
+    report('guard: direct-formatted heading', badHeading.isError ? 'firing correctly (rejected)' : 'NOT FIRING', badHeading.isError ? null : 'ValidateNoDirectFormattedHeading is not rejecting — check ParseHelpers.cs / AddElementTool.cs wiring');
+    const goodBold = await client.callTool({ name: 'add_element', arguments: { file_path: 'doctor.docx', parent_path: '/body', type: 'paragraph', properties: { text: 'Note: ordinary emphasis', bold: 'true' } } });
+    if (goodBold.isError) report('guard: heading false-positive check', 'FAILED', 'plain bold emphasis (no size override) was rejected by ValidateNoDirectFormattedHeading — guard is too aggressive, check the size threshold/logic');
+
     await client.callTool({ name: 'add_element', arguments: { file_path: 'doctor.docx', parent_path: '/body', type: 'table', properties: { data: 'A,B;1,2;3,4' } } });
     await client.close();
     const checks = require('./checks');
