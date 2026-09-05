@@ -104,11 +104,31 @@ async function main() {
   report('deployment skills (./skill/)', realSkills.length ? realSkills.join(', ') : 'empty (placeholder README only)',
     realSkills.length ? null : 'no skill content wired — by design, see OFFICECLI_HARNESS.md');
 
-  // --- HITL / ask_user_question ---
-  const toolApprovalMatches = sh(`grep -c toolApproval ${REPO_ROOT}/librechat.yaml`);
-  const yamlHasToolApproval = toolApprovalMatches !== null && toolApprovalMatches !== '0';
-  report('HITL (toolApproval)', yamlHasToolApproval ? 'configured' : 'not configured (upstream default-off)',
-    yamlHasToolApproval ? null : 'ask_user_question is unavailable to any agent until endpoints.agents.toolApproval.enabled is set — checkpointer precondition is already satisfied (run.ts:1419), so it is safe to enable, just not yet done');
+  // --- ask_user_question ---
+  // NOTE: this is gated on `hitlCapable` (hardcoded true in client.js) + the
+  // agent's own tools list + the admin includedTools/filteredTools list —
+  // NOT on `endpoints.agents.toolApproval`, which is an unrelated feature
+  // (per-tool-call human approval) that would also gate every officecli
+  // tool behind approval if enabled. Don't check toolApproval here.
+  const mongoScriptPath = path.join(os.tmpdir(), 'office-doctor-agent-query.js');
+  fs.writeFileSync(
+    mongoScriptPath,
+    "print(JSON.stringify(db.agents.find({tools:{$regex:'mcp_officecli'}},{name:1,tools:1}).toArray()))",
+  );
+  const officecliAgentsJson = sh(`mongosh "mongodb://127.0.0.1:27017/LibreChat" --quiet --file ${mongoScriptPath}`);
+  fs.rmSync(mongoScriptPath, { force: true });
+  if (officecliAgentsJson) {
+    try {
+      const officecliAgents = JSON.parse(officecliAgentsJson);
+      const missing = officecliAgents.filter((a) => !a.tools?.includes('ask_user_question'));
+      report('ask_user_question wiring', `${officecliAgents.length - missing.length}/${officecliAgents.length} officecli agent(s) have it`,
+        missing.length ? `missing on: ${missing.map((a) => a.name).join(', ')} — add "ask_user_question" to tools` : null);
+    } catch (err) {
+      report('ask_user_question wiring', 'could not parse agent query result', err.message);
+    }
+  } else {
+    report('ask_user_question wiring', 'could not query agents (mongosh unavailable?)', 'skipped');
+  }
 
   // --- MCP round-trip: schema count + guard verification ---
   const wsId = `office-doctor-${Date.now()}`;
