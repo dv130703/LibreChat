@@ -341,11 +341,12 @@ public static class BlankDocCreator
             if (!string.IsNullOrEmpty(locCs)) docDefaultFonts.ComplexScript = locCs;
 
             // Normal style — default="1". Carry the Office 2013+ Normal
-            // baseline (line=259/1.08 ×, no after) on the Normal pPr itself,
-            // not on pPrDefault — cli's reader only walks the style chain via
-            // ResolveSpacingFromStyle and doesn't yet inherit from pPrDefault.
-            // Putting it on Normal keeps pPrDefault free for paragraph-shape
-            // defaults (autoSpaceDE/DN, kinsoku, …) without spacing leakage.
+            // baseline (line=259/1.08 ×, after=160/8pt) on the Normal pPr
+            // itself, not on pPrDefault — cli's reader only walks the style
+            // chain via ResolveSpacingFromStyle and doesn't yet inherit from
+            // pPrDefault. Putting it on Normal keeps pPrDefault free for
+            // paragraph-shape defaults (autoSpaceDE/DN, kinsoku, …) without
+            // spacing leakage.
             //
             // Why 1.08 × not 1.15 ×: empirical (stress-C measurement) — when
             // a list line has a 14 pt marker over 11 pt body, Word renders
@@ -353,13 +354,27 @@ public static class BlankDocCreator
             // 1.15 × renders at 14 × 1.15 × ratio = 19.65pt (1.3pt/paragraph drift
             // accumulating across the doc). Office 2013+ Normal IS 1.08 ×;
             // matching that here matches what Word actually does.
+            //
+            // After=160 (8pt): the actual Office 2013+ Normal default —
+            // independent of the line-height math above (Line/LineRule
+            // govern height within a paragraph; After governs the gap
+            // between paragraphs, and nothing here depended on it being 0).
+            // Left at 0 until now, every add_element-authored body paragraph
+            // ran directly into the next with no visual separation, since
+            // nothing in the tool surface ever prompts the model to set
+            // spaceAfter itself (see officecli-harness/results/control —
+            // 0/188 real tool calls across 20 trials ever touched spacing,
+            // indent, or margin properties). Baking the real Word default in
+            // here means a document looks like paragraphs, not a text wall,
+            // with zero model involvement — the same fix shape as the
+            // table-header-bold default.
             var normalStyle = new Style(
                 new StyleName { Val = "Normal" },
                 new PrimaryStyle(),
                 new StyleParagraphProperties(
                     new SpacingBetweenLines
                     {
-                        After = "0",
+                        After = "160",
                         Line = "259",
                         LineRule = LineSpacingRuleValues.Auto,
                     }
