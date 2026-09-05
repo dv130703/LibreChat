@@ -1,28 +1,12 @@
-import { Providers } from '@librechat/agents';
-import {
-  ErrorTypes,
-  envVarRegex,
-  EModelEndpoint,
-  FetchTokenConfig,
-  extractEnvVariable,
-} from 'librechat-data-provider';
+import { ErrorTypes, envVarRegex, extractEnvVariable } from 'librechat-data-provider';
 import type { TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
-import type {
-  BaseInitializeParams,
-  InitializeResultBase,
-  EndpointTokenConfig,
-  AnthropicModelOptions,
-} from '~/types';
-import { getLLMConfig as getAnthropicLLMConfig } from '~/endpoints/anthropic/llm';
-import { extractDefaultParams } from '~/endpoints/openai/llm';
+import type { BaseInitializeParams, InitializeResultBase, EndpointTokenConfig } from '~/types';
 import { isUserProvided, checkUserKeyExpiry } from '~/utils';
 import { getOpenAIConfig } from '~/endpoints/openai/config';
 import { getScopedTokenConfigKey } from '~/endpoints/keys';
 import { getCustomEndpointConfig } from '~/app/config';
-import { fetchModels } from '~/endpoints/models';
 import { validateEndpointURL } from '~/auth';
-import { tokenConfigCache } from '~/cache';
 
 const { PROXY } = process.env;
 
@@ -122,47 +106,6 @@ function buildCustomOptions(
   return customOptions;
 }
 
-/**
- * Builds a native Anthropic (`/v1/messages`) config for a custom endpoint that
- * declares `provider: anthropic`, pointing the Anthropic client at the custom
- * `baseURL`/`apiKey`. Returns `provider: anthropic` so the agent uses the native
- * Anthropic client instead of the OpenAI-compatible one. Headers stay unresolved
- * here and resolve at request time via `resolveConfigHeaders`.
- */
-function buildAnthropicCustomConfig({
-  apiKey,
-  baseURL,
-  modelOptions,
-  endpointConfig,
-  userProvidesURL,
-  allowedAddresses,
-}: {
-  apiKey: string;
-  baseURL: string;
-  modelOptions: AnthropicModelOptions;
-  endpointConfig: Partial<TEndpoint>;
-  userProvidesURL: boolean;
-  allowedAddresses?: string[] | null;
-}): InitializeResultBase {
-  const result = getAnthropicLLMConfig(apiKey, {
-    modelOptions,
-    proxy: PROXY ?? undefined,
-    reverseProxyUrl: baseURL,
-    baseURLIsUserProvided: userProvidesURL,
-    allowedAddresses,
-    headers: userProvidesURL ? undefined : endpointConfig.headers,
-    addParams: endpointConfig.addParams,
-    dropParams: endpointConfig.dropParams,
-    /** Apply admin `customParams.paramDefinitions` defaults (e.g. promptCache,
-     *  web_search, thinking) the OpenAI-compatible path gets via `getOpenAIConfig`. */
-    defaultParams: extractDefaultParams(endpointConfig.customParams?.paramDefinitions),
-  });
-  return {
-    llmConfig: result.llmConfig as InitializeResultBase['llmConfig'],
-    tools: result.tools,
-    provider: Providers.ANTHROPIC,
-  };
-}
 
 /**
  * Initializes a custom endpoint client configuration.
@@ -251,11 +194,7 @@ export async function initializeCustom({
   let endpointTokenConfig: EndpointTokenConfig | undefined;
 
   const userId = req.user?.id ?? '';
-  const tenantId = req.user?.tenantId;
-
-  const cache = tokenConfigCache();
   const hasTokenConfig = endpointConfig.tokenConfig != null;
-  const tokenKey = getTokenConfigKey(endpointConfig, endpoint, userId, tenantId);
 
   if (hasTokenConfig) {
     /** A static override is authoritative — use it for the agent's billing
@@ -265,40 +204,6 @@ export async function initializeCustom({
     endpointTokenConfig = toBillingTokenConfig(
       endpointConfig.tokenConfig as Record<string, Record<string, number>>,
     );
-  } else {
-    const cachedConfig =
-      FetchTokenConfig[endpoint.toLowerCase() as keyof typeof FetchTokenConfig] &&
-      (await cache.get(tokenKey));
-    endpointTokenConfig = (cachedConfig as EndpointTokenConfig) || undefined;
-  }
-
-  if (
-    FetchTokenConfig[endpoint.toLowerCase() as keyof typeof FetchTokenConfig] &&
-    endpointConfig &&
-    endpointConfig.models?.fetch &&
-    !endpointTokenConfig
-  ) {
-    await fetchModels({
-      apiKey,
-      baseURL,
-      baseURLIsUserProvided: userProvidesURL,
-      allowedAddresses: appConfig?.endpoints?.allowedAddresses,
-      name: endpoint,
-      user: userId,
-      tokenKey,
-      userObject: req.user,
-      // Mirror the security guard in `loadConfigModels`: never forward
-      // header overrides when the base URL is user-supplied — configured
-      // templates like {{LIBRECHAT_OPENID_ID_TOKEN}} would otherwise resolve
-      // and leak the user's identity token to a destination the user controls.
-      headers: userProvidesURL ? undefined : endpointConfig.headers,
-      // Note: when both `headers` and `userObject` are supplied below, the
-      // MODEL_QUERIES cache inside `fetchModels` is automatically skipped,
-      // which prevents a per-user filtered model list from leaking across
-      // users. The token-config cache key (`tokenKey`) is also user-scoped
-      // above when these headers will be forwarded.
-    });
-    endpointTokenConfig = (await cache.get(tokenKey)) as EndpointTokenConfig | undefined;
   }
 
   const customOptions = buildCustomOptions(
@@ -318,30 +223,14 @@ export async function initializeCustom({
 
   const modelOptions = { ...(model_parameters ?? {}), user: userId };
 
-  let options: InitializeResultBase;
-  if (endpointConfig.provider === EModelEndpoint.anthropic) {
-    /** Native Anthropic `/v1/messages` client against the custom baseURL/apiKey.
-     *  `useLegacyContent` is intentionally left unset (matches the built-in
-     *  Anthropic endpoint, which uses native content formatting). */
-    options = buildAnthropicCustomConfig({
-      apiKey,
-      baseURL,
-      modelOptions: modelOptions as AnthropicModelOptions,
-      endpointConfig,
-      userProvidesURL,
-      allowedAddresses: appConfig?.endpoints?.allowedAddresses,
-    });
+  const finalClientOptions = {
+    modelOptions,
+    ...clientOptions,
+  };
+  const options: InitializeResultBase = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
+  if (options != null) {
+    options.useLegacyContent = true;
     options.endpointTokenConfig = endpointTokenConfig;
-  } else {
-    const finalClientOptions = {
-      modelOptions,
-      ...clientOptions,
-    };
-    options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
-    if (options != null) {
-      options.useLegacyContent = true;
-      options.endpointTokenConfig = endpointTokenConfig;
-    }
   }
 
   const streamRate = clientOptions.streamRate as number | undefined;

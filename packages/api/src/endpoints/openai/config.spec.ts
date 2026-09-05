@@ -7,7 +7,7 @@ import {
   ReasoningParameterFormat,
 } from 'librechat-data-provider';
 import type { RequestInit } from 'undici';
-import type { OpenAIParameters, AzureOptions } from '~/types';
+import type { OpenAIParameters } from '~/types';
 import { getOpenAIConfig } from './config';
 import { knownOpenAIParams } from './llm';
 
@@ -117,66 +117,6 @@ describe('getOpenAIConfig', () => {
     expect((result.llmConfig as Record<string, unknown>).reasoning_effort).toBeUndefined();
   });
 
-  it('should use reasoning_effort for openAI endpoint without useResponsesApi', () => {
-    const modelOptions = {
-      reasoning_effort: ReasoningEffort.high,
-      reasoning_summary: ReasoningSummary.detailed,
-    };
-
-    const result = getOpenAIConfig(mockApiKey, { modelOptions }, EModelEndpoint.openAI);
-
-    expect((result.llmConfig as Record<string, unknown>).reasoning_effort).toBe(
-      ReasoningEffort.high,
-    );
-    expect(result.llmConfig.reasoning).toBeUndefined();
-  });
-
-  it('should use reasoning_effort for azureOpenAI endpoint without useResponsesApi', () => {
-    const modelOptions = {
-      reasoning_effort: ReasoningEffort.high,
-      reasoning_summary: ReasoningSummary.detailed,
-    };
-
-    const result = getOpenAIConfig(mockApiKey, { modelOptions }, EModelEndpoint.azureOpenAI);
-
-    expect((result.llmConfig as Record<string, unknown>).reasoning_effort).toBe(
-      ReasoningEffort.high,
-    );
-    expect(result.llmConfig.reasoning).toBeUndefined();
-  });
-
-  it('should use reasoning object for openAI endpoint with useResponsesApi=true', () => {
-    const modelOptions = {
-      reasoning_effort: ReasoningEffort.high,
-      reasoning_summary: ReasoningSummary.detailed,
-      useResponsesApi: true,
-    };
-
-    const result = getOpenAIConfig(mockApiKey, { modelOptions }, EModelEndpoint.openAI);
-
-    expect(result.llmConfig.reasoning).toEqual({
-      effort: ReasoningEffort.high,
-      summary: ReasoningSummary.detailed,
-    });
-    expect((result.llmConfig as Record<string, unknown>).reasoning_effort).toBeUndefined();
-  });
-
-  it('should use reasoning object for azureOpenAI endpoint with useResponsesApi=true', () => {
-    const modelOptions = {
-      reasoning_effort: ReasoningEffort.high,
-      reasoning_summary: ReasoningSummary.detailed,
-      useResponsesApi: true,
-    };
-
-    const result = getOpenAIConfig(mockApiKey, { modelOptions }, EModelEndpoint.azureOpenAI);
-
-    expect(result.llmConfig.reasoning).toEqual({
-      effort: ReasoningEffort.high,
-      summary: ReasoningSummary.detailed,
-    });
-    expect((result.llmConfig as Record<string, unknown>).reasoning_effort).toBeUndefined();
-  });
-
   it('should pass reasoning_effort through modelKwargs for non-openAI/azureOpenAI endpoints', () => {
     const modelOptions = {
       reasoning_effort: ReasoningEffort.high,
@@ -258,7 +198,7 @@ describe('getOpenAIConfig', () => {
       mockApiKey,
       {
         customParams: {
-          defaultParamsEndpoint: EModelEndpoint.anthropic,
+          defaultParamsEndpoint: 'anthropic',
           includeReasoningContent: true,
         },
         modelOptions: { model: 'claude-3-7-sonnet' },
@@ -271,7 +211,7 @@ describe('getOpenAIConfig', () => {
       mockApiKey,
       {
         customParams: {
-          defaultParamsEndpoint: EModelEndpoint.google,
+          defaultParamsEndpoint: 'google',
           includeReasoningHistory: true,
         },
         modelOptions: { model: 'gemini-2.5-pro' },
@@ -374,22 +314,6 @@ describe('getOpenAIConfig', () => {
     expect(result.llmConfig.include_reasoning).toBe(true);
     expect(result.llmConfig.promptCache).toBe(true);
     expect(result.provider).toBe('openrouter');
-  });
-
-  it('should handle Azure configuration', () => {
-    const azure = {
-      azureOpenAIApiInstanceName: 'test-instance',
-      azureOpenAIApiDeploymentName: 'test-deployment',
-      azureOpenAIApiVersion: '2023-05-15',
-      azureOpenAIApiKey: 'azure-key',
-    };
-
-    const result = getOpenAIConfig(mockApiKey, { azure });
-
-    expect(result.llmConfig).toMatchObject({
-      ...azure,
-      model: 'test-deployment',
-    });
   });
 
   it('should handle web search model option', () => {
@@ -820,174 +744,6 @@ describe('getOpenAIConfig', () => {
     });
   });
 
-  describe('Azure Configuration', () => {
-    it('should handle Azure configuration with model name as deployment', () => {
-      const originalEnv = process.env.AZURE_USE_MODEL_AS_DEPLOYMENT_NAME;
-      process.env.AZURE_USE_MODEL_AS_DEPLOYMENT_NAME = 'true';
-
-      const azure = {
-        azureOpenAIApiInstanceName: 'test-instance',
-        azureOpenAIApiDeploymentName: 'original-deployment',
-        azureOpenAIApiVersion: '2023-05-15',
-        azureOpenAIApiKey: 'azure-key',
-      };
-
-      const modelOptions = { model: 'gpt-4.0-turbo' };
-      const result = getOpenAIConfig(mockApiKey, { azure, modelOptions });
-
-      // Should sanitize model name by removing dots
-      expect(result.llmConfig.model).toBe('gpt-40-turbo');
-      expect((result.llmConfig as Record<string, unknown>).azureOpenAIApiDeploymentName).toBe(
-        'gpt-40-turbo',
-      );
-
-      // Cleanup
-      if (originalEnv !== undefined) {
-        process.env.AZURE_USE_MODEL_AS_DEPLOYMENT_NAME = originalEnv;
-      } else {
-        delete process.env.AZURE_USE_MODEL_AS_DEPLOYMENT_NAME;
-      }
-    });
-
-    it('should use default Azure deployment name when not using model name', () => {
-      const originalEnv = process.env.AZURE_USE_MODEL_AS_DEPLOYMENT_NAME;
-      delete process.env.AZURE_USE_MODEL_AS_DEPLOYMENT_NAME;
-
-      const azure = {
-        azureOpenAIApiInstanceName: 'test-instance',
-        azureOpenAIApiDeploymentName: 'custom-deployment',
-        azureOpenAIApiVersion: '2023-05-15',
-        azureOpenAIApiKey: 'azure-key',
-      };
-
-      const result = getOpenAIConfig(mockApiKey, { azure });
-
-      expect((result.llmConfig as Record<string, unknown>).azureOpenAIApiDeploymentName).toBe(
-        'custom-deployment',
-      );
-      expect(result.llmConfig.model).toBe('custom-deployment');
-
-      // Cleanup
-      if (originalEnv !== undefined) {
-        process.env.AZURE_USE_MODEL_AS_DEPLOYMENT_NAME = originalEnv;
-      }
-    });
-
-    it('should handle Azure default model from environment', () => {
-      const originalEnv = process.env.AZURE_OPENAI_DEFAULT_MODEL;
-      process.env.AZURE_OPENAI_DEFAULT_MODEL = 'gpt-4-env-default';
-
-      const azure = {
-        azureOpenAIApiInstanceName: 'test-instance',
-        azureOpenAIApiDeploymentName: 'deployment',
-        azureOpenAIApiVersion: '2023-05-15',
-        azureOpenAIApiKey: 'azure-key',
-      };
-
-      const result = getOpenAIConfig(mockApiKey, { azure });
-
-      expect(result.llmConfig.model).toBe('deployment'); // deployment name takes precedence
-
-      // Cleanup
-      if (originalEnv !== undefined) {
-        process.env.AZURE_OPENAI_DEFAULT_MODEL = originalEnv;
-      } else {
-        delete process.env.AZURE_OPENAI_DEFAULT_MODEL;
-      }
-    });
-
-    it('should construct Azure base URL correctly', () => {
-      const azure = {
-        azureOpenAIApiInstanceName: 'test-instance',
-        azureOpenAIApiDeploymentName: 'test-deployment',
-        azureOpenAIApiVersion: '2023-05-15',
-        azureOpenAIApiKey: 'azure-key',
-      };
-
-      const result = getOpenAIConfig(mockApiKey, {
-        azure,
-        reverseProxyUrl: 'https://${INSTANCE_NAME}.openai.azure.com/openai/v1',
-      });
-
-      // The constructAzureURL should replace placeholders with actual values
-      expect((result.llmConfig as Record<string, unknown>).azureOpenAIBasePath).toBe(
-        'https://test-instance.openai.azure.com/openai/v1',
-      );
-    });
-
-    it('should handle Azure Responses API configuration', () => {
-      const azure = {
-        azureOpenAIApiInstanceName: 'test-instance',
-        azureOpenAIApiDeploymentName: 'test-deployment',
-        azureOpenAIApiVersion: '2023-05-15',
-        azureOpenAIApiKey: 'azure-key',
-      };
-
-      const modelOptions = { useResponsesApi: true };
-      const result = getOpenAIConfig(mockApiKey, { azure, modelOptions });
-
-      // Should construct the responses API URL
-      expect(result.configOptions?.baseURL).toContain('test-instance.openai.azure.com');
-      expect(result.configOptions?.defaultHeaders).toMatchObject({
-        'api-key': mockApiKey,
-      });
-      expect(result.configOptions?.defaultQuery).toMatchObject({
-        'api-version': 'preview',
-      });
-      expect(result.llmConfig.apiKey).toBe(mockApiKey);
-      expect(
-        (result.llmConfig as Record<string, unknown>).azureOpenAIApiDeploymentName,
-      ).toBeUndefined();
-      expect(
-        (result.llmConfig as Record<string, unknown>).azureOpenAIApiInstanceName,
-      ).toBeUndefined();
-    });
-
-    it('should create correct Azure baseURL when response api is selected', () => {
-      const azure = {
-        azureOpenAIApiInstanceName: 'test-instance',
-        azureOpenAIApiDeploymentName: 'test-deployment',
-        azureOpenAIApiVersion: '2023-08-15',
-        azureOpenAIApiKey: 'azure-key',
-      };
-
-      const result = getOpenAIConfig(mockApiKey, {
-        azure,
-        modelOptions: { useResponsesApi: true },
-        reverseProxyUrl:
-          'https://${INSTANCE_NAME}.openai.azure.com/openai/deployments/${DEPLOYMENT_NAME}',
-      });
-
-      expect(result.configOptions?.baseURL).toBe(
-        'https://test-instance.openai.azure.com/openai/v1',
-      );
-      expect(result.configOptions?.baseURL).not.toContain('deployments');
-    });
-
-    it('should handle Azure with organization from environment', () => {
-      const originalOrg = process.env.OPENAI_ORGANIZATION;
-      process.env.OPENAI_ORGANIZATION = 'test-org-123';
-
-      const azure = {
-        azureOpenAIApiInstanceName: 'test-instance',
-        azureOpenAIApiDeploymentName: 'test-deployment',
-        azureOpenAIApiVersion: '2023-05-15',
-        azureOpenAIApiKey: 'azure-key',
-      };
-
-      const result = getOpenAIConfig(mockApiKey, { azure });
-
-      expect(result.configOptions?.organization).toBe('test-org-123');
-
-      // Cleanup
-      if (originalOrg !== undefined) {
-        process.env.OPENAI_ORGANIZATION = originalOrg;
-      } else {
-        delete process.env.OPENAI_ORGANIZATION;
-      }
-    });
-  });
-
   describe('OpenRouter Configuration', () => {
     it('should detect OpenRouter from endpoint parameter', () => {
       const result = getOpenAIConfig(mockApiKey, {}, 'openrouter');
@@ -1351,8 +1107,8 @@ describe('getOpenAIConfig', () => {
         expect(result.llmConfig.presencePenalty).toBe(0.6);
         /** `presence_penalty` is converted to `presencePenalty` */
         expect(result.llmConfig.maxTokens).toBe(1000); // max_tokens is allowed
-        expect((result.llmConfig as Record<string, unknown>).custom_param).toBe('should-remain');
-        expect(result.llmConfig.modelKwargs).toBeUndefined();
+        /** Unrecognized params are routed to `modelKwargs` so they still reach the request body */
+        expect(result.llmConfig.modelKwargs).toMatchObject({ custom_param: 'should-remain' });
       });
     });
 
@@ -1408,28 +1164,6 @@ describe('getOpenAIConfig', () => {
   });
 
   describe('Complex Integration Scenarios', () => {
-    it('should handle Azure + OpenRouter combination (OpenRouter still detected)', () => {
-      const azure = {
-        azureOpenAIApiInstanceName: 'test-instance',
-        azureOpenAIApiDeploymentName: 'test-deployment',
-        azureOpenAIApiVersion: '2023-05-15',
-        azureOpenAIApiKey: 'azure-key',
-      };
-
-      const result = getOpenAIConfig(mockApiKey, {
-        azure,
-        reverseProxyUrl: 'https://openrouter.ai/api/v1',
-      });
-
-      // Azure config should be present
-      expect((result.llmConfig as Record<string, unknown>).azureOpenAIApiInstanceName).toBe(
-        'test-instance',
-      );
-      // But OpenRouter is still detected from URL
-      expect(result.provider).toBe('openrouter');
-      expect(result.llmConfig.include_reasoning).toBe(true);
-    });
-
     it('should handle all configuration options together', () => {
       const complexConfig = {
         modelOptions: {
@@ -1556,7 +1290,7 @@ describe('getOpenAIConfig', () => {
           model: modelName,
           temperature: 0.7,
           maxTokens: 2048,
-          // topP is converted from top_p in modelOptions
+          topP: 0.9, // converted from top_p in modelOptions
           frequencyPenalty: 0.1, // converted from frequency_penalty
           presencePenalty: 0.1, // converted from presence_penalty
           user: 'test-user-id',
@@ -1567,109 +1301,6 @@ describe('getOpenAIConfig', () => {
         expect(result.tools).toEqual([]);
       });
 
-      it('should handle Azure OpenAI configuration like initialize.js', () => {
-        // Simulate Azure configuration from mapModelToAzureConfig
-        const modelName = 'gpt-4-turbo';
-        const azureOptions = {
-          azureOpenAIApiKey: 'azure-key-123',
-          azureOpenAIApiInstanceName: 'prod-instance',
-          azureOpenAIApiDeploymentName: 'gpt-4-turbo-deployment',
-          azureOpenAIApiVersion: '2023-12-01-preview',
-        };
-        const baseURL = 'https://prod-instance.openai.azure.com';
-        const headers = {
-          'X-Custom-Header': 'azure-value',
-          Authorization: 'Bearer custom-token',
-        };
-
-        // Simulate clientOptions from Azure initialize.js
-        const clientOptions = {
-          contextStrategy: null,
-          proxy: null,
-          debug: false,
-          reverseProxyUrl: baseURL,
-          headers,
-          titleConvo: true,
-          titleModel: 'gpt-3.5-turbo',
-          streamRate: 30,
-          titleMethod: 'completion',
-          azure: azureOptions,
-          addParams: {
-            temperature: 0.8,
-            max_completion_tokens: 4000,
-          },
-          dropParams: ['frequency_penalty'],
-          modelOptions: {
-            model: modelName,
-            user: 'azure-user-123',
-            temperature: 0.7, // Should be overridden by addParams
-            frequency_penalty: 0.2, // Should be dropped
-          },
-        };
-
-        const result = getOpenAIConfig(mockApiKey, clientOptions);
-
-        expect(result.llmConfig).toMatchObject({
-          model: 'gpt-4-turbo-deployment', // Uses deployment name
-          temperature: 0.8, // From addParams
-          user: 'azure-user-123',
-          streaming: true,
-          azureOpenAIApiKey: 'azure-key-123',
-          azureOpenAIApiInstanceName: 'prod-instance',
-          azureOpenAIApiDeploymentName: 'gpt-4-turbo-deployment',
-          azureOpenAIApiVersion: '2023-12-01-preview',
-        });
-        expect((result.llmConfig as Record<string, unknown>).frequency_penalty).toBeUndefined(); // Dropped
-        expect(result.llmConfig.modelKwargs).toMatchObject({
-          max_completion_tokens: 4000,
-        });
-        expect(result.configOptions).toMatchObject({
-          baseURL: baseURL,
-          defaultHeaders: headers,
-        });
-      });
-
-      it('should handle Azure serverless configuration', () => {
-        const modelName = 'gpt-4';
-        const azureOptions = {
-          azureOpenAIApiKey: 'serverless-key',
-          azureOpenAIApiInstanceName: 'serverless-instance',
-          azureOpenAIApiDeploymentName: 'gpt-4-serverless',
-          azureOpenAIApiVersion: '2024-02-15-preview',
-        };
-
-        const clientOptions = {
-          reverseProxyUrl: 'https://serverless.openai.azure.com/openai/v1',
-          headers: {
-            'api-key': azureOptions.azureOpenAIApiKey,
-          },
-          defaultQuery: {
-            'api-version': azureOptions.azureOpenAIApiVersion,
-          },
-          azure: false as const, // Serverless doesn't use azure object
-          modelOptions: {
-            model: modelName,
-            user: 'serverless-user',
-          },
-        };
-
-        const result = getOpenAIConfig(azureOptions.azureOpenAIApiKey, clientOptions);
-
-        expect(result.llmConfig).toMatchObject({
-          model: modelName,
-          user: 'serverless-user',
-          apiKey: azureOptions.azureOpenAIApiKey,
-        });
-        expect(result.configOptions).toMatchObject({
-          baseURL: 'https://serverless.openai.azure.com/openai/v1',
-          defaultHeaders: {
-            'api-key': azureOptions.azureOpenAIApiKey,
-          },
-          defaultQuery: {
-            'api-version': azureOptions.azureOpenAIApiVersion,
-          },
-        });
-      });
     });
 
     describe('Custom Endpoint Initialize.js Simulation', () => {
@@ -1826,9 +1457,9 @@ describe('getOpenAIConfig', () => {
           promptCache: true,
         });
         expect(result.llmConfig.include_reasoning).toBeUndefined();
-        expect(result.llmConfig.verbosity).toBe(ReasoningEffort.high);
+        expect(result.llmConfig.verbosity).toBeUndefined();
         expect(result.llmConfig.modelKwargs).toMatchObject({
-          reasoning: { enabled: true },
+          reasoning: { effort: ReasoningEffort.high },
         });
         expect(result.configOptions?.baseURL).toBe(baseURL);
         expect(result.configOptions?.defaultHeaders).toMatchObject({
@@ -1839,107 +1470,6 @@ describe('getOpenAIConfig', () => {
       });
     });
 
-    describe('Production-like Azure Scenarios', () => {
-      it('should handle complex Azure multi-group configuration', () => {
-        // Simulate a production Azure setup with multiple groups
-        const modelName = 'gpt-4-turbo';
-        const azureConfig = {
-          azureOpenAIApiKey: 'prod-key-multi',
-          azureOpenAIApiInstanceName: 'prod-east-instance',
-          azureOpenAIApiDeploymentName: 'gpt-4-turbo-prod',
-          azureOpenAIApiVersion: '2024-02-15-preview',
-        };
-
-        const clientOptions = {
-          reverseProxyUrl: 'https://prod-east-instance.openai.azure.com',
-          headers: {
-            'X-Environment': 'production',
-            'X-Region': 'us-east-1',
-            'Content-Type': 'application/json',
-          },
-          azure: azureConfig,
-          addParams: {
-            temperature: 0.2, // Conservative for production
-            max_completion_tokens: 8192,
-            topP: 0.95, // Use camelCase for known param
-            frequencyPenalty: 0.0, // Use camelCase for known param
-            presencePenalty: 0.0, // Use camelCase for known param
-            seed: 12345, // For reproducibility
-          },
-          dropParams: [], // Don't drop any params in prod
-          modelOptions: {
-            model: modelName,
-            user: 'prod-user-session-abc123',
-            stream: true,
-          },
-        };
-
-        const result = getOpenAIConfig(mockApiKey, clientOptions);
-
-        expect(result.llmConfig).toMatchObject({
-          model: 'gpt-4-turbo-prod',
-          user: 'prod-user-session-abc123',
-          temperature: 0.2,
-          // Parameters from addParams are processed
-          seed: 12345,
-          stream: true,
-          azureOpenAIApiKey: 'prod-key-multi',
-          azureOpenAIApiInstanceName: 'prod-east-instance',
-          azureOpenAIApiDeploymentName: 'gpt-4-turbo-prod',
-          azureOpenAIApiVersion: '2024-02-15-preview',
-        });
-        // Check that camelCase conversions happened
-        expect(result.llmConfig.topP).toBe(0.95);
-        expect(result.llmConfig.frequencyPenalty).toBe(0.0);
-        expect(result.llmConfig.presencePenalty).toBe(0.0);
-        expect(result.llmConfig.modelKwargs).toMatchObject({
-          max_completion_tokens: 8192,
-        });
-        expect(result.configOptions?.baseURL).toBe('https://prod-east-instance.openai.azure.com');
-      });
-
-      it('should handle Azure with environment variable placeholders', () => {
-        const originalEnv = {
-          INSTANCE_NAME: process.env.INSTANCE_NAME,
-          DEPLOYMENT_NAME: process.env.DEPLOYMENT_NAME,
-          API_VERSION: process.env.API_VERSION,
-        };
-
-        // Set environment variables
-        process.env.INSTANCE_NAME = 'env-instance';
-        process.env.DEPLOYMENT_NAME = 'env-deployment';
-        process.env.API_VERSION = '2024-03-01-preview';
-
-        const clientOptions = {
-          reverseProxyUrl: 'https://${INSTANCE_NAME}.openai.azure.com/openai/v1',
-          azure: {
-            azureOpenAIApiKey: 'env-key',
-            azureOpenAIApiInstanceName: '${INSTANCE_NAME}',
-            azureOpenAIApiDeploymentName: '${DEPLOYMENT_NAME}',
-            azureOpenAIApiVersion: '${API_VERSION}',
-          },
-          modelOptions: {
-            model: 'gpt-4',
-            user: 'env-user',
-          },
-        };
-
-        const result = getOpenAIConfig(mockApiKey, clientOptions);
-
-        // The constructAzureURL should process placeholders (actual replacement depends on implementation)
-        expect((result.llmConfig as Record<string, unknown>).azureOpenAIBasePath).toBeDefined();
-        expect(result.llmConfig.model).toBe('${DEPLOYMENT_NAME}'); // Model becomes deployment name
-
-        // Cleanup
-        Object.entries(originalEnv).forEach(([key, value]) => {
-          if (value !== undefined) {
-            process.env[key] = value;
-          } else {
-            delete process.env[key];
-          }
-        });
-      });
-    });
 
     describe('Error Handling and Edge Cases from Real Usage', () => {
       it('should handle missing API key scenario', () => {
@@ -1950,20 +1480,6 @@ describe('getOpenAIConfig', () => {
         }).not.toThrow(); // The function itself doesn't validate empty keys
       });
 
-      it('should handle malformed Azure configuration gracefully', () => {
-        const clientOptions = {
-          azure: {
-            azureOpenAIApiKey: 'valid-key',
-            // Missing required fields
-          } as Partial<AzureOptions>,
-          modelOptions: {
-            model: 'gpt-4',
-          },
-        };
-
-        const result = getOpenAIConfig(mockApiKey, clientOptions);
-        expect(result.llmConfig).toBeDefined();
-      });
 
       it('should handle large parameter sets without performance issues', () => {
         const largeAddParams: Record<string, unknown> = {};

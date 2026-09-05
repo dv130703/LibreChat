@@ -4,14 +4,8 @@ const {
   createFallbackRetentionDate,
   createTempChatExpirationDate,
 } = require('@librechat/data-schemas');
-const {
-  EModelEndpoint,
-  Constants,
-  RetentionMode,
-  openAISettings,
-} = require('librechat-data-provider');
+const { EModelEndpoint, Constants, RetentionMode } = require('librechat-data-provider');
 const { bulkIncrementTagCounts, bulkSaveConvos, bulkSaveMessages } = require('~/models');
-const { FALLBACK_MODEL_BY_ENDPOINT } = require('./defaults');
 
 /**
  * Factory function for creating an instance of ImportBatchBuilder.
@@ -64,12 +58,12 @@ class ImportBatchBuilder {
 
   /**
    * Starts a new conversation in the batch.
-   * @param {string} [endpoint=EModelEndpoint.openAI] - The endpoint for the conversation. Defaults to EModelEndpoint.openAI.
+   * @param {string} [endpoint=EModelEndpoint.custom] - The endpoint for the conversation. Defaults to EModelEndpoint.custom.
    * @returns {void}
    */
   startConversation(endpoint) {
     // we are simplifying by using a single model for the entire conversation
-    this.endpoint = endpoint || EModelEndpoint.openAI;
+    this.endpoint = endpoint || EModelEndpoint.custom;
     this.conversationId = uuidv4();
     this.lastMessageId = Constants.NO_PARENT;
   }
@@ -96,7 +90,7 @@ class ImportBatchBuilder {
       text,
       sender,
       isCreatedByUser: false,
-      model: model || openAISettings.model.default,
+      model,
     });
     return message;
   }
@@ -112,8 +106,7 @@ class ImportBatchBuilder {
    * @returns {{ conversation: TConversation, messages: TMessage[] }} The resulting conversation and messages.
    */
   finishConversation(title, createdAt, originalConvo = {}, defaultModel) {
-    const fallbackModel =
-      defaultModel ?? FALLBACK_MODEL_BY_ENDPOINT[this.endpoint] ?? openAISettings.model.default;
+    const fallbackModel = defaultModel ?? '';
     const convo = {
       ...originalConvo,
       user: this.requestUserId,

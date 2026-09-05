@@ -1,5 +1,4 @@
 const accessPermissions = require('./accessPermissions');
-const assistants = require('./assistants');
 const categories = require('./categories');
 const adminAuth = require('./admin/auth');
 const adminConfig = require('./admin/config');
@@ -30,6 +29,7 @@ const roles = require('./roles');
 const oauth = require('./oauth');
 const files = require('./files');
 const transcribe = require('./transcribe');
+const transcribeStream = require('./transcribeStream');
 const transcriptCorrections = require('./transcriptCorrections');
 const blackBox = require('./blackBox');
 const share = require('./share');
@@ -60,6 +60,7 @@ module.exports = {
   oauth,
   files,
   transcribe,
+  transcribeStream,
   transcriptCorrections,
   blackBox,
   share,
@@ -78,7 +79,6 @@ module.exports = {
   messages,
   memories,
   endpoints,
-  assistants,
   categories,
   staticRoute,
   accessPermissions,

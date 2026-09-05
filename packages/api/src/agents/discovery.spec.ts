@@ -215,7 +215,7 @@ describe('discoverConnectedAgents', () => {
         primaryConfig,
         // Caller passes a non-agents endpoint (e.g. the OpenAI-compat
         // controllers do this — endpoint = primary provider)
-        endpointOption: { endpoint: EModelEndpoint.openAI, model_parameters: {} },
+        endpointOption: { endpoint: EModelEndpoint.custom, model_parameters: {} },
         allowedProviders: new Set(['openai']),
         modelsConfig: { openai: ['gpt-4o'] },
         loadTools: jest.fn(),

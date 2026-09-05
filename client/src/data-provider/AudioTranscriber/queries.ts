@@ -5,6 +5,7 @@ import type {
   TTranscribeConfig,
   TTranscriptCorrection,
   TTranscribeStatusResponse,
+  TTranscribeAudioTokenResponse,
 } from 'librechat-data-provider';
 
 /** Every correction event recorded against a transcript, chronological - the
@@ -50,6 +51,34 @@ export const useTranscribeStatusQuery = (
           : false,
       ...config,
       enabled: fileIds.length > 0 && (config?.enabled ?? true),
+    },
+  );
+};
+
+/** A ready-to-use, directly-streamable `<audio src>` URL for a source audio
+ *  file (transcription/ARCHITECTURE.md §12 #13) - replaces the old
+ *  `useFileDownload`-based approach (fetch the whole file into a `Blob`,
+ *  cache one object URL forever with `retry: false`) with a URL the browser
+ *  streams natively. Left at react-query's normal retry/backoff defaults
+ *  (unlike that old approach) specifically so a transient failure to mint
+ *  the token - the only thing that can fail here, since no file bytes move
+ *  through this request at all - recovers on its own instead of leaving the
+ *  player permanently blank for the rest of the session. `staleTime` sits
+ *  comfortably under the token's real 6-hour server-side expiry so an
+ *  unusually long-lived panel re-mints before the URL it's already using
+ *  would start failing, not after. */
+export const useTranscribeAudioTokenQuery = (
+  sourceFileId: string | undefined,
+  config?: UseQueryOptions<TTranscribeAudioTokenResponse>,
+): QueryObserverResult<TTranscribeAudioTokenResponse> => {
+  return useQuery<TTranscribeAudioTokenResponse>(
+    [QueryKeys.transcribeAudioToken, sourceFileId],
+    () => dataService.getTranscribeAudioToken(sourceFileId ?? ''),
+    {
+      staleTime: 5 * 60 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      ...config,
+      enabled: !!sourceFileId && (config?.enabled ?? true),
     },
   );
 };

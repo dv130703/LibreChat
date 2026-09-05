@@ -1,7 +1,10 @@
+const os = require('os');
+const path = require('path');
 const { nanoid } = require('nanoid');
 const { logger } = require('@librechat/data-schemas');
 const {
   Tools,
+  Constants,
   StepTypes,
   StepEvents,
   FileContext,
@@ -16,7 +19,9 @@ const {
 } = require('@librechat/agents');
 const {
   sendEvent,
+  diffOfficeFiles,
   computeUsageCostUSD,
+  snapshotOfficeFiles,
   GenerationJobManager,
   writeAttachmentEvent,
   createToolExecuteHandler,
@@ -28,6 +33,7 @@ const {
 } = require('@librechat/api');
 const { processFileCitations } = require('~/server/services/Files/Citations');
 const { processCodeOutput, runPreviewFinalize } = require('~/server/services/Files/Code/process');
+const { processOfficeCliOutput } = require('~/server/services/Files/Office/process');
 const { saveBase64Image } = require('~/server/services/Files/process');
 
 function isHostFileAuthoringArtifact(artifact) {
@@ -36,6 +42,82 @@ function isHostFileAuthoringArtifact(artifact) {
 
 function isCodeArtifactToolOutput(output) {
   return isCodeSessionToolName(output.name) || isHostFileAuthoringArtifact(output.artifact);
+}
+
+/** MCP server key registered for OfficeCLI in `librechat.yaml` (`mcpServers.officecli`). */
+const OFFICECLI_MCP_SERVER_NAME = 'officecli';
+const OFFICECLI_TOOL_SUFFIX = `${Constants.mcp_delimiter}${OFFICECLI_MCP_SERVER_NAME}`;
+
+function isOfficeCliToolOutput(output) {
+  return typeof output.name === 'string' && output.name.endsWith(OFFICECLI_TOOL_SUFFIX);
+}
+
+function getOfficeCliWorkspaceDir(userId) {
+  /* MUST match the default in config/officecli/mcp-wrapper.sh — that script
+   * is spawned as this process's child and inherits OFFICECLI_WORKSPACE_ROOT
+   * from this process's environment when it's set, but the two hardcoded
+   * defaults below and in the wrapper have to agree independently for the
+   * unset case (local dev). */
+  const root =
+    process.env.OFFICECLI_WORKSPACE_ROOT || path.join(os.homedir(), '.local/share/officecli/users');
+  return path.join(root, userId);
+}
+
+/**
+ * Per-workspace mtime snapshots, kept in memory for the life of this server
+ * process. OfficeCLI's MCP tool responses are a generic `{success, data}`
+ * envelope with no documented, reliable "output file path" field (see
+ * `packages/api/src/files/office/detect.ts`), so file detection compares the
+ * workspace directory listing before/after each tool call instead of
+ * trusting the response body. Keying the cache off this hook (rather than a
+ * separate tool-start callback) means the "before" state for call N is
+ * simply whatever call N-1 left behind — correct as long as nothing else
+ * writes into the same per-user workspace directory concurrently.
+ */
+const officeCliSnapshots = new Map();
+
+/**
+ * Detects OfficeCLI output files for a resolved tool call via mtime-diff,
+ * persists each one through `processOfficeCliOutput`, and returns the
+ * resulting `{ file, finalize }` records (already-attempted persists that
+ * failed are filtered out). Shared between the chat-completions and Open
+ * Responses tool-end callbacks so both surfaces attach OfficeCLI output the
+ * same way the code-interpreter path already does for its own files.
+ *
+ * @param {object} params
+ * @param {ServerRequest} params.req
+ * @param {object} params.output - `data.output` from the tool-end event.
+ * @param {Record<string, unknown>} params.metadata - `thread_id`/`run_id` from the tool-end event.
+ * @returns {Promise<Array<{ file: object, finalize?: () => Promise<object|null> }>>}
+ */
+async function collectOfficeCliArtifacts({ req, output, metadata }) {
+  const workspaceDir = getOfficeCliWorkspaceDir(req.user.id);
+  const before = officeCliSnapshots.get(workspaceDir) ?? new Map();
+  const after = await snapshotOfficeFiles(workspaceDir);
+  officeCliSnapshots.set(workspaceDir, after);
+
+  const changedFiles = diffOfficeFiles(before, after);
+  if (!changedFiles.length) {
+    return [];
+  }
+
+  const results = await Promise.all(
+    changedFiles.map((fileName) =>
+      processOfficeCliOutput({
+        req,
+        workspaceDir,
+        fileName,
+        toolCallId: output.tool_call_id,
+        conversationId: metadata.thread_id,
+        messageId: metadata.run_id,
+      }).catch((error) => {
+        logger.error(`[collectOfficeCliArtifacts] Failed to process "${fileName}":`, error);
+        return null;
+      }),
+    ),
+  );
+
+  return results.filter(Boolean);
 }
 
 class ModelEndHandler {
@@ -726,6 +808,47 @@ function createToolEndCallback({ req, res, artifactPromises, streamId = null }) 
       return;
     }
 
+    if (isOfficeCliToolOutput(output)) {
+      /* Most OfficeCLI commands (create/add/set/batch/validate/...) return a
+       * plain text envelope, so `output.artifact` is undefined for those and
+       * there's nothing for the generic `output.artifact`-keyed branches
+       * below to do. But `view <file> screenshot` — part of OfficeCLI's own
+       * built-in "visual audit" workflow — returns a real `image` content
+       * block, which DOES populate `output.artifact.content` with an
+       * `image_url` (see `formatToolContent` in
+       * `packages/api/src/mcp/parsers.ts`). Deliberately NOT returning after
+       * this block: mtime-diff file detection runs unconditionally here,
+       * then falls through to the generic `output.artifact.content` handling
+       * below so screenshots are attached the same way any other MCP tool's
+       * inline image would be, instead of being silently dropped. */
+      artifactPromises.push(
+        (async () => {
+          const artifacts = await collectOfficeCliArtifacts({ req, output, metadata });
+          for (const { file: fileMetadata, finalize } of artifacts) {
+            if (isStreamWritable(res, streamId)) {
+              writeAttachment(res, streamId, fileMetadata);
+            }
+            runPreviewFinalize({
+              finalize,
+              fileId: fileMetadata.file_id,
+              previewRevision: fileMetadata.previewRevision,
+              onResolved: (updated) => {
+                writeAttachmentUpdate(res, streamId, {
+                  ...updated,
+                  messageId: metadata.run_id,
+                  toolCallId: output.tool_call_id,
+                });
+              },
+            });
+          }
+          return artifacts.map((a) => a.file);
+        })().catch((error) => {
+          logger.error('Error processing OfficeCLI tool output:', error);
+          return null;
+        }),
+      );
+    }
+
     if (!output.artifact) {
       return;
     }
@@ -1058,6 +1181,51 @@ function createResponsesToolEndCallback({ req, res, tracker, artifactPromises })
     const output = data?.output;
     if (!output) {
       return;
+    }
+
+    if (isOfficeCliToolOutput(output)) {
+      /* See the identical branch in `createToolEndCallback` above: most
+       * OfficeCLI commands never populate `output.artifact`, but
+       * `view <file> screenshot` does (a real `image` content block), so
+       * this must run before the generic `output.artifact`-keyed branches
+       * below, WITHOUT returning early — screenshots fall through to the
+       * generic image-attachment handling instead of being dropped. */
+      artifactPromises.push(
+        (async () => {
+          const artifacts = await collectOfficeCliArtifacts({ req, output, metadata });
+          for (const { file: fileMetadata, finalize } of artifacts) {
+            const toolCallId = output.tool_call_id;
+            if (res.headersSent && !res.writableEnded) {
+              writeResponsesAttachment(
+                res,
+                tracker,
+                buildResponsesAttachment(fileMetadata, toolCallId),
+                metadata,
+              );
+            }
+            runPreviewFinalize({
+              finalize,
+              fileId: fileMetadata.file_id,
+              previewRevision: fileMetadata.previewRevision,
+              onResolved: (updated) => {
+                if (!isStreamWritable(res, null)) {
+                  return;
+                }
+                writeResponsesAttachment(
+                  res,
+                  tracker,
+                  buildResponsesAttachment(updated, toolCallId),
+                  metadata,
+                );
+              },
+            });
+          }
+          return artifacts.map((a) => a.file);
+        })().catch((error) => {
+          logger.error('Error processing OfficeCLI tool output:', error);
+          return null;
+        }),
+      );
     }
 
     if (!output.artifact) {

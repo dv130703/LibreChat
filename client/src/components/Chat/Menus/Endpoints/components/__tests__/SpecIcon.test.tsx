@@ -43,14 +43,14 @@ describe('SpecIcon', () => {
     const currentSpec = {
       name: 'gemini-test',
       label: 'Gemini Test',
-      iconURL: EModelEndpoint.google,
+      iconURL: 'google',
     } as TModelSpec;
 
     render(<SpecIcon currentSpec={currentSpec} endpointsConfig={endpointsConfig} />);
 
     expect(screen.getByTestId('endpoint-icon')).toHaveAttribute(
       'data-icon-key',
-      EModelEndpoint.google,
+      'google',
     );
     expect(screen.getByTestId('endpoint-icon')).toHaveAttribute('data-endpoint', '');
   });
@@ -61,7 +61,7 @@ describe('SpecIcon', () => {
       label: 'ClickHouse Test',
       iconURL: '/assets/clickhouse-logo.svg',
       preset: {
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
       },
     } as TModelSpec;
 
@@ -73,7 +73,7 @@ describe('SpecIcon', () => {
     );
     expect(screen.getByTestId('url-icon')).toHaveAttribute(
       'data-endpoint',
-      EModelEndpoint.anthropic,
+      'anthropic',
     );
   });
 

@@ -24,15 +24,7 @@ export default function useGenerationsByLatest({
   isCreatedByUser = false,
 }: TUseGenerations) {
   const isEditableEndpoint = Boolean(
-    [
-      EModelEndpoint.openAI,
-      EModelEndpoint.custom,
-      EModelEndpoint.google,
-      EModelEndpoint.agents,
-      EModelEndpoint.bedrock,
-      EModelEndpoint.anthropic,
-      EModelEndpoint.azureOpenAI,
-    ].find((e) => e === endpoint),
+    [EModelEndpoint.custom, EModelEndpoint.agents].find((e) => e === endpoint),
   );
 
   const continueSupported =
@@ -44,15 +36,7 @@ export default function useGenerationsByLatest({
     isEditableEndpoint;
 
   const branchingSupported = Boolean(
-    [
-      EModelEndpoint.azureOpenAI,
-      EModelEndpoint.openAI,
-      EModelEndpoint.custom,
-      EModelEndpoint.agents,
-      EModelEndpoint.bedrock,
-      EModelEndpoint.google,
-      EModelEndpoint.anthropic,
-    ].find((e) => e === endpoint),
+    [EModelEndpoint.custom, EModelEndpoint.agents].find((e) => e === endpoint),
   );
 
   const regenerateEnabled =

@@ -1,19 +1,11 @@
 import axios from 'axios';
 import crypto from 'crypto';
-import { logger } from '@librechat/data-schemas';
-import {
-  Time,
-  CacheKeys,
-  KnownEndpoints,
-  EModelEndpoint,
-  defaultModels,
-} from 'librechat-data-provider';
+import { Time, CacheKeys, KnownEndpoints } from 'librechat-data-provider';
 import type { IUser } from '@librechat/data-schemas';
 import type { AxiosRequestConfig } from 'axios';
 import {
   processModelData,
   extractBaseURL,
-  isUserProvided,
   resolveHeaders,
   deriveBaseURL,
   logAxiosError,
@@ -156,7 +148,7 @@ export async function fetchModels({
   baseURL: _baseURL,
   baseURLIsUserProvided = false,
   allowedAddresses,
-  name = EModelEndpoint.openAI,
+  name = 'custom',
   direct = false,
   azure = false,
   userIdQuery = false,
@@ -252,25 +244,15 @@ export async function fetchModels({
       timeout: 5000,
     };
 
-    if (name === EModelEndpoint.anthropic) {
-      // Keep configured custom headers (e.g. gateway metadata) while the
-      // provider-managed auth/version headers stay authoritative.
-      options.headers = {
-        ...resolvedHeaders,
-        'x-api-key': apiKey,
-        'anthropic-version': process.env.ANTHROPIC_VERSION || '2023-06-01',
-      };
-    } else {
-      // Only fall back to the apiKey-based Bearer when the configured
-      // headers did not already supply an Authorization. This lets
-      // auth-aware proxies (e.g. LiteLLM with JWT auth) receive the user's
-      // token on /v1/models so they can return a per-user filtered list.
-      const hasAuthHeader = Object.keys(options.headers).some(
-        (k) => k.toLowerCase() === 'authorization',
-      );
-      if (!hasAuthHeader) {
-        options.headers.Authorization = `Bearer ${apiKey}`;
-      }
+    // Only fall back to the apiKey-based Bearer when the configured
+    // headers did not already supply an Authorization. This lets
+    // auth-aware proxies (e.g. LiteLLM with JWT auth) receive the user's
+    // token on /v1/models so they can return a per-user filtered list.
+    const hasAuthHeader = Object.keys(options.headers).some(
+      (k) => k.toLowerCase() === 'authorization',
+    );
+    if (!hasAuthHeader) {
+      options.headers.Authorization = `Bearer ${apiKey}`;
     }
 
     if (process.env.OPENAI_ORGANIZATION && baseURL?.includes('openai')) {
@@ -311,224 +293,4 @@ export async function fetchModels({
 
 function modelsCacheKey(baseURL: string, apiKey: string): string {
   return crypto.createHash('sha256').update(`${baseURL}:${apiKey}`).digest('hex').slice(0, 32);
-}
-
-/** Options for fetching OpenAI models */
-export interface GetOpenAIModelsOptions {
-  /** User ID for API requests */
-  user?: string;
-  /** Whether to fetch from Azure */
-  azure?: boolean;
-  /** Whether to fetch models for the Assistants endpoint */
-  assistants?: boolean;
-  /** OpenAI API key (if not using environment variable) */
-  openAIApiKey?: string;
-  /** Skip MODEL_QUERIES cache (e.g., for user-provided keys) */
-  skipCache?: boolean;
-  /** Configured custom headers forwarded to the (gateway-fronted) provider */
-  headers?: Record<string, string> | null;
-  /** User object for resolving header placeholders */
-  userObject?: Partial<IUser>;
-}
-
-function resolveOpenAIApiKey(opts: GetOpenAIModelsOptions): string | undefined {
-  return opts.openAIApiKey || process.env.OPENAI_API_KEY;
-}
-
-/**
- * Fetches models from OpenAI or Azure based on the provided options.
- * @param opts - Options for fetching models
- * @param _models - Fallback models array
- * @returns Promise resolving to array of model IDs
- */
-export async function fetchOpenAIModels(
-  opts: GetOpenAIModelsOptions,
-  _models: string[] = [],
-): Promise<string[]> {
-  let models = _models.slice() ?? [];
-  const apiKey = resolveOpenAIApiKey(opts);
-  const openaiBaseURL = 'https://api.openai.com/v1';
-  let baseURL = openaiBaseURL;
-  let reverseProxyUrl = process.env.OPENAI_REVERSE_PROXY;
-
-  if (opts.assistants && process.env.ASSISTANTS_BASE_URL) {
-    reverseProxyUrl = process.env.ASSISTANTS_BASE_URL;
-  } else if (opts.azure) {
-    return models;
-  }
-
-  if (reverseProxyUrl) {
-    baseURL = extractBaseURL(reverseProxyUrl) ?? openaiBaseURL;
-  }
-
-  if (baseURL || opts.azure) {
-    models = await fetchModels({
-      apiKey: apiKey ?? '',
-      baseURL,
-      azure: opts.azure,
-      user: opts.user,
-      name: EModelEndpoint.openAI,
-      skipCache: opts.skipCache,
-      headers: opts.headers,
-      userObject: opts.userObject,
-    });
-  }
-
-  if (models.length === 0) {
-    return _models;
-  }
-
-  if (baseURL === openaiBaseURL) {
-    const regex = /(text-davinci-003|gpt-|o\d+|chat-latest)/;
-    const excludeRegex = /audio|realtime/;
-    models = models.filter((model) => regex.test(model) && !excludeRegex.test(model));
-    const instructModels = models.filter((model) => model.includes('instruct'));
-    const otherModels = models.filter((model) => !model.includes('instruct'));
-    models = otherModels.concat(instructModels);
-  }
-
-  return models;
-}
-
-/**
- * Loads the default models for OpenAI or Azure.
- * @param opts - Options for getting models
- * @returns Promise resolving to array of model IDs
- */
-export async function getOpenAIModels(opts: GetOpenAIModelsOptions = {}): Promise<string[]> {
-  let models = defaultModels[EModelEndpoint.openAI];
-
-  if (opts.assistants) {
-    models = defaultModels[EModelEndpoint.assistants];
-  } else if (opts.azure) {
-    models = defaultModels[EModelEndpoint.azureAssistants];
-  }
-
-  let key: string;
-  if (opts.assistants) {
-    key = 'ASSISTANTS_MODELS';
-  } else if (opts.azure) {
-    key = 'AZURE_OPENAI_MODELS';
-  } else {
-    key = 'OPENAI_MODELS';
-  }
-
-  if (process.env[key]) {
-    return splitAndTrim(process.env[key]);
-  }
-
-  if (isUserProvided(resolveOpenAIApiKey(opts))) {
-    return models;
-  }
-
-  return await fetchOpenAIModels(opts, models);
-}
-
-/**
- * Fetches models from the Anthropic API.
- * @param opts - Options for fetching models
- * @param _models - Fallback models array
- * @returns Promise resolving to array of model IDs
- */
-export async function fetchAnthropicModels(
-  opts: {
-    user?: string;
-    skipCache?: boolean;
-    headers?: Record<string, string> | null;
-    userObject?: Partial<IUser>;
-  } = {},
-  _models: string[] = [],
-): Promise<string[]> {
-  let models = _models.slice() ?? [];
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  const anthropicBaseURL = 'https://api.anthropic.com/v1';
-  let baseURL = anthropicBaseURL;
-  const reverseProxyUrl = process.env.ANTHROPIC_REVERSE_PROXY;
-
-  if (reverseProxyUrl) {
-    baseURL = extractBaseURL(reverseProxyUrl) ?? anthropicBaseURL;
-  }
-
-  if (!apiKey) {
-    return models;
-  }
-
-  if (baseURL) {
-    models = await fetchModels({
-      apiKey,
-      baseURL,
-      user: opts.user,
-      name: EModelEndpoint.anthropic,
-      tokenKey: EModelEndpoint.anthropic,
-      skipCache: opts.skipCache,
-      headers: opts.headers,
-      userObject: opts.userObject,
-    });
-  }
-
-  if (models.length === 0) {
-    return _models;
-  }
-
-  return models;
-}
-
-/**
- * Gets Anthropic models from environment or API.
- * @param opts - Options for fetching models
- * @returns Promise resolving to array of model IDs
- */
-export async function getAnthropicModels(
-  opts: {
-    user?: string;
-    vertexModels?: string[];
-    headers?: Record<string, string> | null;
-    userObject?: Partial<IUser>;
-  } = {},
-): Promise<string[]> {
-  const models = defaultModels[EModelEndpoint.anthropic];
-
-  // Vertex AI models from YAML config take priority
-  if (opts.vertexModels && opts.vertexModels.length > 0) {
-    return opts.vertexModels;
-  }
-
-  if (process.env.ANTHROPIC_MODELS) {
-    return splitAndTrim(process.env.ANTHROPIC_MODELS);
-  }
-
-  if (isUserProvided(process.env.ANTHROPIC_API_KEY)) {
-    return models;
-  }
-
-  try {
-    return await fetchAnthropicModels(opts, models);
-  } catch (error) {
-    logger.error('Error fetching Anthropic models:', error);
-    return models;
-  }
-}
-
-/**
- * Gets Google models from environment or defaults.
- * @returns Array of model IDs
- */
-export function getGoogleModels(): string[] {
-  let models = defaultModels[EModelEndpoint.google];
-  if (process.env.GOOGLE_MODELS) {
-    models = splitAndTrim(process.env.GOOGLE_MODELS);
-  }
-  return models;
-}
-
-/**
- * Gets Bedrock models from environment or defaults.
- * @returns Array of model IDs
- */
-export function getBedrockModels(): string[] {
-  let models = defaultModels[EModelEndpoint.bedrock];
-  if (process.env.BEDROCK_AWS_MODELS) {
-    models = splitAndTrim(process.env.BEDROCK_AWS_MODELS);
-  }
-  return models;
 }

@@ -2,14 +2,14 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { RecoilRoot } from 'recoil';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { EModelEndpoint, mergeFileConfig } from 'librechat-data-provider';
+import { EModelEndpoint, Providers, mergeFileConfig } from 'librechat-data-provider';
 import type { TEndpointsConfig, Agent } from 'librechat-data-provider';
 import AttachFileChat from '../AttachFileChat';
 
 const mockEndpointsConfig: TEndpointsConfig = {
-  [EModelEndpoint.openAI]: { userProvide: false, order: 0 },
+  [EModelEndpoint.custom]: { userProvide: false, order: 0 },
   [EModelEndpoint.agents]: { userProvide: false, order: 1 },
-  [EModelEndpoint.assistants]: { userProvide: false, order: 2 },
+  ['assistants']: { userProvide: false, order: 2 },
   Moonshot: { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
 };
 
@@ -107,10 +107,10 @@ describe('AttachFileChat', () => {
 
     it('passes openAI endpointType when agent provider is openAI', () => {
       mockAgentsMap = {
-        'agent-1': { provider: EModelEndpoint.openAI, model_parameters: {} } as Partial<Agent>,
+        'agent-1': { provider: EModelEndpoint.custom, model_parameters: {} } as Partial<Agent>,
       };
       renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
-      expect(mockAttachFileMenuProps.endpointType).toBe(EModelEndpoint.openAI);
+      expect(mockAttachFileMenuProps.endpointType).toBe(EModelEndpoint.custom);
     });
 
     it('passes agents endpointType when no agent provider', () => {
@@ -131,47 +131,11 @@ describe('AttachFileChat', () => {
 
     it('falls back to agentsMap provider when fetched agent omits provider', () => {
       mockAgentsMap = {
-        'agent-1': { provider: EModelEndpoint.openAI, model_parameters: {} } as Partial<Agent>,
+        'agent-1': { provider: EModelEndpoint.custom, model_parameters: {} } as Partial<Agent>,
       };
       mockAgentQueryData = {} as Partial<Agent>;
       renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
-      expect(mockAttachFileMenuProps.endpointType).toBe(EModelEndpoint.openAI);
-    });
-  });
-
-  describe('useResponsesApi resolution for agents', () => {
-    it('passes useResponsesApi from fetched agent model parameters', () => {
-      mockAgentQueryData = {
-        provider: EModelEndpoint.azureOpenAI,
-        model_parameters: { useResponsesApi: true },
-      } as Partial<Agent>;
-      renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
-      expect(mockAttachFileMenuProps.useResponsesApi).toBe(true);
-    });
-
-    it('falls back to agentsMap model parameters when fetched agent omits them', () => {
-      mockAgentsMap = {
-        'agent-1': {
-          provider: EModelEndpoint.azureOpenAI,
-          model_parameters: { useResponsesApi: true },
-        } as Partial<Agent>,
-      };
-      mockAgentQueryData = { provider: EModelEndpoint.azureOpenAI } as Partial<Agent>;
-      renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
-      expect(mockAttachFileMenuProps.useResponsesApi).toBe(true);
-    });
-
-    it('preserves an explicit conversation useResponsesApi false override', () => {
-      mockAgentQueryData = {
-        provider: EModelEndpoint.azureOpenAI,
-        model_parameters: { useResponsesApi: true },
-      } as Partial<Agent>;
-      renderComponent({
-        endpoint: EModelEndpoint.agents,
-        agent_id: 'agent-1',
-        useResponsesApi: false,
-      });
-      expect(mockAttachFileMenuProps.useResponsesApi).toBe(false);
+      expect(mockAttachFileMenuProps.endpointType).toBe(EModelEndpoint.custom);
     });
   });
 
@@ -182,8 +146,8 @@ describe('AttachFileChat', () => {
     });
 
     it('passes openAI endpointType for openAI endpoint', () => {
-      renderComponent({ endpoint: EModelEndpoint.openAI });
-      expect(mockAttachFileMenuProps.endpointType).toBe(EModelEndpoint.openAI);
+      renderComponent({ endpoint: EModelEndpoint.custom });
+      expect(mockAttachFileMenuProps.endpointType).toBe(EModelEndpoint.custom);
     });
   });
 
@@ -224,11 +188,6 @@ describe('AttachFileChat', () => {
       expect(container.innerHTML).toBe('');
     });
 
-    it('renders AttachFile for assistants endpoint when not disabled', () => {
-      renderComponent({ endpoint: EModelEndpoint.assistants });
-      expect(screen.getByTestId('attach-file')).toBeInTheDocument();
-    });
-
     it('renders AttachFileMenu when provider-specific config overrides agents disabled', () => {
       mockFileConfig = mergeFileConfig({
         endpoints: {
@@ -246,11 +205,11 @@ describe('AttachFileChat', () => {
     it('renders null for assistants endpoint when fileConfig.assistants.disabled is true', () => {
       mockFileConfig = mergeFileConfig({
         endpoints: {
-          [EModelEndpoint.assistants]: { disabled: true },
+          ['assistants']: { disabled: true },
         },
       });
       const { container } = renderComponent({
-        endpoint: EModelEndpoint.assistants,
+        endpoint: 'assistants',
       });
       expect(container.innerHTML).toBe('');
     });
@@ -268,7 +227,7 @@ describe('AttachFileChat', () => {
 
     it('passes agents file config when agent has no specific provider config', () => {
       mockAgentsMap = {
-        'agent-1': { provider: EModelEndpoint.openAI, model_parameters: {} } as Partial<Agent>,
+        'agent-1': { provider: Providers.OPENAI, model_parameters: {} } as Partial<Agent>,
       };
       renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
       const config = mockAttachFileMenuProps.endpointFileConfig as { fileLimit?: number };

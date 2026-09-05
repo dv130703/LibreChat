@@ -1457,4 +1457,5 @@ module.exports = {
   readSandboxImage,
   writeSandboxFile,
   runPreviewFinalize,
+  finalizePreview,
 };

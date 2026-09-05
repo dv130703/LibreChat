@@ -67,13 +67,6 @@ export type BadgeItem = {
   isAvailable: boolean;
 };
 
-export type AssistantListItem = {
-  id: string;
-  name: string;
-  metadata: t.Assistant['metadata'];
-  model: string;
-};
-
 export type AgentListItem = {
   id: string;
   name: string;
@@ -173,20 +166,6 @@ export type ActionAuthForm = {
 
 export type ActionWithNullableMetadata = Omit<t.Action, 'metadata'> & {
   metadata: t.ActionMetadata | null;
-};
-
-export type AssistantPanelProps = {
-  index?: number;
-  action?: ActionWithNullableMetadata;
-  actions?: t.Action[];
-  assistant_id?: string;
-  activePanel?: string;
-  endpoint: t.AssistantsEndpoint;
-  version: number | string;
-  documentsMap: Map<string, t.AssistantDocument> | null;
-  setAction: React.Dispatch<React.SetStateAction<t.Action | undefined>>;
-  setCurrentAssistantId: React.Dispatch<React.SetStateAction<string | undefined>>;
-  setActivePanel: React.Dispatch<React.SetStateAction<Panel>>;
 };
 
 export type AgentPanelProps = {

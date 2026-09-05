@@ -337,47 +337,21 @@ export const listAssistants = (
   );
 };
 
-export function getAssistantDocs({
-  endpoint,
-  version,
-}: {
+/** @deprecated Assistants API (OpenAI/Azure) support was removed. */
+export function getAssistantDocs(_params: {
   endpoint: s.AssistantsEndpoint | string;
   version: number | string;
 }): Promise<a.AssistantDocument[]> {
-  if (!s.isAssistantsEndpoint(endpoint)) {
-    return Promise.resolve([]);
-  }
-  return request.get(
-    endpoints.assistants({
-      path: 'documents',
-      version,
-      options: { endpoint },
-      endpoint: endpoint as s.AssistantsEndpoint,
-    }),
-  );
+  return Promise.resolve([]);
 }
 
 /* Tools */
 
 export const getAvailableTools = (
   _endpoint: s.AssistantsEndpoint | s.EModelEndpoint.agents,
-  version?: number | string,
+  _version?: number | string,
 ): Promise<s.TPlugin[]> => {
-  let path = '';
-  if (s.isAssistantsEndpoint(_endpoint)) {
-    const endpoint = _endpoint as s.AssistantsEndpoint;
-    path = endpoints.assistants({
-      path: 'tools',
-      endpoint: endpoint,
-      version: version ?? config.defaultAssistantsVersion[endpoint],
-    });
-  } else {
-    path = endpoints.agents({
-      path: 'tools',
-    });
-  }
-
-  return request.get(path);
+  return request.get(endpoints.agents({ path: 'tools' }));
 };
 
 /* MCP Tools - Decoupled from regular tools */
@@ -526,6 +500,14 @@ export const getTranscribeStatus = (fileIds: string[]): Promise<f.TTranscribeSta
  *  valid when the job's current status is `'failed'`. */
 export const retryTranscription = (sourceFileId: string): Promise<f.TTranscribeQueuedResponse> => {
   return request.post(endpoints.retryTranscription(sourceFileId), {});
+};
+
+/** Mints a short-lived, ready-to-use `<audio src>` URL for a source audio
+ *  file - see `transcribeStream.js` and `TTranscribeAudioTokenResponse`. */
+export const getTranscribeAudioToken = (
+  sourceFileId: string,
+): Promise<f.TTranscribeAudioTokenResponse> => {
+  return request.get(endpoints.transcribeAudioToken(sourceFileId));
 };
 
 /** This deployment's effective transcription defaults - see

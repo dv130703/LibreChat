@@ -7,7 +7,6 @@ import { encodeAndFormatDocuments } from './document';
 /** Mock the validation module */
 jest.mock('~/files/validation', () => ({
   validatePdf: jest.fn(),
-  validateBedrockDocument: jest.fn(),
 }));
 
 /** Mock the utils module */
@@ -16,14 +15,11 @@ jest.mock('./utils', () => ({
   getConfiguredFileSizeLimit: jest.fn(),
 }));
 
-import { validatePdf, validateBedrockDocument } from '~/files/validation';
+import { validatePdf } from '~/files/validation';
 import { getFileStream, getConfiguredFileSizeLimit } from './utils';
 import { Types } from 'mongoose';
 
 const mockedValidatePdf = validatePdf as jest.MockedFunction<typeof validatePdf>;
-const mockedValidateBedrockDocument = validateBedrockDocument as jest.MockedFunction<
-  typeof validateBedrockDocument
->;
 const mockedGetFileStream = getFileStream as jest.MockedFunction<typeof getFileStream>;
 const mockedGetConfiguredFileSizeLimit = getConfiguredFileSizeLimit as jest.MockedFunction<
   typeof getConfiguredFileSizeLimit
@@ -134,7 +130,6 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         expect.any(Number),
         Providers.OPENAI,
         configuredLimit,
-        undefined,
       );
     });
 
@@ -162,7 +157,6 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         expect.any(Buffer),
         expect.any(Number),
         Providers.OPENAI,
-        undefined,
         undefined,
       );
     });
@@ -197,87 +191,6 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         expect.any(Number),
         Providers.OPENAI,
         undefined,
-        undefined,
-      );
-    });
-
-    it('should use endpoint-specific config for Anthropic', async () => {
-      const configuredLimit = mbToBytes(20);
-      const req = {
-        config: {
-          fileConfig: {
-            endpoints: {
-              [Providers.ANTHROPIC]: {
-                fileSizeLimit: 20,
-              },
-            },
-          },
-        },
-      } as unknown as ServerRequest;
-      const file = createMockFile(15);
-
-      const mockContent = Buffer.from('test-pdf-content').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      mockedValidatePdf.mockResolvedValue({ isValid: true });
-
-      await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.ANTHROPIC },
-        mockStrategyFunctions,
-      );
-
-      expect(mockedValidatePdf).toHaveBeenCalledWith(
-        expect.any(Buffer),
-        expect.any(Number),
-        Providers.ANTHROPIC,
-        configuredLimit,
-        undefined,
-      );
-    });
-
-    it('should use endpoint-specific config for Google', async () => {
-      const configuredLimit = mbToBytes(25);
-      const req = {
-        config: {
-          fileConfig: {
-            endpoints: {
-              [Providers.GOOGLE]: {
-                fileSizeLimit: 25,
-              },
-            },
-          },
-        },
-      } as unknown as ServerRequest;
-      const file = createMockFile(18);
-
-      const mockContent = Buffer.from('test-pdf-content').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      mockedValidatePdf.mockResolvedValue({ isValid: true });
-
-      await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.GOOGLE },
-        mockStrategyFunctions,
-      );
-
-      expect(mockedValidatePdf).toHaveBeenCalledWith(
-        expect.any(Buffer),
-        expect.any(Number),
-        Providers.GOOGLE,
-        configuredLimit,
-        undefined,
       );
     });
 
@@ -286,7 +199,7 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         config: {
           fileConfig: {
             endpoints: {
-              /** Only configure a different provider, not OpenAI */
+              /** Only configure a different provider */
               [Providers.ANTHROPIC]: {
                 fileSizeLimit: 25,
               },
@@ -317,7 +230,6 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         expect.any(Buffer),
         expect.any(Number),
         Providers.OPENAI,
-        undefined,
         undefined,
       );
     });
@@ -412,7 +324,6 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         expect.any(Number),
         Providers.OPENAI,
         mbToBytes(5),
-        undefined,
       );
     });
 
@@ -447,7 +358,6 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         expect.any(Number),
         Providers.OPENAI,
         mbToBytes(50),
-        undefined,
       );
     });
 
@@ -487,7 +397,6 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         expect.any(Number),
         Providers.OPENAI,
         mbToBytes(10),
-        undefined,
       );
       expect(mockedValidatePdf).toHaveBeenNthCalledWith(
         2,
@@ -495,233 +404,11 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         expect.any(Number),
         Providers.OPENAI,
         mbToBytes(10),
-        undefined,
       );
     });
   });
 
   describe('Document formatting after validation', () => {
-    it('should format Anthropic document with valid PDF', async () => {
-      const req = createMockRequest(30) as ServerRequest;
-      const file = createMockFile(20);
-
-      const mockContent = Buffer.from('test-pdf-content').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      mockedValidatePdf.mockResolvedValue({ isValid: true });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.ANTHROPIC },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0]).toMatchObject({
-        type: 'document',
-        source: {
-          type: 'base64',
-          media_type: 'application/pdf',
-          data: mockContent,
-        },
-        citations: { enabled: true },
-      });
-    });
-
-    it('should format Bedrock document with valid PDF', async () => {
-      const req = createMockRequest() as ServerRequest;
-      const file = createMockFile(3);
-
-      const mockContent = Buffer.from('test-pdf-content').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      mockedValidateBedrockDocument.mockResolvedValue({ isValid: true });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.BEDROCK },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0]).toMatchObject({
-        type: 'document',
-        document: {
-          name: 'test_pdf',
-          format: 'pdf',
-          source: {
-            bytes: expect.any(Buffer),
-          },
-        },
-      });
-    });
-
-    it('should format Bedrock CSV document', async () => {
-      const req = createMockRequest() as ServerRequest;
-      const file = createMockDocFile(1, 'text/csv', 'data.csv');
-
-      const mockContent = Buffer.from('col1,col2\nval1,val2').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      mockedValidateBedrockDocument.mockResolvedValue({ isValid: true });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.BEDROCK },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0]).toMatchObject({
-        type: 'document',
-        document: {
-          name: 'data_csv',
-          format: 'csv',
-          source: {
-            bytes: expect.any(Buffer),
-          },
-        },
-      });
-    });
-
-    it('should format Bedrock DOCX document', async () => {
-      const req = createMockRequest() as ServerRequest;
-      const mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      const file = createMockDocFile(2, mimeType, 'report.docx');
-
-      const mockContent = Buffer.from('docx-binary-content').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      mockedValidateBedrockDocument.mockResolvedValue({ isValid: true });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.BEDROCK },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0]).toMatchObject({
-        type: 'document',
-        document: {
-          name: 'report_docx',
-          format: 'docx',
-          source: {
-            bytes: expect.any(Buffer),
-          },
-        },
-      });
-    });
-
-    it('should format Bedrock plain text document', async () => {
-      const req = createMockRequest() as ServerRequest;
-      const file = createMockDocFile(0.5, 'text/plain', 'notes.txt');
-
-      const mockContent = Buffer.from('plain text content').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      mockedValidateBedrockDocument.mockResolvedValue({ isValid: true });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.BEDROCK },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0]).toMatchObject({
-        type: 'document',
-        document: {
-          name: 'notes_txt',
-          format: 'txt',
-          source: {
-            bytes: expect.any(Buffer),
-          },
-        },
-      });
-    });
-
-    it('should thread model to validateBedrockDocument when model is provided', async () => {
-      const req = createMockRequest() as ServerRequest;
-      const model = 'anthropic.claude-sonnet-4-20250514-v1:0';
-      const file = createMockDocFile(1, 'text/csv', 'data.csv');
-
-      const mockContent = Buffer.from('col1,col2\nval1,val2').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      mockedValidateBedrockDocument.mockResolvedValue({ isValid: true });
-
-      await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.BEDROCK, model },
-        mockStrategyFunctions,
-      );
-
-      expect(mockedValidateBedrockDocument).toHaveBeenCalledWith(
-        expect.any(Number),
-        'text/csv',
-        expect.any(Buffer),
-        undefined,
-        model,
-      );
-    });
-
-    it('should reject Bedrock document when validation fails', async () => {
-      const req = createMockRequest() as ServerRequest;
-      const file = createMockDocFile(5, 'text/csv', 'big.csv');
-
-      const mockContent = Buffer.from('large-csv-content').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      mockedValidateBedrockDocument.mockResolvedValue({
-        isValid: false,
-        error: 'File size (5.0MB) exceeds the 4.5MB limit for Bedrock',
-      });
-
-      await expect(
-        encodeAndFormatDocuments(
-          req,
-          [file],
-          { provider: Providers.BEDROCK },
-          mockStrategyFunctions,
-        ),
-      ).rejects.toThrow('Document validation failed');
-    });
-
     it('should format OpenAI document with responses API', async () => {
       const req = createMockRequest(15) as ServerRequest;
       const file = createMockFile(10);
@@ -749,121 +436,9 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         file_data: `data:application/pdf;base64,${mockContent}`,
       });
     });
-
-    it.each([Providers.GOOGLE, Providers.VERTEXAI] as const)(
-      'should format %s PDF as media block when responses API is enabled',
-      async (provider) => {
-        const req = createMockRequest(15, provider) as ServerRequest;
-        const file = createMockFile(10);
-
-        const mockContent = Buffer.from('test-pdf-content').toString('base64');
-        mockedGetFileStream.mockResolvedValue({
-          file,
-          content: mockContent,
-          metadata: file,
-        });
-
-        mockedValidatePdf.mockResolvedValue({ isValid: true });
-
-        const result = await encodeAndFormatDocuments(
-          req,
-          [file],
-          { provider, useResponsesApi: true },
-          mockStrategyFunctions,
-        );
-
-        expect(result.documents).toHaveLength(1);
-        expect(result.documents[0]).toMatchObject({
-          type: 'media',
-          mimeType: 'application/pdf',
-          data: mockContent,
-        });
-        expect(result.documents[0]).not.toHaveProperty('type', 'input_file');
-      },
-    );
   });
 
   describe('Generic document encoding path', () => {
-    it('should format text/plain for Anthropic with citations enabled', async () => {
-      const req = createMockRequest(30) as ServerRequest;
-      const file = createMockDocFile(1, 'text/plain', 'notes.txt');
-
-      const mockContent = Buffer.from('plain text content').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.ANTHROPIC },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0]).toMatchObject({
-        type: 'document',
-        source: {
-          type: 'base64',
-          media_type: 'text/plain',
-          data: mockContent,
-        },
-        citations: { enabled: true },
-        context: 'File: "notes.txt"',
-      });
-      expect(result.files).toHaveLength(1);
-    });
-
-    it('should format text/html for Anthropic with citations enabled', async () => {
-      const req = createMockRequest(30) as ServerRequest;
-      const file = createMockDocFile(1, 'text/html', 'page.html');
-
-      const mockContent = Buffer.from('<html>content</html>').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.ANTHROPIC },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0]).toMatchObject({
-        type: 'document',
-        source: { type: 'base64', media_type: 'text/html', data: mockContent },
-        citations: { enabled: true },
-      });
-    });
-
-    it('should format application/json for Anthropic without citations', async () => {
-      const req = createMockRequest(30) as ServerRequest;
-      const file = createMockDocFile(1, 'application/json', 'data.json');
-
-      const mockContent = Buffer.from('{"key":"value"}').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.ANTHROPIC },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0]).not.toHaveProperty('citations');
-    });
-
     it('should format text/csv for OpenAI responses API', async () => {
       const req = createMockRequest(15) as ServerRequest;
       const file = createMockDocFile(1, 'text/csv', 'data.csv');
@@ -887,34 +462,6 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
         type: 'input_file',
         filename: 'data.csv',
         file_data: `data:text/csv;base64,${mockContent}`,
-      });
-      expect(result.files).toHaveLength(1);
-    });
-
-    it('should format XLSX for Google/VertexAI as media block', async () => {
-      const req = createMockRequest(25) as ServerRequest;
-      const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-      const file = createMockDocFile(2, mimeType, 'report.xlsx');
-
-      const mockContent = Buffer.from('xlsx-binary').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.GOOGLE },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0]).toMatchObject({
-        type: 'media',
-        mimeType,
-        data: mockContent,
       });
       expect(result.files).toHaveLength(1);
     });
@@ -948,50 +495,7 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
       expect(result.files).toHaveLength(1);
     });
 
-    it('should skip non-Bedrock-document types for Bedrock provider', async () => {
-      const req = createMockRequest() as ServerRequest;
-      const file = createMockDocFile(1, 'application/zip', 'archive.zip');
-
-      const mockContent = Buffer.from('zip-content').toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: mockContent,
-        metadata: file,
-      });
-
-      const result = await encodeAndFormatDocuments(
-        req,
-        [file],
-        { provider: Providers.BEDROCK },
-        mockStrategyFunctions,
-      );
-
-      expect(result.documents).toHaveLength(0);
-      expect(result.files).toHaveLength(0);
-    });
-
-    it('should throw when generic file exceeds configured size limit', async () => {
-      const req = createMockRequest(1, Providers.ANTHROPIC) as ServerRequest;
-      const file = createMockDocFile(2, 'text/plain', 'large.txt');
-
-      const largeContent = Buffer.alloc(2 * 1024 * 1024).toString('base64');
-      mockedGetFileStream.mockResolvedValue({
-        file,
-        content: largeContent,
-        metadata: file,
-      });
-
-      await expect(
-        encodeAndFormatDocuments(
-          req,
-          [file],
-          { provider: Providers.ANTHROPIC },
-          mockStrategyFunctions,
-        ),
-      ).rejects.toThrow('File size');
-    });
-
-    it('should not push metadata when provider has no handler', async () => {
+    it('should not push metadata when provider has no document support', async () => {
       const req = createMockRequest(15) as ServerRequest;
       const file = createMockDocFile(1, 'text/plain', 'test.txt');
 
@@ -1005,7 +509,7 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
       const result = await encodeAndFormatDocuments(
         req,
         [file],
-        { provider: Providers.AZURE as Providers },
+        { provider: Providers.ANTHROPIC as Providers },
         mockStrategyFunctions,
       );
 

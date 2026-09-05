@@ -8,7 +8,6 @@ const {
   loadWebSearchAuth,
   buildInlineMemoryTool,
   getCodeApiAuthHeaders,
-  buildImageToolContext,
   SET_MEMORY_TOOL_NAME,
   buildWebSearchContext,
   DELETE_MEMORY_TOOL_NAME,
@@ -20,15 +19,12 @@ const {
   Tools,
   Constants,
   Permissions,
-  EToolResources,
   PermissionTypes,
   AgentCapabilities,
 } = require('librechat-data-provider');
 const {
   availableTools,
   manifestToolMap,
-  // Basic Tools
-  GoogleSearchAPI,
   // Structured Tools
   DALLE3,
   FluxAPI,
@@ -38,8 +34,6 @@ const {
   TraversaalSearch,
   StructuredWolfram,
   TavilySearchResults,
-  createGeminiImageTool,
-  createOpenAIImageTools,
 } = require('../');
 const {
   createMCPTool,
@@ -184,7 +178,6 @@ const loadTools = async ({
   const toolConstructors = {
     flux: FluxAPI,
     calculator: Calculator,
-    google: GoogleSearchAPI,
     open_weather: OpenWeather,
     wolfram: StructuredWolfram,
     'stable-diffusion': StructuredSD,
@@ -193,50 +186,7 @@ const loadTools = async ({
     tavily_search_results_json: TavilySearchResults,
   };
 
-  const customConstructors = {
-    image_gen_oai: async (_toolContextMap, dynamicToolContextMap) => {
-      const authFields = getAuthFields('image_gen_oai');
-      const authValues = await loadAuthValues({ userId: user, authFields });
-      const imageFiles = options.tool_resources?.[EToolResources.image_edit]?.files ?? [];
-      const toolContext = buildImageToolContext({
-        imageFiles,
-        toolName: `${EToolResources.image_edit}_oai`,
-        contextDescription: 'image editing',
-      });
-      if (toolContext) {
-        dynamicToolContextMap.image_edit_oai = toolContext;
-      }
-      return createOpenAIImageTools({
-        ...authValues,
-        isAgent: !!agent,
-        req: options.req,
-        imageOutputType,
-        fileStrategy,
-        imageFiles,
-      });
-    },
-    gemini_image_gen: async (_toolContextMap, dynamicToolContextMap) => {
-      const authFields = getAuthFields('gemini_image_gen');
-      const authValues = await loadAuthValues({ userId: user, authFields, throwError: false });
-      const imageFiles = options.tool_resources?.[EToolResources.image_edit]?.files ?? [];
-      const toolContext = buildImageToolContext({
-        imageFiles,
-        toolName: 'gemini_image_gen',
-        contextDescription: 'image context',
-      });
-      if (toolContext) {
-        dynamicToolContextMap.gemini_image_gen = toolContext;
-      }
-      return createGeminiImageTool({
-        ...authValues,
-        isAgent: !!agent,
-        req: options.req,
-        imageFiles,
-        userId: user,
-        fileStrategy,
-      });
-    },
-  };
+  const customConstructors = {};
 
   const requestedTools = {};
   const hasMCPTools = tools.some((toolName) => toolName && mcpToolPattern.test(toolName));
@@ -265,7 +215,6 @@ const loadTools = async ({
     flux: imageGenOptions,
     dalle: imageGenOptions,
     'stable-diffusion': imageGenOptions,
-    gemini_image_gen: imageGenOptions,
   };
 
   /** @type {Record<string, string>} */

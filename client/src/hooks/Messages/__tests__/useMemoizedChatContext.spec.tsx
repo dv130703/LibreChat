@@ -1,4 +1,5 @@
 import { renderHook } from '@testing-library/react';
+import { EModelEndpoint } from 'librechat-data-provider';
 import type { TConversation, TMessage } from 'librechat-data-provider';
 import { useChatContext } from '~/Providers';
 import useMemoizedChatContext from '../useMemoizedChatContext';
@@ -11,7 +12,7 @@ const mockUseChatContext = useChatContext as jest.MockedFunction<typeof useChatC
 
 const conversation = {
   conversationId: 'convo-id',
-  endpoint: 'openAI',
+  endpoint: EModelEndpoint.custom,
   model: 'gpt-4',
 } as TConversation;
 

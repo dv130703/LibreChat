@@ -25,7 +25,6 @@ const {
   isAgentsEndpoint,
   isEphemeralAgentId,
   supportsBalanceCheck,
-  isBedrockDocumentType,
   getEndpointFileConfig,
 } = require('librechat-data-provider');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
@@ -1350,9 +1349,6 @@ class BaseClient {
 
     const allFiles = [];
 
-    const provider = this.options.agent?.provider ?? this.options.endpoint;
-    const isBedrock = provider === EModelEndpoint.bedrock;
-
     if (!this._mergedFileConfig) {
       this._mergedFileConfig = mergeFileConfig(this.options.req?.config?.fileConfig);
       const endpoint = this.options.agent?.endpoint ?? this.options.endpoint;
@@ -1382,9 +1378,6 @@ class BaseClient {
       if (file.type.startsWith('image/')) {
         categorizedAttachments.images.push(file);
       } else if (file.type === 'application/pdf') {
-        categorizedAttachments.documents.push(file);
-        allFiles.push(file);
-      } else if (isBedrock && isBedrockDocumentType(file.type)) {
         categorizedAttachments.documents.push(file);
         allFiles.push(file);
       } else if (file.type.startsWith('video/')) {

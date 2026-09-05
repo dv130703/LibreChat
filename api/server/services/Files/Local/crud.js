@@ -322,9 +322,14 @@ async function uploadLocalFile({ req, file, file_id }) {
  *
  * @param {ServerRequest} req - The request object from Express
  * @param {string} filepath - The filepath.
+ * @param {{start: number, end: number}} [range] - Byte range to read, passed
+ *  straight through to `fs.createReadStream`'s own `options` - lets a caller
+ *  (`transcribeStream.js`'s `Accept-Ranges` support, so audio seeking doesn't
+ *  have to re-download from byte 0) serve a partial read without duplicating
+ *  this function's path-resolution/traversal checks.
  * @returns {ReadableStream} A readable stream of the file.
  */
-async function getLocalFileStream(req, filepath) {
+async function getLocalFileStream(req, filepath, range) {
   try {
     const appConfig = req.config;
     if (filepath.includes('/uploads/')) {
@@ -344,7 +349,7 @@ async function getLocalFileStream(req, filepath) {
         throw new Error(`Invalid file path: ${filepath}`);
       }
 
-      return fs.createReadStream(fullPath);
+      return fs.createReadStream(fullPath, range);
     } else if (filepath.includes('/images/')) {
       const basePath = filepath.split('/images/')[1];
 
@@ -362,9 +367,9 @@ async function getLocalFileStream(req, filepath) {
         throw new Error(`Invalid file path: ${filepath}`);
       }
 
-      return fs.createReadStream(fullPath);
+      return fs.createReadStream(fullPath, range);
     }
-    return fs.createReadStream(filepath);
+    return fs.createReadStream(filepath, range);
   } catch (error) {
     logger.error('Error getting local file stream:', error);
     throw error;

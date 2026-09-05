@@ -30,10 +30,6 @@ jest.mock('~/server/services/Files/strategies', () => ({
   getStrategyFunctions: jest.fn(() => ({})),
 }));
 
-jest.mock('~/server/controllers/assistants/helpers', () => ({
-  getOpenAIClient: jest.fn(),
-}));
-
 jest.mock('~/server/services/Tools/credentials', () => ({
   loadAuthValues: jest.fn(),
 }));

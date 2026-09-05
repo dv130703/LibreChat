@@ -8,6 +8,10 @@ import { cn } from '~/utils';
 type SendButtonProps = {
   disabled: boolean;
   control: Control<{ text: string }>;
+  /** Attachments are already uploaded and ready (parent gates on `filesLoading`
+   *  separately) — lets a caption-less attachment (e.g. "just send the photo")
+   *  through instead of requiring typed text. */
+  hasFiles?: boolean;
 };
 
 const SubmitButton = React.memo(
@@ -42,7 +46,7 @@ const SendButton = React.memo(
   forwardRef((props: SendButtonProps, ref: React.ForwardedRef<HTMLButtonElement>) => {
     const data = useWatch({ control: props.control });
     const content = data?.text?.trim();
-    return <SubmitButton ref={ref} disabled={props.disabled || !content} />;
+    return <SubmitButton ref={ref} disabled={props.disabled || (!content && !props.hasFiles)} />;
   }),
 );
 

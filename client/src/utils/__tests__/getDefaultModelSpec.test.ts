@@ -7,7 +7,7 @@ const createModelSpec = (name: string, overrides: Partial<TModelSpec> = {}): TMo
     name,
     label: name,
     preset: {
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       model: name,
     },
     ...overrides,
@@ -33,7 +33,7 @@ const createStartupConfig = (
   }) as TStartupConfig;
 
 const fullEndpointsConfig: TEndpointsConfig = {
-  [EModelEndpoint.openAI]: { order: 0 },
+  [EModelEndpoint.custom]: { order: 0 },
   [EModelEndpoint.agents]: { order: 1 },
 };
 
@@ -114,7 +114,7 @@ describe('getDefaultModelSpec', () => {
 
   it('does not apply the soft default when a prior model selection exists', () => {
     const softSpec = createModelSpec('soft-spec', { softDefault: true });
-    persistEphemeralSelection(EModelEndpoint.openAI, 'gpt-4o');
+    persistEphemeralSelection(EModelEndpoint.custom, 'gpt-4o');
 
     const result = getDefaultModelSpec(createStartupConfig([softSpec]), fullEndpointsConfig);
 
@@ -201,7 +201,7 @@ describe('getDefaultModelSpec', () => {
 
     it('yields to an ephemeral endpoint → model pick after the soft default was applied', () => {
       persistAppliedSpec(softSpec);
-      persistEphemeralSelection(EModelEndpoint.openAI, 'gpt-4o');
+      persistEphemeralSelection(EModelEndpoint.custom, 'gpt-4o');
 
       const result = getDefaultModelSpec(
         createStartupConfig([otherSpec, softSpec], { prioritize: false }),
@@ -261,7 +261,7 @@ describe('getDefaultModelSpec', () => {
     });
 
     it('re-arms after viewing the soft conversation, even when an ephemeral pick lingers', () => {
-      persistEphemeralSelection(EModelEndpoint.anthropic, 'claude-sonnet-4-6');
+      persistEphemeralSelection('anthropic', 'claude-sonnet-4-6');
       persistAppliedSpec(softSpec, 'a8b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d');
 
       const result = getDefaultModelSpec(
@@ -347,7 +347,7 @@ describe('getDefaultModelSpec', () => {
     const otherSpec = createModelSpec('other-spec');
 
     it('keeps the soft default selected over older model history (prioritized config)', () => {
-      persistEphemeralSelection(EModelEndpoint.openAI, 'gpt-4o');
+      persistEphemeralSelection(EModelEndpoint.custom, 'gpt-4o');
       persistAppliedSpec(softSpec);
 
       const result = getDefaultModelSpec(
@@ -359,7 +359,7 @@ describe('getDefaultModelSpec', () => {
     });
 
     it('keeps the soft default selected over older model history (modelSelect config)', () => {
-      persistEphemeralSelection(EModelEndpoint.openAI, 'gpt-4o');
+      persistEphemeralSelection(EModelEndpoint.custom, 'gpt-4o');
       persistAppliedSpec(softSpec);
 
       const result = getDefaultModelSpec(
@@ -428,7 +428,7 @@ describe('getDefaultModelSpec', () => {
       const result = getDefaultModelSpec(
         createStartupConfig([otherSpec, softSpec], {
           prioritize: false,
-          addedEndpoints: [EModelEndpoint.agents, EModelEndpoint.openAI],
+          addedEndpoints: [EModelEndpoint.agents, EModelEndpoint.custom],
         }),
         fullEndpointsConfig,
       );

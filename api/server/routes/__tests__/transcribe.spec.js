@@ -1,10 +1,13 @@
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const request = require('supertest');
 const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
 const { MongoMemoryServer } = require('mongodb-memory-server');
+const { Constants } = require('librechat-data-provider');
 const { createMethods } = require('@librechat/data-schemas');
 const { onIdle } = require('~/server/services/Transcription/jobQueue');
 
@@ -107,6 +110,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
   let modelsToCleanup = [];
   let File;
   let Conversation;
+  let Message;
 
   beforeAll(async () => {
     mongoServer = await MongoMemoryServer.create();
@@ -118,6 +122,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     Object.assign(mongoose.models, models);
     File = mongoose.models.File;
     Conversation = mongoose.models.Conversation;
+    Message = mongoose.models.Message;
 
     const methods = createMethods(mongoose);
     await methods.seedDefaultRoles();
@@ -166,12 +171,16 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
 
   const tinyAudioBuffer = Buffer.from('fake-audio-bytes');
 
-  const uploadFile = (conversationId, filename = 'meeting.mp3') =>
-    request(app)
+  const uploadFile = (conversationId, filename = 'meeting.mp3', extraFields = {}) => {
+    let req = request(app)
       .post('/api/transcribe')
       .field('conversationId', conversationId)
-      .field('endpoint', 'agents')
-      .attach('file', tinyAudioBuffer, { filename, contentType: 'audio/mpeg' });
+      .field('endpoint', 'agents');
+    for (const [field, value] of Object.entries(extraFields)) {
+      req = req.field(field, value);
+    }
+    return req.attach('file', tinyAudioBuffer, { filename, contentType: 'audio/mpeg' });
+  };
 
   describe('POST /api/transcribe', () => {
     it('responds 202 immediately with a queued job, and completes asynchronously', async () => {
@@ -235,6 +244,38 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
       expect(sourceFile.transcription.instanceId).toEqual(expect.any(String));
       expect(sourceFile.transcription.startedAt).toBeTruthy();
       expect(sourceFile.transcription.completedAt).toBeTruthy();
+    });
+
+    // transcription/ARCHITECTURE.md §12 #12: the composer intercept used to
+    // leave the recording with no visible trace in the conversation until
+    // the user manually sent a message carrying it - reported directly as
+    // "goes to blank canvas" once the panel-only navigate was tried instead.
+    // A real, persisted message is what makes it show up immediately, the
+    // same way any other attachment does, via the ordinary messages query -
+    // `saveMessage` requires a UUID-shaped `conversationId` (real callers
+    // always mint one via `v4()`), unlike this file's other fixtures.
+    it('creates a real user message carrying the source file, rooted at NO_PARENT for a brand-new conversation', async () => {
+      const conversationId = crypto.randomUUID();
+
+      const response = await uploadFile(conversationId, 'recording.mp3');
+      expect(response.status).toBe(202);
+
+      const message = await Message.findOne({ conversationId }).lean();
+      expect(message).not.toBeNull();
+      expect(message.isCreatedByUser).toBe(true);
+      expect(message.parentMessageId).toBe(Constants.NO_PARENT);
+      expect(message.files).toHaveLength(1);
+      expect(message.files[0]).toMatchObject({
+        file_id: response.body.sourceFile.file_id,
+        filename: response.body.sourceFile.filename,
+      });
+      expect(response.body.messageId).toBe(message.messageId);
+
+      // `saveConvo` re-derives `messages` from what's actually persisted -
+      // the conversation's pointer must include this message right away,
+      // not just once transcription later calls `saveConvo` again itself.
+      const convo = await Conversation.findOne({ conversationId }).lean();
+      expect(convo.messages.map(String)).toContain(String(message._id));
     });
 
     it('creates the conversation and queues the source file before transcribeAndEmbed is ever called', async () => {
@@ -353,6 +394,38 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
 
         const sourceFile = await File.findOne({ file_id: response.body.sourceFile.file_id }).lean();
         expect(sourceFile.transcription.status).toBe('ready');
+      });
+
+      it("links the new message onto the conversation's current branch via parentMessageId", async () => {
+        const conversationId = crypto.randomUUID();
+        await Conversation.create({
+          conversationId,
+          user: userId,
+          title: 'Ongoing chat',
+          endpoint: 'openAI',
+          files: [],
+        });
+        const leafMessage = await Message.create({
+          messageId: crypto.randomUUID(),
+          conversationId,
+          parentMessageId: Constants.NO_PARENT,
+          user: userId,
+          isCreatedByUser: true,
+          sender: 'User',
+          text: 'earlier turn',
+        });
+
+        const response = await uploadFile(conversationId, 'recording.mp3', {
+          parentMessageId: leafMessage.messageId,
+        });
+        expect(response.status).toBe(202);
+
+        const newMessage = await Message.findOne({
+          conversationId,
+          messageId: response.body.messageId,
+        }).lean();
+        expect(newMessage.parentMessageId).toBe(leafMessage.messageId);
+        expect(newMessage.files[0].file_id).toBe(response.body.sourceFile.file_id);
       });
 
       it('never deletes the existing conversation when the prep phase fails', async () => {
@@ -478,6 +551,48 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     it('returns 400 when fileIds is missing', async () => {
       const response = await request(app).get('/api/transcribe/status');
       expect(response.status).toBe(400);
+    });
+  });
+
+  describe('GET /api/transcribe/:sourceFileId/audio-token', () => {
+    // transcription/ARCHITECTURE.md §12 #13: mints the token
+    // `transcribeStream.js`'s unauthenticated (by `requireJwtAuth`) streaming
+    // route relies on in place of an `Authorization` header - own coverage
+    // here is ownership/shape only; the token's actual verification and the
+    // streaming route it authorizes for are covered end-to-end in
+    // transcribeStream.spec.js.
+    it('mints a token that verifies to the caller and a url scoped to this source file', async () => {
+      const conversationId = `convo-${Date.now()}`;
+      const response = await uploadFile(conversationId);
+      await onIdle();
+      const sourceFileId = response.body.sourceFile.file_id;
+
+      const tokenResponse = await request(app).get(`/api/transcribe/${sourceFileId}/audio-token`);
+
+      expect(tokenResponse.status).toBe(200);
+      expect(tokenResponse.body.expiresIn).toEqual(expect.any(Number));
+      expect(tokenResponse.body.url).toContain(`/api/transcribe/${sourceFileId}/audio?token=`);
+
+      const token = new URL(tokenResponse.body.url, 'http://localhost').searchParams.get('token');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      expect(decoded.id).toBe(userId);
+    });
+
+    it('returns 404 for a source file that does not belong to the caller', async () => {
+      const otherUserId = new mongoose.Types.ObjectId().toString();
+      await File.create({
+        user: otherUserId,
+        file_id: 'not-mine-audio-token',
+        filename: 'a.m4a',
+        filepath: '/tmp/a',
+        type: 'audio/mp4',
+        bytes: 1,
+        source: 'local',
+        context: 'transcript_rag',
+      });
+
+      const response = await request(app).get('/api/transcribe/not-mine-audio-token/audio-token');
+      expect(response.status).toBe(404);
     });
   });
 

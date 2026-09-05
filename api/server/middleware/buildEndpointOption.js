@@ -3,32 +3,20 @@ const {
   applyModelSpecPreset,
   findModelSpecByName,
   isModelSpecEndpointMatch,
-  resolveModelSpecPromptPrefixVariables,
 } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
-const {
-  EndpointURLs,
-  EModelEndpoint,
-  isAgentsEndpoint,
-  parseCompactConvo,
-  getDefaultParamsEndpoint,
-} = require('librechat-data-provider');
-const azureAssistants = require('~/server/services/Endpoints/azureAssistants');
-const assistants = require('~/server/services/Endpoints/assistants');
+const { parseCompactConvo, getDefaultParamsEndpoint } = require('librechat-data-provider');
 const { getEndpointsConfig } = require('~/server/services/Config');
 const agents = require('~/server/services/Endpoints/agents');
-const { updateFilesUsage } = require('~/models');
 
-const buildFunction = {
-  [EModelEndpoint.agents]: agents.buildOptions,
-  [EModelEndpoint.assistants]: assistants.buildOptions,
-  [EModelEndpoint.azureAssistants]: azureAssistants.buildOptions,
-};
-
+/**
+ * This middleware is only ever mounted on the `/api/agents/chat` router
+ * (see `~/server/routes/agents/chat.js`), so every request it handles - for
+ * the `agents` endpoint and for `custom` (Ollama) endpoints alike - is
+ * built via the agents builder.
+ */
 async function buildEndpointOption(req, res, next) {
   const { endpoint, endpointType } = req.body;
-  const isAgents =
-    isAgentsEndpoint(endpoint) || req.baseUrl.startsWith(EndpointURLs[EModelEndpoint.agents]);
 
   let endpointsConfig;
   try {
@@ -56,7 +44,6 @@ async function buildEndpointOption(req, res, next) {
   }
 
   const appConfig = req.config;
-  let appliedModelSpecPrivateFields = new Set();
   if (appConfig.modelSpecs?.list?.length && appConfig.modelSpecs?.enforce) {
     /** @type {{ list: TModelSpec[] }}*/
     const { list } = appConfig.modelSpecs;
@@ -92,7 +79,6 @@ async function buildEndpointOption(req, res, next) {
         includePresetDefaults: true,
       });
       parsedBody = result.parsedBody;
-      appliedModelSpecPrivateFields = result.appliedPrivateFields;
     } catch (error) {
       logger.error(`Error parsing model spec for endpoint ${endpoint}`, error);
       return handleError(res, { text: 'Error parsing model spec' });
@@ -113,7 +99,6 @@ async function buildEndpointOption(req, res, next) {
           defaultParamsEndpoint,
         });
         parsedBody = result.parsedBody;
-        appliedModelSpecPrivateFields = result.appliedPrivateFields;
       } catch (error) {
         logger.error(`Error parsing model spec for endpoint ${endpoint}`, error);
         return handleError(res, { text: 'Error parsing model spec' });
@@ -121,29 +106,10 @@ async function buildEndpointOption(req, res, next) {
     }
   }
 
-  if (!isAgents && appliedModelSpecPrivateFields.has('promptPrefix')) {
-    parsedBody = resolveModelSpecPromptPrefixVariables(
-      parsedBody,
-      req.user,
-      req.body.clientTimestamp,
-    );
-  }
-
   try {
-    const builder = isAgents
-      ? (...args) => buildFunction[EModelEndpoint.agents](req, ...args)
-      : buildFunction[endpointType ?? endpoint];
-
     // TODO: use object params
     req.body = req.body || {}; // Express 5: ensure req.body exists
-    req.body.endpointOption = await builder(endpoint, parsedBody, endpointType);
-
-    if (req.body.files && !isAgents) {
-      req.body.endpointOption.attachments = updateFilesUsage(req.body.files, undefined, {
-        user: req.user.id,
-        tenantId: req.user.tenantId,
-      });
-    }
+    req.body.endpointOption = await agents.buildOptions(req, endpoint, parsedBody, endpointType);
 
     next();
   } catch (error) {

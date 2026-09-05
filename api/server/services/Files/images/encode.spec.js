@@ -74,14 +74,14 @@ describe('encodeAndFormat - request memory guard', () => {
       bytes: 9876,
     };
 
-    const result = await encodeAndFormat(makeReq(), [file], { endpoint: 'anthropic' });
+    const result = await encodeAndFormat(makeReq(), [file], { endpoint: 'Ollama' });
 
     expect(mockRunGuardedEncode).toHaveBeenCalledTimes(1);
     expect(mockRunGuardedEncode.mock.calls[0][0]).toBe(9876);
 
     const expectedBase64 = Buffer.from('url-image-bytes').toString('base64');
     expect(result.image_urls).toHaveLength(1);
-    expect(result.image_urls[0].source.data).toBe(expectedBase64);
+    expect(result.image_urls[0].image_url.url).toBe(`data:image/png;base64,${expectedBase64}`);
   });
 
   it('does not gate the non-buffering local prepare path', async () => {

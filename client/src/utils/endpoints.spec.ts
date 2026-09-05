@@ -3,14 +3,14 @@ import type { TEndpointsConfig, TConfig } from 'librechat-data-provider';
 import { getAvailableEndpoints, getEndpointsFilter, mapEndpoints } from './endpoints';
 
 const mockEndpointsConfig: TEndpointsConfig = {
-  [EModelEndpoint.openAI]: { type: undefined, iconURL: 'openAI_icon.png', order: 0 },
-  [EModelEndpoint.google]: { type: undefined, iconURL: 'google_icon.png', order: 1 },
+  [EModelEndpoint.custom]: { type: undefined, iconURL: 'openAI_icon.png', order: 0 },
+  ['google']: { type: undefined, iconURL: 'google_icon.png', order: 1 },
   Mistral: { type: EModelEndpoint.custom, iconURL: 'custom_icon.png', order: 2 },
 };
 
 describe('getEndpointField', () => {
   it('returns undefined if endpointsConfig is undefined', () => {
-    expect(getEndpointField(undefined, EModelEndpoint.openAI, 'type')).toBeUndefined();
+    expect(getEndpointField(undefined, EModelEndpoint.custom, 'type')).toBeUndefined();
   });
 
   it('returns undefined if endpoint is null', () => {
@@ -22,8 +22,8 @@ describe('getEndpointField', () => {
   });
 
   it('returns the correct value for a valid endpoint and property', () => {
-    expect(getEndpointField(mockEndpointsConfig, EModelEndpoint.openAI, 'order')).toEqual(0);
-    expect(getEndpointField(mockEndpointsConfig, EModelEndpoint.google, 'iconURL')).toEqual(
+    expect(getEndpointField(mockEndpointsConfig, EModelEndpoint.custom, 'order')).toEqual(0);
+    expect(getEndpointField(mockEndpointsConfig, 'google', 'iconURL')).toEqual(
       'google_icon.png',
     );
   });
@@ -33,7 +33,7 @@ describe('getEndpointField', () => {
     expect(
       getEndpointField(
         mockEndpointsConfig,
-        EModelEndpoint.openAI,
+        EModelEndpoint.custom,
         'nonexistentProperty' as keyof TConfig,
       ),
     ).toBeUndefined();
@@ -57,8 +57,8 @@ describe('getEndpointsFilter', () => {
 
   it('returns a filter object based on endpointsConfig', () => {
     const expectedFilter = {
-      [EModelEndpoint.openAI]: true,
-      [EModelEndpoint.google]: true,
+      [EModelEndpoint.custom]: true,
+      ['google']: true,
       Mistral: true,
     };
     expect(getEndpointsFilter(mockEndpointsConfig)).toEqual(expectedFilter);
@@ -68,18 +68,18 @@ describe('getEndpointsFilter', () => {
 describe('getAvailableEndpoints', () => {
   it('returns available endpoints based on filter and config', () => {
     const filter = {
-      [EModelEndpoint.openAI]: true,
-      [EModelEndpoint.google]: false,
+      [EModelEndpoint.custom]: true,
+      ['google']: false,
       Mistral: true,
     };
-    const expectedEndpoints = [EModelEndpoint.openAI, 'Mistral'];
+    const expectedEndpoints = [EModelEndpoint.custom, 'Mistral'];
     expect(getAvailableEndpoints(filter, mockEndpointsConfig)).toEqual(expectedEndpoints);
   });
 });
 
 describe('mapEndpoints', () => {
   it('returns sorted available endpoints', () => {
-    const expectedOrder = [EModelEndpoint.openAI, EModelEndpoint.google, 'Mistral'];
+    const expectedOrder = [EModelEndpoint.custom, 'google', 'Mistral'];
     expect(mapEndpoints(mockEndpointsConfig)).toEqual(expectedOrder);
   });
 });

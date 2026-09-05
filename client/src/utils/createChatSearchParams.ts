@@ -43,13 +43,6 @@ export function processValidSettings(queryParams: Record<string, string>) {
   }
 
   if (
-    validSettings.assistant_id != null &&
-    validSettings.assistant_id &&
-    !isAssistantsEndpoint(validSettings.endpoint)
-  ) {
-    validSettings.endpoint = EModelEndpoint.assistants;
-  }
-  if (
     validSettings.agent_id != null &&
     validSettings.agent_id &&
     !isAgentsEndpoint(validSettings.endpoint)

@@ -310,4 +310,98 @@ describe('agents addTitle', () => {
     );
     expect(mockCache.delete).not.toHaveBeenCalled();
   });
+
+  describe('attachment-only messages (no caption text)', () => {
+    it('falls back to a description built from req.body.files when text is empty', async () => {
+      const client = makeClient('Photo Title');
+      const req = makeReq();
+      req.body.files = [{ filename: 'sunset.jpg', type: 'image/jpeg' }];
+
+      await addTitle(req, {
+        text: '',
+        client,
+        conversationId: 'cid',
+        immediate: true,
+        convoReady: Promise.resolve(),
+      });
+
+      expect(client.titleConvo).toHaveBeenCalledWith(
+        expect.objectContaining({ text: '[User shared an image: sunset.jpg]' }),
+      );
+    });
+
+    it('prefers an explicit `files` param over req.body.files', async () => {
+      const client = makeClient();
+      const req = makeReq();
+      req.body.files = [{ filename: 'wrong.pdf', type: 'application/pdf' }];
+
+      await addTitle(req, {
+        text: '   ',
+        files: [{ filename: 'report.pdf', type: 'application/pdf' }],
+        client,
+        conversationId: 'cid',
+        immediate: true,
+        convoReady: Promise.resolve(),
+      });
+
+      expect(client.titleConvo).toHaveBeenCalledWith(
+        expect.objectContaining({ text: '[User shared a PDF document: report.pdf]' }),
+      );
+    });
+
+    it('lists multiple attachments and truncates beyond three', async () => {
+      const client = makeClient();
+
+      await addTitle(makeReq(), {
+        text: '',
+        files: [
+          { filename: 'a.png', type: 'image/png' },
+          { filename: 'b.png', type: 'image/png' },
+          { filename: 'c.png', type: 'image/png' },
+          { filename: 'd.png', type: 'image/png' },
+        ],
+        client,
+        conversationId: 'cid',
+        immediate: true,
+        convoReady: Promise.resolve(),
+      });
+
+      expect(client.titleConvo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: '[User shared 4 files: a.png, b.png, c.png, and 1 more]',
+        }),
+      );
+    });
+
+    it('keeps the real user text when present, ignoring any attachments', async () => {
+      const client = makeClient();
+
+      await addTitle(makeReq(), {
+        text: 'What does this show?',
+        files: [{ filename: 'sunset.jpg', type: 'image/jpeg' }],
+        client,
+        conversationId: 'cid',
+        immediate: true,
+        convoReady: Promise.resolve(),
+      });
+
+      expect(client.titleConvo).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'What does this show?' }),
+      );
+    });
+
+    it('passes empty text through unchanged when there are no attachments either', async () => {
+      const client = makeClient();
+
+      await addTitle(makeReq(), {
+        text: '',
+        client,
+        conversationId: 'cid',
+        immediate: true,
+        convoReady: Promise.resolve(),
+      });
+
+      expect(client.titleConvo).toHaveBeenCalledWith(expect.objectContaining({ text: '' }));
+    });
+  });
 });

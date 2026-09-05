@@ -65,26 +65,6 @@ export default function ProviderKeyRow({ endpoint, endpointsConfig }: ProviderKe
           endpoint={endpoint}
           endpointType={endpointType}
           userProvideURL={getEndpointField(endpointsConfig, endpoint, 'userProvideURL')}
-          userProvideAccessKeyId={getEndpointField(
-            endpointsConfig,
-            endpoint,
-            'userProvideAccessKeyId',
-          )}
-          userProvideSecretAccessKey={getEndpointField(
-            endpointsConfig,
-            endpoint,
-            'userProvideSecretAccessKey',
-          )}
-          userProvideSessionToken={getEndpointField(
-            endpointsConfig,
-            endpoint,
-            'userProvideSessionToken',
-          )}
-          userProvideBearerToken={getEndpointField(
-            endpointsConfig,
-            endpoint,
-            'userProvideBearerToken',
-          )}
         />
       )}
     </>

@@ -1,7 +1,12 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { useForm, FormProvider } from 'react-hook-form';
-import { EModelEndpoint, mergeFileConfig, resolveEndpointType } from 'librechat-data-provider';
+import {
+  Providers,
+  EModelEndpoint,
+  mergeFileConfig,
+  resolveEndpointType,
+} from 'librechat-data-provider';
 import type { TEndpointsConfig } from 'librechat-data-provider';
 import type { AgentForm } from '~/common';
 import useAgentFileConfig from '~/hooks/Agents/useAgentFileConfig';
@@ -12,7 +17,7 @@ import useAgentFileConfig from '~/hooks/Agents/useAgentFileConfig';
  */
 
 const mockEndpointsConfig: TEndpointsConfig = {
-  [EModelEndpoint.openAI]: { userProvide: false, order: 0 },
+  [EModelEndpoint.custom]: { userProvide: false, order: 0 },
   [EModelEndpoint.agents]: { userProvide: false, order: 1 },
   Moonshot: { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
   'Some Endpoint': { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
@@ -70,8 +75,8 @@ describe('AgentPanel file config resolution (useAgentFileConfig)', () => {
     });
 
     it('resolves to openAI when provider is openAI', () => {
-      render(<TestWrapper provider={EModelEndpoint.openAI} />);
-      expect(screen.getByTestId('endpointType').textContent).toBe(EModelEndpoint.openAI);
+      render(<TestWrapper provider={Providers.OPENAI} />);
+      expect(screen.getByTestId('endpointType').textContent).toBe(Providers.OPENAI);
     });
 
     it('falls back to agents when provider is undefined', () => {
@@ -114,7 +119,7 @@ describe('AgentPanel file config resolution (useAgentFileConfig)', () => {
     });
 
     it('falls back to default config for openAI provider (no openAI-specific config)', () => {
-      render(<TestWrapper provider={EModelEndpoint.openAI} />);
+      render(<TestWrapper provider={Providers.OPENAI} />);
       expect(screen.getByTestId('fileLimit').textContent).toBe('10');
     });
   });

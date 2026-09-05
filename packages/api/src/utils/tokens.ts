@@ -182,13 +182,7 @@ const ANTHROPIC_SONNET_4_6_PLUS_PATTERN =
   /(?:claude-sonnet[-.]?4[-.]?(?:[6-9]|\d{2})|claude[-.]?4[-.]?(?:[6-9]|\d{2})[-.]?sonnet)(?=$|[^0-9])/;
 
 function usesAnthropicContextMap(endpoint: EModelEndpoint): boolean {
-  return (
-    endpoint === EModelEndpoint.anthropic ||
-    endpoint === EModelEndpoint.bedrock ||
-    endpoint === EModelEndpoint.openAI ||
-    endpoint === EModelEndpoint.agents ||
-    endpoint === EModelEndpoint.custom
-  );
+  return endpoint === EModelEndpoint.agents || endpoint === EModelEndpoint.custom;
 }
 
 function getAnthropicSonnet46PlusContext(
@@ -205,7 +199,7 @@ function getAnthropicSonnet46PlusOutput(
   modelName: string,
   endpoint: EModelEndpoint,
 ): number | undefined {
-  if (endpoint !== EModelEndpoint.anthropic || !ANTHROPIC_SONNET_4_6_PLUS_PATTERN.test(modelName)) {
+  if (endpoint !== EModelEndpoint.custom || !ANTHROPIC_SONNET_4_6_PLUS_PATTERN.test(modelName)) {
     return undefined;
   }
   return ANTHROPIC_SONNET_4_6_PLUS_OUTPUT;
@@ -415,13 +409,8 @@ const aggregateModels = {
 };
 
 export const maxTokensMap: Record<string, Record<string, number>> = {
-  [EModelEndpoint.azureOpenAI]: openAIModels,
-  [EModelEndpoint.openAI]: aggregateModels,
   [EModelEndpoint.agents]: aggregateModels,
   [EModelEndpoint.custom]: aggregateModels,
-  [EModelEndpoint.google]: googleModels,
-  [EModelEndpoint.anthropic]: anthropicModels,
-  [EModelEndpoint.bedrock]: bedrockModels,
 };
 
 export const modelMaxOutputs = {
@@ -491,10 +480,8 @@ const deepseekMaxOutputs = {
 };
 
 export const maxOutputTokensMap: Record<string, Record<string, number>> = {
-  [EModelEndpoint.anthropic]: anthropicMaxOutputs,
-  [EModelEndpoint.azureOpenAI]: modelMaxOutputs,
-  [EModelEndpoint.openAI]: { ...modelMaxOutputs, ...deepseekMaxOutputs },
-  [EModelEndpoint.custom]: { ...modelMaxOutputs, ...deepseekMaxOutputs },
+  [EModelEndpoint.agents]: { ...modelMaxOutputs, ...deepseekMaxOutputs, ...anthropicMaxOutputs },
+  [EModelEndpoint.custom]: { ...modelMaxOutputs, ...deepseekMaxOutputs, ...anthropicMaxOutputs },
 };
 
 /** Finds the longest matching key in the tokens map via substring match. */
@@ -575,7 +562,7 @@ export function getModelTokenValue(
  */
 export function getModelMaxTokens(
   modelName: string,
-  endpoint: EModelEndpoint = EModelEndpoint.openAI,
+  endpoint: EModelEndpoint = EModelEndpoint.custom,
   endpointTokenConfig?: EndpointTokenConfig,
 ): number | undefined {
   /** A partial override only covers the models it lists; fall back to the
@@ -604,7 +591,7 @@ export function getModelMaxTokens(
  */
 export function getModelMaxOutputTokens(
   modelName: string,
-  endpoint: EModelEndpoint = EModelEndpoint.openAI,
+  endpoint: EModelEndpoint = EModelEndpoint.custom,
   endpointTokenConfig?: EndpointTokenConfig,
 ): number | undefined {
   /** Partial override fallback — see getModelMaxTokens */
@@ -640,7 +627,7 @@ export function getModelMaxOutputTokens(
  */
 export function matchModelName(
   modelName: string,
-  endpoint: EModelEndpoint = EModelEndpoint.openAI,
+  endpoint: EModelEndpoint = EModelEndpoint.custom,
 ): string | undefined {
   if (typeof modelName !== 'string') {
     return undefined;

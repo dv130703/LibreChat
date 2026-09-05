@@ -1,6 +1,5 @@
 import { useMemo, useCallback, useState, useEffect, useRef } from 'react';
 import { easings } from '@react-spring/web';
-import { EModelEndpoint } from 'librechat-data-provider';
 import { BirthdayIcon, TooltipAnchor, SplitText } from '@librechat/client';
 import {
   getIconEndpoint,
@@ -55,10 +54,7 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
   const contentRef = useRef<HTMLDivElement>(null);
 
   const endpointType = useMemo(() => {
-    let ep = conversation?.endpoint ?? '';
-    if (ep === EModelEndpoint.azureOpenAI) {
-      ep = EModelEndpoint.openAI;
-    }
+    const ep = conversation?.endpoint ?? '';
     return getIconEndpoint({
       endpointsConfig,
       iconURL: conversation?.iconURL,

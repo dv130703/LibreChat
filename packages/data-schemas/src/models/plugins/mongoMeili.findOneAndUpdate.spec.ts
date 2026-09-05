@@ -105,7 +105,7 @@ describe('mongoMeili findOneAndUpdate with includeResultMetadata (saveConvo path
       conversationId,
       user,
       title: 'Original Title',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
     });
     mockAddDocuments.mockClear();
 
@@ -127,7 +127,7 @@ describe('mongoMeili findOneAndUpdate with includeResultMetadata (saveConvo path
 
     await conversationModel.findOneAndUpdate(
       { conversationId, user },
-      { $set: { title: 'Fresh Conversation', endpoint: EModelEndpoint.openAI } },
+      { $set: { title: 'Fresh Conversation', endpoint: EModelEndpoint.custom } },
       { new: true, upsert: true, includeResultMetadata: true },
     );
 
@@ -157,7 +157,7 @@ describe('mongoMeili findOneAndUpdate with includeResultMetadata (saveConvo path
       conversationId,
       user,
       title: 'Same Title',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
     });
     mockAddDocuments.mockClear();
     mockGetDocument.mockResolvedValueOnce({ conversationId, title: 'Same Title' });
@@ -177,7 +177,7 @@ describe('mongoMeili findOneAndUpdate with includeResultMetadata (saveConvo path
       conversationId,
       user,
       title: 'Temporary Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       isTemporary: true,
       expiredAt: new Date(Date.now() + 60 * 60 * 1000),
       _meiliIndex: false,

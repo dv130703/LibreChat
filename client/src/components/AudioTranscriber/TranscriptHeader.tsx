@@ -9,6 +9,7 @@ import {
   VolumeX,
   ChevronDown,
   FastForward,
+  AlertTriangle,
 } from 'lucide-react';
 import type { ChangeEvent, MouseEvent, RefObject, SyntheticEvent } from 'react';
 import { useLocalize } from '~/hooks';
@@ -18,6 +19,19 @@ import { computeAudioPeaks } from './audioPeaks';
 interface TranscriptHeaderProps {
   audioSrc: string | undefined;
   audioRef: RefObject<HTMLAudioElement>;
+  /** True once fetching a playable URL has definitively failed (react-query's
+   *  own retries exhausted) - distinct from simply not having `audioSrc` yet
+   *  because the fetch is still in flight. Drives a visible "couldn't load
+   *  the audio - retry" row instead of this component silently rendering
+   *  nothing with no way to recover, which is what it used to do (transcription/
+   *  ARCHITECTURE.md §12 #13) - `return null` for *any* missing `audioSrc`,
+   *  including a permanently failed one, left no trace the player was ever
+   *  supposed to be there at all. */
+  hasError?: boolean;
+  /** Re-attempts fetching a playable URL - wired to the same query's
+   *  `refetch`, exposed here so the retry row above can actually do
+   *  something instead of just naming the problem. */
+  onRetry?: () => void;
   /** `TranscriptPanel` arms a stop point when a transcript line is played
    *  bounded to just that line. This player's own controls (play, skip, the
    *  seek bar) have no notion of that and shouldn't inherit it - pressing
@@ -26,6 +40,17 @@ interface TranscriptHeaderProps {
    *  moves the playhead or resumes playback, so `TranscriptPanel` can retire
    *  a boundary that no longer applies. */
   onUnboundedPlaybackRequested: () => void;
+  /** Fires once, right after this component's `<audio>` element has mounted.
+   *  `TranscriptPanel` renders this component through `useChatHeaderSlot`,
+   *  which lifts it into `ChatPanelHost`'s own state rather than mounting it
+   *  directly - so on the render where `audioSrc` first becomes truthy, the
+   *  `<audio>` node doesn't exist in the DOM yet, and any effect in
+   *  `TranscriptPanel` that reads `audioRef.current` at that same moment
+   *  finds it `null`. React attaches `ref={audioRef}` during commit, strictly
+   *  before this component's own effects run, so by the time this fires,
+   *  `audioRef.current` is guaranteed to be the real node - safe to use as
+   *  the signal to (re-)attach listeners to it. */
+  onAudioMounted?: () => void;
 }
 
 /** How far the skip buttons jump. Long enough to matter, short enough to undo. */
@@ -130,7 +155,10 @@ const WaveformBars = memo(function WaveformBars({
 function TranscriptHeader({
   audioSrc,
   audioRef,
+  hasError,
+  onRetry,
   onUnboundedPlaybackRequested,
+  onAudioMounted,
 }: TranscriptHeaderProps) {
   const localize = useLocalize();
   const [currentTime, setCurrentTime] = useState(0);
@@ -163,6 +191,16 @@ function TranscriptHeader({
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(false);
+  }, [audioSrc]);
+
+  // Tells `TranscriptPanel` the `<audio>` node behind `audioRef` genuinely
+  // exists now - see `onAudioMounted`'s own doc comment for why it can't
+  // just assume that from `audioSrc` becoming truthy on its own.
+  useEffect(() => {
+    if (audioRef.current) {
+      onAudioMounted?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioSrc]);
 
   // A real reading of the actual recording, not a placeholder shape - decoded
@@ -389,7 +427,31 @@ function TranscriptHeader({
   const hoverBars = hoverRatio != null ? Math.round(hoverRatio * displayPeaks.length) : null;
 
   if (!audioSrc) {
-    return null;
+    // Still in flight (or has never been attempted) - nothing failed yet,
+    // so nothing to show; matches the pre-existing behavior for this case.
+    if (!hasError) {
+      return null;
+    }
+    // A definitive failure - unlike the old blob-download approach this
+    // replaced, this state is always recoverable: retrying costs nothing
+    // more than another cheap token-mint request, not a full re-download.
+    return (
+      <div className="p-2">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border-medium bg-surface-primary px-3 py-2.5 shadow-sm">
+          <div className="flex min-w-0 items-center gap-2 text-text-secondary">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" aria-hidden="true" />
+            <span className="truncate text-sm">{localize('com_ui_transcript_audio_error')}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onRetry?.()}
+            className="shrink-0 whitespace-nowrap rounded-md border border-border-medium px-2.5 py-1 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+          >
+            {localize('com_ui_retry')}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

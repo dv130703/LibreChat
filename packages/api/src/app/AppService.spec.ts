@@ -5,7 +5,6 @@ import {
   EImageOutputType,
   AgentCapabilities,
   defaultSocialLogins,
-  validateAzureGroups,
   defaultAgentCapabilities,
 } from 'librechat-data-provider';
 import type { TCustomConfig } from 'librechat-data-provider';
@@ -22,43 +21,6 @@ jest.mock('@librechat/data-schemas', () => ({
 }));
 
 import { AppService } from '@librechat/data-schemas';
-
-const azureGroups = [
-  {
-    group: 'librechat-westus',
-    apiKey: '${WESTUS_API_KEY}',
-    instanceName: 'librechat-westus',
-    version: '2023-12-01-preview',
-    models: {
-      'gpt-4-vision-preview': {
-        deploymentName: 'gpt-4-vision-preview',
-        version: '2024-02-15-preview',
-      },
-      'gpt-3.5-turbo': {
-        deploymentName: 'gpt-35-turbo',
-      },
-      'gpt-3.5-turbo-1106': {
-        deploymentName: 'gpt-35-turbo-1106',
-      },
-      'gpt-4': {
-        deploymentName: 'gpt-4',
-      },
-      'gpt-4-1106-preview': {
-        deploymentName: 'gpt-4-1106-preview',
-      },
-    },
-  },
-  {
-    group: 'librechat-eastus',
-    apiKey: '${EASTUS_API_KEY}',
-    instanceName: 'librechat-eastus',
-    deploymentName: 'gpt-4-turbo',
-    version: '2024-02-15-preview',
-    models: {
-      'gpt-4-turbo': true,
-    },
-  } as const,
-];
 
 /** Default agent capabilities served when no `memory` block is configured —
  *  `AppService` strips `memory` from the defaults since the capability is inert
@@ -247,36 +209,6 @@ describe('AppService', () => {
     });
   });
 
-  it('should correctly configure Assistants endpoint based on custom config', async () => {
-    const config: Partial<TCustomConfig> = {
-      endpoints: {
-        [EModelEndpoint.assistants]: {
-          disableBuilder: true,
-          pollIntervalMs: 5000,
-          timeoutMs: 30000,
-          supportedIds: ['id1', 'id2'],
-          privateAssistants: false,
-        },
-      },
-    };
-
-    const result = await AppService({ config });
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        endpoints: expect.objectContaining({
-          [EModelEndpoint.assistants]: expect.objectContaining({
-            disableBuilder: true,
-            pollIntervalMs: 5000,
-            timeoutMs: 30000,
-            supportedIds: expect.arrayContaining(['id1', 'id2']),
-            privateAssistants: false,
-          }),
-        }),
-      }),
-    );
-  });
-
   it('should correctly configure Agents endpoint based on custom config', async () => {
     const config: Partial<TCustomConfig> = {
       endpoints: {
@@ -321,90 +253,6 @@ describe('AppService', () => {
           [EModelEndpoint.agents]: expect.objectContaining({
             disableBuilder: false,
             capabilities: expect.arrayContaining([...defaultAgentCapabilitiesWithoutMemory]),
-          }),
-        }),
-      }),
-    );
-  });
-
-  it('should configure Agents endpoint with defaults when endpoints exist but agents is not defined', async () => {
-    const config = {
-      endpoints: {
-        [EModelEndpoint.openAI]: {
-          titleConvo: true,
-        },
-      },
-    };
-
-    const result = await AppService({ config });
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        endpoints: expect.objectContaining({
-          [EModelEndpoint.agents]: expect.objectContaining({
-            disableBuilder: false,
-            capabilities: expect.arrayContaining([...defaultAgentCapabilitiesWithoutMemory]),
-          }),
-          [EModelEndpoint.openAI]: expect.objectContaining({
-            titleConvo: true,
-          }),
-        }),
-      }),
-    );
-  });
-
-  it('should correctly configure minimum Azure OpenAI Assistant values', async () => {
-    const assistantGroups = [azureGroups[0], { ...azureGroups[1], assistants: true }];
-    const config = {
-      endpoints: {
-        [EModelEndpoint.azureOpenAI]: {
-          groups: assistantGroups,
-          assistants: true,
-        },
-      },
-    };
-
-    process.env.WESTUS_API_KEY = 'westus-key';
-    process.env.EASTUS_API_KEY = 'eastus-key';
-
-    const result = await AppService({ config });
-    expect(result).toEqual(
-      expect.objectContaining({
-        endpoints: expect.objectContaining({
-          [EModelEndpoint.azureAssistants]: expect.objectContaining({
-            capabilities: expect.arrayContaining([
-              expect.any(String),
-              expect.any(String),
-              expect.any(String),
-            ]),
-          }),
-        }),
-      }),
-    );
-  });
-
-  it('should correctly configure Azure OpenAI endpoint based on custom config', async () => {
-    const config: Partial<TCustomConfig> = {
-      endpoints: {
-        [EModelEndpoint.azureOpenAI]: {
-          groups: azureGroups,
-        },
-      },
-    };
-
-    process.env.WESTUS_API_KEY = 'westus-key';
-    process.env.EASTUS_API_KEY = 'eastus-key';
-
-    const result = await AppService({ config });
-
-    const { modelNames, modelGroupMap, groupMap } = validateAzureGroups(azureGroups);
-    expect(result).toEqual(
-      expect.objectContaining({
-        endpoints: expect.objectContaining({
-          [EModelEndpoint.azureOpenAI]: expect.objectContaining({
-            modelNames,
-            modelGroupMap,
-            groupMap,
           }),
         }),
       }),
@@ -483,64 +331,6 @@ describe('AppService', () => {
     expect(process.env.IMPORT_USER_WINDOW).toEqual('initialUserWindow');
   });
 
-  it('should correctly configure endpoint with titlePrompt, titleMethod, and titlePromptTemplate', async () => {
-    const config: Partial<TCustomConfig> = {
-      endpoints: {
-        [EModelEndpoint.openAI]: {
-          titleConvo: true,
-          titleModel: 'gpt-3.5-turbo',
-          titleMethod: 'structured',
-          titlePrompt: 'Custom title prompt for conversation',
-          titlePromptTemplate: 'Summarize this conversation: {{conversation}}',
-        },
-        [EModelEndpoint.assistants]: {
-          titleMethod: 'functions',
-          titlePrompt: 'Generate a title for this assistant conversation',
-          titlePromptTemplate: 'Assistant conversation template: {{messages}}',
-        },
-        [EModelEndpoint.azureOpenAI]: {
-          groups: azureGroups,
-          titleConvo: true,
-          titleMethod: 'completion',
-          titleModel: 'gpt-4',
-          titlePrompt: 'Azure title prompt',
-          titlePromptTemplate: 'Azure conversation: {{context}}',
-        },
-      },
-    };
-
-    const result = await AppService({ config });
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        endpoints: expect.objectContaining({
-          // Check OpenAI endpoint configuration
-          [EModelEndpoint.openAI]: expect.objectContaining({
-            titleConvo: true,
-            titleModel: 'gpt-3.5-turbo',
-            titleMethod: 'structured',
-            titlePrompt: 'Custom title prompt for conversation',
-            titlePromptTemplate: 'Summarize this conversation: {{conversation}}',
-          }),
-          // Check Assistants endpoint configuration
-          [EModelEndpoint.assistants]: expect.objectContaining({
-            titleMethod: 'functions',
-            titlePrompt: 'Generate a title for this assistant conversation',
-            titlePromptTemplate: 'Assistant conversation template: {{messages}}',
-          }),
-          // Check Azure OpenAI endpoint configuration
-          [EModelEndpoint.azureOpenAI]: expect.objectContaining({
-            titleConvo: true,
-            titleMethod: 'completion',
-            titleModel: 'gpt-4',
-            titlePrompt: 'Azure title prompt',
-            titlePromptTemplate: 'Azure conversation: {{context}}',
-          }),
-        }),
-      }),
-    );
-  });
-
   it('should configure Agent endpoint with title generation settings', async () => {
     const config: Partial<TCustomConfig> = {
       endpoints: {
@@ -583,43 +373,9 @@ describe('AppService', () => {
     );
   });
 
-  it('should handle missing title configuration options with defaults', async () => {
-    const config = {
-      endpoints: {
-        [EModelEndpoint.openAI]: {
-          titleConvo: true,
-          // titlePrompt and titlePromptTemplate are not provided
-        },
-      },
-    };
-
-    const result = await AppService({ config });
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        endpoints: expect.objectContaining({
-          [EModelEndpoint.openAI]: expect.objectContaining({
-            titleConvo: true,
-          }),
-        }),
-      }),
-    );
-
-    // Verify that optional fields are not set when not provided
-    expect(result.endpoints![EModelEndpoint.openAI]!.titlePrompt).toBeUndefined();
-    expect(result.endpoints![EModelEndpoint.openAI]!.titlePromptTemplate).toBeUndefined();
-    expect(result.endpoints![EModelEndpoint.openAI]!.titleMethod).toBeUndefined();
-  });
-
-  it('should correctly configure titleEndpoint when specified', async () => {
+  it('should correctly configure titleEndpoint when specified for Agents', async () => {
     const config: Partial<TCustomConfig> = {
       endpoints: {
-        [EModelEndpoint.openAI]: {
-          titleConvo: true,
-          titleModel: 'gpt-3.5-turbo',
-          titleEndpoint: EModelEndpoint.anthropic,
-          titlePrompt: 'Generate a concise title',
-        },
         [EModelEndpoint.agents]: {
           disableBuilder: false,
           capabilities: [AgentCapabilities.tools],
@@ -637,89 +393,9 @@ describe('AppService', () => {
     expect(result).toEqual(
       expect.objectContaining({
         endpoints: expect.objectContaining({
-          // Check OpenAI endpoint has titleEndpoint
-          [EModelEndpoint.openAI]: expect.objectContaining({
-            titleConvo: true,
-            titleModel: 'gpt-3.5-turbo',
-            titleEndpoint: EModelEndpoint.anthropic,
-            titlePrompt: 'Generate a concise title',
-          }),
-          // Check Agents endpoint has titleEndpoint
           [EModelEndpoint.agents]: expect.objectContaining({
             titleEndpoint: 'custom-provider',
             titleMethod: 'structured',
-          }),
-        }),
-      }),
-    );
-  });
-
-  it('should correctly configure Bedrock endpoint with models and inferenceProfiles', async () => {
-    const config: Partial<TCustomConfig> = {
-      endpoints: {
-        [EModelEndpoint.bedrock]: {
-          models: [
-            'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-            'global.anthropic.claude-opus-4-5-20251101-v1:0',
-          ],
-          inferenceProfiles: {
-            'us.anthropic.claude-3-7-sonnet-20250219-v1:0':
-              'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123',
-            'us.anthropic.claude-sonnet-4-5-20250929-v1:0': '${BEDROCK_SONNET_45_PROFILE}',
-          },
-          availableRegions: ['us-east-1', 'us-west-2'],
-          titleConvo: true,
-          titleModel: 'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-        },
-      },
-    };
-
-    const result = await AppService({ config });
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        endpoints: expect.objectContaining({
-          [EModelEndpoint.bedrock]: expect.objectContaining({
-            models: expect.arrayContaining([
-              'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-              'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-              'global.anthropic.claude-opus-4-5-20251101-v1:0',
-            ]),
-            inferenceProfiles: expect.objectContaining({
-              'us.anthropic.claude-3-7-sonnet-20250219-v1:0':
-                'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123',
-              'us.anthropic.claude-sonnet-4-5-20250929-v1:0': '${BEDROCK_SONNET_45_PROFILE}',
-            }),
-            availableRegions: expect.arrayContaining(['us-east-1', 'us-west-2']),
-            titleConvo: true,
-            titleModel: 'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-          }),
-        }),
-      }),
-    );
-  });
-
-  it('should configure Bedrock endpoint with only inferenceProfiles (no models array)', async () => {
-    const config: Partial<TCustomConfig> = {
-      endpoints: {
-        [EModelEndpoint.bedrock]: {
-          inferenceProfiles: {
-            'us.anthropic.claude-3-7-sonnet-20250219-v1:0': '${BEDROCK_INFERENCE_PROFILE_ARN}',
-          },
-        },
-      },
-    };
-
-    const result = await AppService({ config });
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        endpoints: expect.objectContaining({
-          [EModelEndpoint.bedrock]: expect.objectContaining({
-            inferenceProfiles: expect.objectContaining({
-              'us.anthropic.claude-3-7-sonnet-20250219-v1:0': '${BEDROCK_INFERENCE_PROFILE_ARN}',
-            }),
           }),
         }),
       }),
@@ -735,12 +411,8 @@ describe('AppService', () => {
           titleMethod: 'structured',
           titlePrompt: 'Default title prompt for all endpoints',
           titlePromptTemplate: 'Default template: {{conversation}}',
-          titleEndpoint: EModelEndpoint.anthropic,
+          titleEndpoint: 'custom-provider',
           streamRate: 50,
-        },
-        [EModelEndpoint.openAI]: {
-          titleConvo: true,
-          titleModel: 'gpt-3.5-turbo',
         },
       },
     };
@@ -757,13 +429,8 @@ describe('AppService', () => {
             titleMethod: 'structured',
             titlePrompt: 'Default title prompt for all endpoints',
             titlePromptTemplate: 'Default template: {{conversation}}',
-            titleEndpoint: EModelEndpoint.anthropic,
+            titleEndpoint: 'custom-provider',
             streamRate: 50,
-          }),
-          // Check that OpenAI endpoint has its own config
-          [EModelEndpoint.openAI]: expect.objectContaining({
-            titleConvo: true,
-            titleModel: 'gpt-3.5-turbo',
           }),
         }),
       }),
@@ -834,40 +501,6 @@ describe('AppService updating app config and issuing warnings', () => {
         balance: config.balance,
       }),
     );
-  });
-
-  it('should apply the assistants endpoint configuration correctly to app config', async () => {
-    const config: Partial<TCustomConfig> = {
-      endpoints: {
-        assistants: {
-          version: 'v2',
-          retrievalModels: ['gpt-4', 'gpt-3.5-turbo'],
-          capabilities: [],
-          disableBuilder: true,
-          pollIntervalMs: 5000,
-          timeoutMs: 30000,
-          supportedIds: ['id1', 'id2'],
-        },
-      },
-    };
-
-    const result = await AppService({ config });
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        endpoints: expect.objectContaining({
-          assistants: expect.objectContaining({
-            disableBuilder: true,
-            pollIntervalMs: 5000,
-            timeoutMs: 30000,
-            supportedIds: ['id1', 'id2'],
-          }),
-        }),
-      }),
-    );
-
-    // Verify excludedIds is undefined when not provided
-    expect(result.endpoints!.assistants!.excludedIds).toBeUndefined();
   });
 
   it('should not parse environment variable references in OCR config', async () => {

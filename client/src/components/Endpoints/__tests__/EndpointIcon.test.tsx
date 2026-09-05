@@ -37,7 +37,7 @@ jest.mock('~/components/Endpoints/MinimalIcon', () => ({
 
 const endpointsConfig = {
   [EModelEndpoint.agents]: { order: 0 },
-  [EModelEndpoint.google]: { order: 1 },
+  ['google']: { order: 1 },
 } as TEndpointsConfig;
 
 const agent = {
@@ -75,7 +75,7 @@ describe('EndpointIcon', () => {
       endpoint: EModelEndpoint.agents,
       agent_id: agent.id,
       spec: 'research-spec',
-      iconURL: EModelEndpoint.google,
+      iconURL: 'google',
     } as TConversation;
 
     render(
@@ -89,7 +89,7 @@ describe('EndpointIcon', () => {
     expect(screen.queryByTestId('convo-url-icon')).not.toBeInTheDocument();
     expect(screen.getByTestId('minimal-icon')).toHaveAttribute(
       'data-endpoint',
-      EModelEndpoint.google,
+      'google',
     );
   });
 });

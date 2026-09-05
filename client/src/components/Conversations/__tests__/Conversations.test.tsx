@@ -3,6 +3,7 @@ import { render } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { RecoilRoot } from 'recoil';
 import type { CellMeasurerCache, List } from 'react-virtualized';
+import { EModelEndpoint } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
 import Conversations from '../Conversations';
 import store from '~/store';
@@ -197,7 +198,7 @@ const pinnedConvo = {
   conversationId: 'pinned-1',
   title: 'Pinned Chat',
   pinned: true,
-  endpoint: 'openAI',
+  endpoint: EModelEndpoint.custom,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 } as TConversation;

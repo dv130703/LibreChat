@@ -164,16 +164,7 @@ export const useRevokeAllUserKeysMutation = (): UseMutationResult<unknown> => {
     onSuccess: () => {
       queryClient.invalidateQueries([QueryKeys.name]);
       queryClient.invalidateQueries([QueryKeys.tokenConfig]);
-      queryClient.invalidateQueries([
-        QueryKeys.assistants,
-        s.EModelEndpoint.assistants,
-        defaultOrderQuery,
-      ]);
-      queryClient.invalidateQueries([
-        QueryKeys.assistants,
-        s.EModelEndpoint.azureAssistants,
-        defaultOrderQuery,
-      ]);
+      queryClient.invalidateQueries([QueryKeys.assistants, defaultOrderQuery]);
       queryClient.invalidateQueries([QueryKeys.assistantDocs]);
       queryClient.invalidateQueries([QueryKeys.assistants]);
       queryClient.invalidateQueries([QueryKeys.assistant]);

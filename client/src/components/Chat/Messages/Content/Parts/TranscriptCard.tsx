@@ -81,13 +81,16 @@ function TranscriptCard({
   }
 
   let subtitle: React.ReactNode;
-  let onClick: React.MouseEventHandler<HTMLButtonElement> | undefined;
+  // Clickable in every non-`failed` state, not just `ready` - `TranscriptPanel`
+  // already renders a proper "queued"/"transcribing" state of its own (spinner
+  // + status text) when opened before the job finishes, so there's no reason to
+  // make the user wait for `ready` before they can even see the audio player.
+  const onClick: React.MouseEventHandler<HTMLButtonElement> = openTranscript;
 
   if (status === 'ready') {
     subtitle = (
       <div className="truncate text-text-secondary">{localize('com_ui_transcript_card_ready')}</div>
     );
-    onClick = openTranscript;
   } else {
     const label =
       status === 'transcribing'

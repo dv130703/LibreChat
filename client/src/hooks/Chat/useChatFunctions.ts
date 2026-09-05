@@ -290,7 +290,11 @@ export default function useChatFunctions({
     setShowStopButton(false);
 
     text = text.trim();
-    if (!!isSubmitting || text === '') {
+    /** A caption-less attachment ("just send the photo") is a valid submission —
+     *  only reject when there's truly nothing to send. */
+    const hasAttachments =
+      (files?.size ?? 0) > 0 || (Array.isArray(overrideFiles) && overrideFiles.length > 0);
+    if (!!isSubmitting || (text === '' && !hasAttachments)) {
       return;
     }
 

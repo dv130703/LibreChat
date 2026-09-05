@@ -7,14 +7,14 @@ describe('getModelSpecIconURL', () => {
     const modelSpec = {
       name: 'gemini-test',
       label: 'Gemini Test',
-      iconURL: EModelEndpoint.google,
+      iconURL: 'google',
       preset: {
-        endpoint: EModelEndpoint.openAI,
-        iconURL: EModelEndpoint.anthropic,
+        endpoint: EModelEndpoint.custom,
+        iconURL: 'anthropic',
       },
     } as TModelSpec;
 
-    expect(getModelSpecIconURL(modelSpec)).toBe(EModelEndpoint.google);
+    expect(getModelSpecIconURL(modelSpec)).toBe('google');
   });
 
   it('falls back to the preset icon URL when no spec icon is defined', () => {
@@ -22,12 +22,12 @@ describe('getModelSpecIconURL', () => {
       name: 'gemini-test',
       label: 'Gemini Test',
       preset: {
-        endpoint: EModelEndpoint.google,
-        iconURL: EModelEndpoint.openAI,
+        endpoint: 'google',
+        iconURL: EModelEndpoint.custom,
       },
     } as TModelSpec;
 
-    expect(getModelSpecIconURL(modelSpec)).toBe(EModelEndpoint.openAI);
+    expect(getModelSpecIconURL(modelSpec)).toBe(EModelEndpoint.custom);
   });
 
   it('falls back to the preset endpoint when no icon URL is defined', () => {
@@ -35,11 +35,11 @@ describe('getModelSpecIconURL', () => {
       name: 'gemini-test',
       label: 'Gemini Test',
       preset: {
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
       },
     } as TModelSpec;
 
-    expect(getModelSpecIconURL(modelSpec)).toBe(EModelEndpoint.google);
+    expect(getModelSpecIconURL(modelSpec)).toBe('google');
   });
 
   it('returns an empty icon when a runtime model spec is missing preset data', () => {

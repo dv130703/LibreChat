@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { v4 } from 'uuid';
 import debounce from 'lodash/debounce';
 import { useToastContext } from '@librechat/client';
@@ -13,9 +13,8 @@ import {
   isAssistantsEndpoint,
   getEndpointFileConfig,
   getConfiguredMimeAccept,
-  defaultAssistantsVersion,
 } from 'librechat-data-provider';
-import type { EModelEndpoint, TEndpointsConfig, TError } from 'librechat-data-provider';
+import type { EModelEndpoint, TError } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
 import type { ExtendedFile, FileSetter } from '~/common';
 import {
@@ -55,6 +54,10 @@ export type FileHandlingState = {
   setFiles: FileSetter;
   setFilesLoading?: React.Dispatch<React.SetStateAction<boolean>>;
   conversation?: TConversation | null;
+  /** Current leaf message id for `conversation`, used as the `parentMessageId`
+   *  of the synthetic message the transcribe-upload flow creates so it links
+   *  onto the existing branch instead of becoming a disconnected root. */
+  latestMessageId?: string;
 };
 
 const noop = () => {};
@@ -66,7 +69,7 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
   const [errors, setErrors] = useState<string[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { startUploadTimer, clearUploadTimer } = useDelayedUploadToast();
-  const { files, setFiles, conversation } = fileState;
+  const { files, setFiles, conversation, latestMessageId } = fileState;
   const setFilesLoading = fileState.setFilesLoading ?? noop;
   const setEphemeralAgent = useSetRecoilState(
     ephemeralAgentByConvoId(conversation?.conversationId ?? Constants.NEW_CONVO),
@@ -79,6 +82,7 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
   const { resizeImageIfNeeded } = useClientResize();
   const { interceptAudioVideo } = useTranscribeIntent();
   const navigate = useNavigate();
+  const [, setSearchParams] = useSearchParams();
   const hasSetConversation = useSetConvoContext();
   const transcribeAudioMutation = useTranscribeAudioMutation();
 
@@ -257,32 +261,6 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
       return;
     }
 
-    const convoModel = conversation?.model ?? '';
-    const convoAssistantId = conversation?.assistant_id ?? '';
-
-    if (!assistant_id) {
-      formData.append('message_file', 'true');
-    }
-
-    const endpointsConfig = queryClient.getQueryData<TEndpointsConfig>([QueryKeys.endpoints]);
-    const version = endpointsConfig?.[endpoint]?.version ?? defaultAssistantsVersion[endpoint];
-
-    if (!assistant_id && convoAssistantId) {
-      formData.append('version', version);
-      formData.append('model', convoModel);
-      formData.append('assistant_id', convoAssistantId);
-    }
-
-    const formVersion = (formData.get('version') ?? '') as string;
-    if (!formVersion) {
-      formData.append('version', version);
-    }
-
-    const formModel = (formData.get('model') ?? '') as string;
-    if (!formModel) {
-      formData.append('model', convoModel);
-    }
-
     uploadFile.mutate(formData);
   };
 
@@ -354,11 +332,15 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
     const isNewConversation =
       !existingConversationId || existingConversationId === Constants.NEW_CONVO;
     const targetConversationId = isNewConversation ? v4() : existingConversationId;
+    const parentMessageId = isNewConversation
+      ? Constants.NO_PARENT
+      : (latestMessageId ?? Constants.NO_PARENT);
 
     try {
       const formData = new FormData();
       formData.append('file', originalFile);
       formData.append('conversationId', targetConversationId);
+      formData.append('parentMessageId', parentMessageId);
       if (endpoint) {
         formData.append('endpoint', endpoint);
       }
@@ -367,28 +349,55 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
       }
       formData.append('options', JSON.stringify(result.options));
       const data = await transcribeAudioMutation.mutateAsync({ formData });
+      // The pending composer chip is discarded, not converted - the backend
+      // now creates a REAL message carrying this file (`POST /api/transcribe`,
+      // transcription/ARCHITECTURE.md #12), so the recording shows up as its
+      // own "submitted file" bubble in the conversation the instant upload
+      // finishes, the same way any other attachment does. That's a message
+      // fetched through the ordinary `useGetMessagesByConvoId` query - the
+      // same path every other conversation's history already renders through
+      // reliably - rather than depending on `filesByIndex` composer state
+      // surviving a conversation switch, which is what made the file
+      // disappear behind a blank pane in the previous attempt at this.
       deleteFileById(extendedFile.file_id);
+      queryClient.invalidateQueries([QueryKeys.messages, targetConversationId]);
       if (isNewConversation) {
         // `ChatRoute`'s own hydration effect only re-fetches/re-initializes
         // the conversation when `!hasSetConversation.current` (or a narrow
         // same-id project-mismatch case) - it was already `true` from the
         // draft this navigate is leaving, so without this reset the URL
         // changes but the chat pane silently keeps rendering the old empty
-        // "new" draft's state (a `TranscriptPanel` for a conversation id it
-        // never actually loaded, and "Nothing found" in the main pane) -
-        // exactly the bug `Workspace.tsx` used to guard against for the
-        // standalone page's own equivalent navigate, via the same ref.
+        // "new" draft's state - exactly the bug `Workspace.tsx` used to
+        // guard against for the standalone page's own equivalent navigate,
+        // via the same ref.
         hasSetConversation.current = false;
-        navigate(`/c/${data.conversationId}?panel=transcript`, { replace: true });
+        // Opens the transcript panel immediately, with the audio player and
+        // an empty transcript, instead of landing on a bare empty chat pane
+        // with nothing to do for the several minutes the job can take -
+        // matches the standalone page's old behavior for this exact case
+        // (see the function doc comment above).
+        navigate(
+          `/c/${data.conversationId}?panel=transcript&file=${encodeURIComponent(
+            data.sourceFile.file_id,
+          )}`,
+          { replace: true },
+        );
         return 'navigated';
       }
-      addFile({
-        file_id: data.sourceFile.file_id,
-        filename: data.sourceFile.filename,
-        type: originalFile.type,
-        size: originalFile.size,
-        progress: 1,
-      });
+      // Same reasoning for an already-open conversation - queuing the job
+      // leaves only an inert "Transcribing..." card in the message list
+      // (`TranscriptCard`) until the panel is opened, same several-minute
+      // dead end. Already on this conversation's URL, so just add the panel's
+      // query params to it instead of a full navigate.
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('panel', 'transcript');
+          next.set('file', data.sourceFile.file_id);
+          return next;
+        },
+        { replace: false },
+      );
     } catch (error) {
       console.error('transcribe upload error', error);
       deleteFileById(extendedFile.file_id);
@@ -614,13 +623,14 @@ export const useFileHandlingNoChatContext = (
 ) => useFileHandlingCore(params, fileState);
 
 const useFileHandling = (params?: UseFileHandling) => {
-  const { files, setFiles, setFilesLoading, conversation } = useChatContext();
+  const { files, setFiles, setFilesLoading, conversation, latestMessageId } = useChatContext();
 
   return useFileHandlingCore(params, {
     files,
     setFiles,
     conversation,
     setFilesLoading,
+    latestMessageId,
   });
 };
 

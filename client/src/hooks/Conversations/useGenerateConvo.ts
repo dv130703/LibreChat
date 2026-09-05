@@ -1,12 +1,7 @@
 import { useRecoilValue } from 'recoil';
 import { useCallback, useRef, useEffect } from 'react';
 import { useGetModelsQuery } from 'librechat-data-provider/react-query';
-import {
-  getEndpointField,
-  LocalStorageKeys,
-  isAssistantsEndpoint,
-  getDefaultParamsEndpoint,
-} from 'librechat-data-provider';
+import { getEndpointField, getDefaultParamsEndpoint } from 'librechat-data-provider';
 import type {
   TEndpointsConfig,
   EModelEndpoint,
@@ -14,9 +9,7 @@ import type {
   TConversation,
   TPreset,
 } from 'librechat-data-provider';
-import type { AssistantListItem } from '~/common';
 import type { SetterOrUpdater } from 'recoil';
-import useAssistantListMap from '~/hooks/Assistants/useAssistantListMap';
 import { buildDefaultConvo, getDefaultEndpoint, logger } from '~/utils';
 import { useGetEndpointsQuery } from '~/data-provider';
 import { mainTextareaId } from '~/common';
@@ -32,7 +25,6 @@ const useGenerateConvo = ({
   setConversation?: SetterOrUpdater<TConversation | null>;
 }) => {
   const modelsQuery = useGetModelsQuery();
-  const assistantsListMap = useAssistantListMap();
   const { data: endpointsConfig = {} as TEndpointsConfig } = useGetEndpointsQuery();
 
   const timeoutIdRef = useRef<NodeJS.Timeout>();
@@ -92,32 +84,7 @@ const useGenerateConvo = ({
         conversation.endpointType = undefined;
       }
 
-      const isAssistantEndpoint = isAssistantsEndpoint(defaultEndpoint);
-      const assistants: AssistantListItem[] = assistantsListMap[defaultEndpoint ?? ''] ?? [];
-
-      if (
-        conversation.assistant_id &&
-        !assistantsListMap[defaultEndpoint ?? '']?.[conversation.assistant_id]
-      ) {
-        conversation.assistant_id = undefined;
-      }
-
-      if (!conversation.assistant_id && isAssistantEndpoint) {
-        conversation.assistant_id =
-          localStorage.getItem(`${LocalStorageKeys.ASST_ID_PREFIX}${index}${defaultEndpoint}`) ??
-          assistants[0]?.id;
-      }
-
-      if (
-        conversation.assistant_id != null &&
-        isAssistantEndpoint &&
-        conversation.conversationId === 'new'
-      ) {
-        const assistant = assistants.find((asst) => asst.id === conversation.assistant_id);
-        conversation.model = assistant?.model;
-      }
-
-      if (conversation.assistant_id != null && !isAssistantEndpoint) {
+      if (conversation.assistant_id != null) {
         conversation.assistant_id = undefined;
       }
 
@@ -148,7 +115,7 @@ const useGenerateConvo = ({
       }, 150);
       return conversation;
     },
-    [assistantsListMap, endpointsConfig, index, modelsQuery.data, rootConvo, setConversation],
+    [endpointsConfig, modelsQuery.data, rootConvo, setConversation],
   );
 
   return { generateConversation };

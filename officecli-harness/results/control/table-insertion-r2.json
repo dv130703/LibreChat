@@ -1,0 +1,151 @@
+{
+  "trialId": "table-insertion-r2",
+  "scenarioId": "table-insertion",
+  "runIndex": 2,
+  "seed": 202,
+  "workspaceResetConfirmed": true,
+  "officeFilesInWorkspace": [
+    "schedule.docx"
+  ],
+  "deliveredFile": "schedule.docx",
+  "taskCompletion": "delivered",
+  "callValidity": {
+    "total": 8,
+    "valid": 8,
+    "rate": 1
+  },
+  "artifactCorrectness": {
+    "applicable": true,
+    "allPass": false,
+    "results": {
+      "markdownLeak": {
+        "pass": true,
+        "violations": []
+      },
+      "placeholderResidue": {
+        "pass": true,
+        "violations": []
+      },
+      "tableShape": {
+        "pass": false,
+        "violations": [
+          "header row not visually distinct (not bold)"
+        ],
+        "colCount": 2,
+        "rowCount": 5,
+        "headerBold": false
+      }
+    }
+  },
+  "hitContextLimit": true,
+  "promptTokensPerCall": [
+    3092,
+    7057,
+    7458,
+    7648,
+    7797,
+    7988,
+    8142,
+    4297
+  ],
+  "turns": 8,
+  "toolCallLog": [
+    {
+      "name": "create_document",
+      "arguments": {
+        "file_path": "schedule.docx"
+      },
+      "isError": false,
+      "resultText": "Created \"schedule.docx\". It is empty — use add_element to start adding content."
+    },
+    {
+      "name": "add_element",
+      "arguments": {
+        "parent_path": "/body",
+        "type": "table",
+        "properties": {
+          "columns": "2",
+          "rows": "5"
+        },
+        "file_path": "schedule.docx"
+      },
+      "isError": false,
+      "resultText": "Added table at /body/tbl[1]."
+    },
+    {
+      "name": "set_properties",
+      "arguments": {
+        "file_path": "schedule.docx",
+        "path": "/body/tbl[1]/tr[1]/tc[1]",
+        "properties": {
+          "text": "Project Phase"
+        }
+      },
+      "isError": false,
+      "resultText": "Updated \"/body/tbl[1]/tr[1]/tc[1]\": text=Project Phase."
+    },
+    {
+      "name": "set_properties",
+      "arguments": {
+        "properties": {
+          "text": "Target Completion Month"
+        },
+        "file_path": "schedule.docx",
+        "path": "/body/tbl[1]/tr[1]/tc[2]"
+      },
+      "isError": false,
+      "resultText": "Updated \"/body/tbl[1]/tr[1]/tc[2]\": text=Target Completion Month."
+    },
+    {
+      "name": "set_properties",
+      "arguments": {
+        "file_path": "schedule.docx",
+        "path": "/body/tbl[1]/tr[2]/tc[1]",
+        "properties": {
+          "text": "Planning"
+        }
+      },
+      "isError": false,
+      "resultText": "Updated \"/body/tbl[1]/tr[2]/tc[1]\": text=Planning."
+    },
+    {
+      "name": "set_properties",
+      "arguments": {
+        "file_path": "schedule.docx",
+        "path": "/body/tbl[1]/tr[2]/tc[2]",
+        "properties": {
+          "text": "March"
+        }
+      },
+      "isError": false,
+      "resultText": "Updated \"/body/tbl[1]/tr[2]/tc[2]\": text=March."
+    },
+    {
+      "name": "set_properties",
+      "arguments": {
+        "file_path": "schedule.docx",
+        "path": "/body/tbl[1]/tr[3]/tc[1]",
+        "properties": {
+          "text": "Design"
+        }
+      },
+      "isError": false,
+      "resultText": "Updated \"/body/tbl[1]/tr[3]/tc[1]\": text=Design."
+    },
+    {
+      "name": "set_properties",
+      "arguments": {
+        "path": "/body/tbl[1]/tr[3]/tc[2]",
+        "properties": {
+          "text": "June"
+        },
+        "file_path": "schedule.docx"
+      },
+      "isError": false,
+      "resultText": "Updated \"/body/tbl[1]/tr[3]/tc[2]\": text=June."
+    }
+  ],
+  "finalContent": "",
+  "timedOut": false,
+  "error": null
+}

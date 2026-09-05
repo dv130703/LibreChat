@@ -16,7 +16,7 @@ describe('cleanupPreset', () => {
   const basePreset = {
     presetId: 'test-preset-id',
     title: 'Test Preset',
-    endpoint: EModelEndpoint.openAI,
+    endpoint: 'openAI',
     model: 'gpt-4',
     temperature: 0.7,
   };
@@ -188,7 +188,7 @@ describe('cleanupPreset', () => {
 
       expect(result.presetId).toBe('test-preset-id');
       expect(result.title).toBe('Test Preset');
-      expect(result.endpoint).toBe(EModelEndpoint.openAI);
+      expect(result.endpoint).toBe('openAI');
       expect(result.modelLabel).toBe('Custom Model');
       expect(result.promptPrefix).toBe('Custom prompt:');
       expect(result.temperature).toBe(0.8);
@@ -229,12 +229,12 @@ describe('cleanupPreset', () => {
 
       cleanupPreset({
         preset,
-        defaultParamsEndpoint: EModelEndpoint.anthropic,
+        defaultParamsEndpoint: 'anthropic',
       });
 
       expect(parseConvo).toHaveBeenCalledWith(
         expect.objectContaining({
-          defaultParamsEndpoint: EModelEndpoint.anthropic,
+          defaultParamsEndpoint: 'anthropic',
         }),
       );
     });

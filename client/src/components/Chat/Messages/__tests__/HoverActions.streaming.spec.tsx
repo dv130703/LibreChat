@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { QueryKeys, type TConversation, type TMessage } from 'librechat-data-provider';
+import { QueryKeys, EModelEndpoint, type TConversation, type TMessage } from 'librechat-data-provider';
 import { ChatContext, MessagesViewProvider, useChatContext } from '~/Providers';
 import { useLatestMessage, useLatestMessageId } from '~/hooks/Messages/useLatestMessage';
 import Message from '~/components/Chat/Messages/Message';
@@ -79,7 +79,7 @@ jest.mock('~/hooks', () => {
 
 const conversation = {
   conversationId: 'conversation-streaming',
-  endpoint: 'openAI',
+  endpoint: EModelEndpoint.custom,
   model: 'gpt-4',
 } as TConversation;
 

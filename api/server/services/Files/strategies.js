@@ -71,7 +71,6 @@ const {
   prepareAzureImageURL,
   processAzureAvatar,
 } = require('./Azure');
-const { uploadOpenAIFile, deleteOpenAIFile, getOpenAIFileStream } = require('./OpenAI');
 const { deleteCodeEnvFile, getCodeOutputDownloadStream, uploadCodeEnvFile } = require('./Code');
 const { uploadVectors, deleteVectors } = require('./VectorDB');
 
@@ -178,29 +177,6 @@ const vectorStrategy = () => ({
   getDownloadStream: null,
   handleFileUpload: uploadVectors,
   deleteFile: deleteVectors,
-});
-
-/**
- * OpenAI Strategy Functions
- *
- * Note: null values mean that the strategy is not supported.
- * */
-const openAIStrategy = () => ({
-  /** @type {typeof saveFileFromURL | null} */
-  saveURL: null,
-  /** @type {typeof getLocalFileURL | null} */
-  getFileURL: null,
-  /** @type {typeof saveLocalBuffer | null} */
-  saveBuffer: null,
-  /** @type {typeof processLocalAvatar | null} */
-  processAvatar: null,
-  /** @type {typeof uploadLocalImage | null} */
-  handleImageUpload: null,
-  /** @type {typeof prepareImagesLocal | null} */
-  prepareImagePayload: null,
-  deleteFile: deleteOpenAIFile,
-  handleFileUpload: uploadOpenAIFile,
-  getDownloadStream: getOpenAIFileStream,
 });
 
 /**
@@ -312,10 +288,6 @@ const getStrategyFunctions = (fileSource) => {
     return firebaseStrategy();
   } else if (fileSource === FileSources.local) {
     return localStrategy();
-  } else if (fileSource === FileSources.openai) {
-    return openAIStrategy();
-  } else if (fileSource === FileSources.azure) {
-    return openAIStrategy();
   } else if (fileSource === FileSources.azure_blob) {
     return azureStrategy();
   } else if (fileSource === FileSources.vectordb) {

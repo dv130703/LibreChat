@@ -20,7 +20,7 @@ describe('modelSpecs helpers', () => {
           skills: ['private-skill'],
           subagents: { enabled: true, allowSelf: true, agent_ids: ['agent_private'] },
           preset: {
-            endpoint: EModelEndpoint.openAI,
+            endpoint: EModelEndpoint.custom,
             model: 'gpt-4o',
             promptPrefix: 'private prompt prefix',
             instructions: 'private assistant instructions',
@@ -40,7 +40,7 @@ describe('modelSpecs helpers', () => {
       allowSelf: true,
     });
     expect(sanitizedModelSpecs.list[0].preset).toEqual({
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       model: 'gpt-4o',
       greeting: 'Hello',
     });
@@ -57,7 +57,7 @@ describe('modelSpecs helpers', () => {
           label: 'Starter Spec',
           conversation_starters: ['Summarize an article', 'Plan my week'],
           preset: {
-            endpoint: EModelEndpoint.openAI,
+            endpoint: EModelEndpoint.custom,
             model: 'gpt-4o',
             promptPrefix: 'private prompt prefix',
           },
@@ -77,9 +77,9 @@ describe('modelSpecs helpers', () => {
     const modelSpec: TModelSpec = {
       name: 'guarded-openai',
       label: 'Guarded OpenAI',
-      iconURL: EModelEndpoint.openAI,
+      iconURL: EModelEndpoint.custom,
       preset: {
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         model: 'gpt-4o',
         promptPrefix: 'private prompt prefix',
         instructions: 'private instructions',
@@ -92,12 +92,12 @@ describe('modelSpecs helpers', () => {
     const { parsedBody, appliedPrivateFields } = applyModelSpecPreset({
       modelSpec,
       parsedBody: {
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         spec: 'guarded-openai',
         model: 'gpt-4o',
         temperature: 0.8,
       },
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
     });
 
     expect(parsedBody.promptPrefix).toBe('private prompt prefix');
@@ -105,7 +105,7 @@ describe('modelSpecs helpers', () => {
     expect(parsedBody.additional_instructions).toBeUndefined();
     expect(parsedBody.temperature).toBe(0.8);
     expect(parsedBody.maxContextTokens).toBeUndefined();
-    expect(parsedBody.iconURL).toBe(EModelEndpoint.openAI);
+    expect(parsedBody.iconURL).toBe(EModelEndpoint.custom);
     expect(appliedPrivateFields.has('promptPrefix')).toBe(true);
   });
 
@@ -114,7 +114,7 @@ describe('modelSpecs helpers', () => {
       name: 'enforced-openai',
       label: 'Enforced OpenAI',
       preset: {
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         model: 'gpt-4o',
         promptPrefix: 'private prompt prefix',
         temperature: 0.2,
@@ -124,14 +124,14 @@ describe('modelSpecs helpers', () => {
     const { parsedBody } = applyModelSpecPreset({
       modelSpec,
       parsedBody: {
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         spec: 'enforced-openai',
         model: 'client-model',
         temperature: 0.8,
         topP: 0.9,
         chatProjectId: 'project-1',
       },
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       includePresetDefaults: true,
     });
 
@@ -143,29 +143,28 @@ describe('modelSpecs helpers', () => {
     expect(parsedBody.chatProjectId).toBe('project-1');
   });
 
-  it('should restore private examples when parser supplies an empty default', () => {
-    const examples = [{ input: { content: 'hello' }, output: { content: 'world' } }];
+  it('should restore a private preset field when the parser supplies an empty default', () => {
     const modelSpec: TModelSpec = {
-      name: 'guarded-google',
-      label: 'Guarded Google',
+      name: 'guarded-custom',
+      label: 'Guarded Custom',
       preset: {
-        endpoint: EModelEndpoint.google,
-        model: 'gemini-pro',
-        examples,
+        endpoint: EModelEndpoint.custom,
+        model: 'llama3',
+        promptPrefix: 'private prompt prefix',
       },
     };
 
     const { parsedBody } = applyModelSpecPreset({
       modelSpec,
       parsedBody: {
-        endpoint: EModelEndpoint.google,
-        spec: 'guarded-google',
-        model: 'gemini-pro',
+        endpoint: EModelEndpoint.custom,
+        spec: 'guarded-custom',
+        model: 'llama3',
       },
-      endpoint: EModelEndpoint.google,
+      endpoint: EModelEndpoint.custom,
     });
 
-    expect(parsedBody.examples).toEqual(examples);
+    expect(parsedBody.promptPrefix).toBe('private prompt prefix');
   });
 
   it('should find specs and validate endpoint matches', () => {
@@ -173,14 +172,14 @@ describe('modelSpecs helpers', () => {
       name: 'guarded-openai',
       label: 'Guarded OpenAI',
       preset: {
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         model: 'gpt-4o',
       },
     };
 
     expect(findModelSpecByName({ list: [modelSpec] }, 'guarded-openai')).toBe(modelSpec);
-    expect(isModelSpecEndpointMatch(modelSpec, EModelEndpoint.openAI)).toBe(true);
-    expect(isModelSpecEndpointMatch(modelSpec, EModelEndpoint.google)).toBe(false);
+    expect(isModelSpecEndpointMatch(modelSpec, EModelEndpoint.custom)).toBe(true);
+    expect(isModelSpecEndpointMatch(modelSpec, 'google')).toBe(false);
   });
 
   it('should resolve special variables in model spec prompt prefixes', () => {

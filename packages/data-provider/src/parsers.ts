@@ -5,49 +5,21 @@ import type { ZodIssue } from 'zod';
 import type * as a from './types/assistants';
 import type * as s from './schemas';
 import type * as t from './types';
-import {
-  openAISchema,
-  openRouterSchema,
-  googleSchema,
-  EModelEndpoint,
-  Providers,
-  anthropicSchema,
-  assistantSchema,
-  // agentsSchema,
-  compactAgentsSchema,
-  compactGoogleSchema,
-  compactAssistantSchema,
-} from './schemas';
-import { bedrockInputSchema } from './bedrock';
+import { customSchema, EModelEndpoint, compactAgentsSchema } from './schemas';
 import { ContentTypes } from './types/runs';
 import { alternateName } from './config';
 
 dayjs.extend(utc);
 dayjs.extend(timezonePlugin);
 
-type EndpointSchema =
-  | typeof openAISchema
-  | typeof openRouterSchema
-  | typeof googleSchema
-  | typeof anthropicSchema
-  | typeof assistantSchema
-  | typeof compactAgentsSchema
-  | typeof bedrockInputSchema;
+type EndpointSchema = typeof customSchema | typeof compactAgentsSchema;
 
 export type EndpointSchemaKey = EModelEndpoint;
-type EndpointSchemaLookupKey = EModelEndpoint | Providers.OPENROUTER;
+type EndpointSchemaLookupKey = EModelEndpoint;
 
 const endpointSchemas: Record<EndpointSchemaLookupKey, EndpointSchema> = {
-  [EModelEndpoint.openAI]: openAISchema,
-  [EModelEndpoint.azureOpenAI]: openAISchema,
-  [EModelEndpoint.custom]: openAISchema,
-  [Providers.OPENROUTER]: openRouterSchema,
-  [EModelEndpoint.google]: googleSchema,
-  [EModelEndpoint.anthropic]: anthropicSchema,
-  [EModelEndpoint.assistants]: assistantSchema,
-  [EModelEndpoint.azureAssistants]: assistantSchema,
+  [EModelEndpoint.custom]: customSchema,
   [EModelEndpoint.agents]: compactAgentsSchema,
-  [EModelEndpoint.bedrock]: bedrockInputSchema,
 };
 
 const isEndpointSchemaLookupKey = (value?: string | null): value is EndpointSchemaLookupKey =>
@@ -74,16 +46,7 @@ const getFallbackEndpointSchema = <TSchema>(
 
 /** Get the enabled endpoints from the `ENDPOINTS` environment variable */
 export function getEnabledEndpoints() {
-  const defaultEndpoints: string[] = [
-    EModelEndpoint.openAI,
-    EModelEndpoint.agents,
-    EModelEndpoint.assistants,
-    EModelEndpoint.azureAssistants,
-    EModelEndpoint.azureOpenAI,
-    EModelEndpoint.google,
-    EModelEndpoint.anthropic,
-    EModelEndpoint.bedrock,
-  ];
+  const defaultEndpoints: string[] = [EModelEndpoint.agents, EModelEndpoint.custom];
 
   const endpointsEnv = process.env.ENDPOINTS ?? '';
   let enabledEndpoints = defaultEndpoints;
@@ -238,48 +201,6 @@ export const getResponseSender = (endpointOption: Partial<t.TEndpointOption>): s
   const modelDisplayLabel = _mdl ?? '';
   const chatGptLabel = _cgl ?? '';
   const modelLabel = _ml ?? '';
-  if (
-    [EModelEndpoint.openAI, EModelEndpoint.bedrock, EModelEndpoint.azureOpenAI].includes(endpoint)
-  ) {
-    if (modelLabel) {
-      return modelLabel;
-    } else if (chatGptLabel) {
-      // @deprecated - prefer modelLabel
-      return chatGptLabel;
-    } else if (model && extractOmniVersion(model)) {
-      return extractOmniVersion(model);
-    } else if (model && (model.includes('mistral') || model.includes('codestral'))) {
-      return 'Mistral';
-    } else if (model && model.includes('deepseek')) {
-      return 'Deepseek';
-    } else if (model && model.includes('kimi')) {
-      return 'Kimi';
-    } else if (model && model.includes('moonshot')) {
-      return 'Moonshot';
-    } else if (model && model.includes('gpt-')) {
-      const gptVersion = extractGPTVersion(model);
-      return gptVersion || 'GPT';
-    }
-    return (alternateName[endpoint] as string | undefined) ?? 'AI';
-  }
-
-  if (endpoint === EModelEndpoint.anthropic) {
-    return modelLabel || 'Claude';
-  }
-
-  if (endpoint === EModelEndpoint.bedrock) {
-    return modelLabel || alternateName[endpoint];
-  }
-
-  if (endpoint === EModelEndpoint.google) {
-    if (modelLabel) {
-      return modelLabel;
-    } else if (model?.toLowerCase().includes('gemma') === true) {
-      return 'Gemma';
-    }
-
-    return 'Gemini';
-  }
 
   if (endpoint === EModelEndpoint.custom || endpointType === EModelEndpoint.custom) {
     if (modelLabel) {
@@ -310,26 +231,11 @@ export const getResponseSender = (endpointOption: Partial<t.TEndpointOption>): s
   return '';
 };
 
-type CompactEndpointSchema =
-  | typeof openAISchema
-  | typeof compactAssistantSchema
-  | typeof compactAgentsSchema
-  | typeof compactGoogleSchema
-  | typeof openRouterSchema
-  | typeof anthropicSchema
-  | typeof bedrockInputSchema;
+type CompactEndpointSchema = typeof customSchema | typeof compactAgentsSchema;
 
 const compactEndpointSchemas: Record<EndpointSchemaLookupKey, CompactEndpointSchema> = {
-  [EModelEndpoint.openAI]: openAISchema,
-  [EModelEndpoint.azureOpenAI]: openAISchema,
-  [EModelEndpoint.custom]: openAISchema,
-  [Providers.OPENROUTER]: openRouterSchema,
-  [EModelEndpoint.assistants]: compactAssistantSchema,
-  [EModelEndpoint.azureAssistants]: compactAssistantSchema,
+  [EModelEndpoint.custom]: customSchema,
   [EModelEndpoint.agents]: compactAgentsSchema,
-  [EModelEndpoint.google]: compactGoogleSchema,
-  [EModelEndpoint.bedrock]: bedrockInputSchema,
-  [EModelEndpoint.anthropic]: anthropicSchema,
 };
 
 export const parseCompactConvo = ({

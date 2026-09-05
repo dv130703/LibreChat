@@ -20,9 +20,7 @@ import {
   EToolResources,
   EModelEndpoint,
   getConfiguredMimeAccept,
-  bedrockDocumentMimeTypes,
   defaultAgentCapabilities,
-  bedrockDocumentExtensions,
   isDocumentSupportedProvider,
 } from 'librechat-data-provider';
 import type {
@@ -46,12 +44,7 @@ import { ephemeralAgentByConvoId } from '~/store';
 import { MenuItemProps } from '~/common';
 import { cn } from '~/utils';
 
-type FileUploadType =
-  | 'image'
-  | 'document'
-  | 'image_document'
-  | 'image_document_extended'
-  | 'image_document_video_audio';
+type FileUploadType = 'image' | 'document' | 'image_document' | 'image_document_video_audio';
 
 /** What each provider upload path can actually send, used to scope the picker filter to selectable files.
  *  Every variant includes audio/video: a provider that can't natively attach a raw audio/video file
@@ -64,11 +57,7 @@ const fileTypeCapabilities: Record<FileUploadType, MimeUploadCapability> = {
   image: { categories: ['image'] },
   document: { categories: ['document'] },
   image_document: { categories: ['image', 'document', 'audio', 'video'] },
-  image_document_extended: {
-    categories: ['image', 'document', 'audio', 'video'],
-    documentMimeTypes: bedrockDocumentMimeTypes,
-  },
-  /** Google/Vertex/OpenRouter media path: documents are limited to PDF (see isProviderAttachType). */
+  /** OpenRouter media path: documents are limited to PDF (see isProviderAttachType). */
   image_document_video_audio: {
     categories: ['image', 'document', 'audio', 'video'],
     documentMimeTypes: ['application/pdf'],
@@ -82,7 +71,6 @@ interface AttachFileMenuProps {
   conversationId: string;
   endpointType?: EModelEndpoint | string;
   endpointFileConfig?: EndpointFileConfig;
-  useResponsesApi?: boolean;
   files: Map<string, ExtendedFile>;
   setFiles: FileSetter;
   setFilesLoading: React.Dispatch<React.SetStateAction<boolean>>;
@@ -96,7 +84,6 @@ const AttachFileMenu = ({
   endpointType,
   conversationId,
   endpointFileConfig,
-  useResponsesApi,
   files,
   setFiles,
   setFilesLoading,
@@ -162,8 +149,6 @@ const AttachFileMenu = ({
         inputRef.current.accept = '.pdf,application/pdf';
       } else if (fileType === 'image_document') {
         inputRef.current.accept = 'image/*,.heif,.heic,.pdf,application/pdf,video/*,audio/*';
-      } else if (fileType === 'image_document_extended') {
-        inputRef.current.accept = `image/*,.heif,.heic,${bedrockDocumentExtensions},video/*,audio/*`;
       } else if (fileType === 'image_document_video_audio') {
         inputRef.current.accept = 'image/*,.heif,.heic,.pdf,application/pdf,video/*,audio/*';
       } else {
@@ -190,28 +175,14 @@ const AttachFileMenu = ({
         currentProvider = Providers.OPENROUTER;
       }
 
-      const isAzureWithResponsesApi =
-        (currentProvider === EModelEndpoint.azureOpenAI ||
-          endpointType === EModelEndpoint.azureOpenAI) &&
-        useResponsesApi === true;
-
-      if (
-        isDocumentSupportedProvider(endpointType) ||
-        isDocumentSupportedProvider(currentProvider) ||
-        isAzureWithResponsesApi
-      ) {
+      if (isDocumentSupportedProvider(endpointType) || isDocumentSupportedProvider(currentProvider)) {
         items.push({
           label: localize('com_ui_upload_provider'),
           onClick: () => {
             setToolResource(undefined);
             let fileType: Exclude<FileUploadType, 'image' | 'document'> = 'image_document';
-            if (currentProvider === Providers.GOOGLE || currentProvider === Providers.OPENROUTER) {
+            if (currentProvider === Providers.OPENROUTER) {
               fileType = 'image_document_video_audio';
-            } else if (
-              currentProvider === Providers.BEDROCK ||
-              endpointType === EModelEndpoint.bedrock
-            ) {
-              fileType = 'image_document_extended';
             }
             onAction(fileType);
           },
@@ -295,7 +266,6 @@ const AttachFileMenu = ({
     provider,
     endpointType,
     capabilities,
-    useResponsesApi,
     handleUploadClick,
     setEphemeralAgent,
     sharePointEnabled,

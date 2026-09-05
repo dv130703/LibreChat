@@ -1,5 +1,10 @@
 import { renderHook, act } from '@testing-library/react';
-import { Constants, EModelEndpoint, getEndpointFileConfig } from 'librechat-data-provider';
+import {
+  Constants,
+  QueryKeys,
+  EModelEndpoint,
+  getEndpointFileConfig,
+} from 'librechat-data-provider';
 
 beforeAll(() => {
   global.URL.createObjectURL = jest.fn(() => 'blob:mock-url');
@@ -22,10 +27,12 @@ const mockShowToast = jest.fn();
 const mockSetFilesLoading = jest.fn();
 const mockMutate = jest.fn();
 const mockNavigate = jest.fn();
+const mockSetSearchParams = jest.fn();
 const mockHasSetConversation = { current: true };
 
 jest.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
+  useSearchParams: () => [new URLSearchParams(), mockSetSearchParams],
 }));
 
 jest.mock('~/Providers/SetConvoContext', () => ({
@@ -38,6 +45,7 @@ const mockLocalize = jest.fn((key: string) => key);
 
 let mockConversation: Record<string, string | null | undefined> = {};
 let mockIsTemporary = false;
+let mockLatestMessageId: string | undefined;
 
 jest.mock('~/Providers/ChatContext', () => ({
   useChatContext: jest.fn(() => ({
@@ -45,6 +53,7 @@ jest.mock('~/Providers/ChatContext', () => ({
     setFiles: jest.fn(),
     setFilesLoading: mockSetFilesLoading,
     conversation: mockConversation,
+    latestMessageId: mockLatestMessageId,
   })),
 }));
 
@@ -66,10 +75,13 @@ jest.mock('~/store', () => ({
   ephemeralAgentByConvoId: jest.fn(() => ({ key: 'mock' })),
 }));
 
+const mockInvalidateQueries = jest.fn();
+
 jest.mock('@tanstack/react-query', () => ({
   useQueryClient: jest.fn(() => ({
     getQueryData: jest.fn(),
     refetchQueries: jest.fn(),
+    invalidateQueries: mockInvalidateQueries,
   })),
 }));
 
@@ -122,10 +134,12 @@ jest.mock('../useClientResize', () => ({
   })),
 }));
 
+const mockAddFile = jest.fn();
+
 jest.mock('../useUpdateFiles', () => ({
   __esModule: true,
   default: jest.fn(() => ({
-    addFile: jest.fn(),
+    addFile: mockAddFile,
     replaceFile: jest.fn(),
     updateFileById: jest.fn(),
     deleteFileById: jest.fn(),
@@ -151,6 +165,7 @@ describe('useFileHandling', () => {
     mockProcessFileForUpload.mockImplementation(async (file: File) => file);
     mockConversation = {};
     mockIsTemporary = false;
+    mockLatestMessageId = undefined;
     // Mirrors the real-world starting state: the draft the user typed into
     // before dropping the file already hydrated once, same as ChatRoute
     // leaves it set for every conversation after the first.
@@ -502,10 +517,27 @@ describe('useFileHandling', () => {
       // A real, minted id - not the literal "new" placeholder the draft carried.
       expect(formData.get('conversationId')).not.toBe(Constants.NEW_CONVO);
       expect(formData.get('conversationId')).toEqual(expect.any(String));
+      // A brand-new conversation has no leaf message to link onto.
+      expect(formData.get('parentMessageId')).toBe(Constants.NO_PARENT);
       expect(mockMutate).not.toHaveBeenCalled();
-      expect(mockNavigate).toHaveBeenCalledWith('/c/minted-convo-id?panel=transcript', {
-        replace: true,
-      });
+      // The backend now creates a real message carrying this file (transcription/
+      // ARCHITECTURE.md #12), so there's no composer chip to add anymore -
+      // just a navigate into the conversation the message already lives in,
+      // with the transcript panel opened immediately (audio + empty transcript)
+      // instead of leaving the user looking at a bare chat pane for however
+      // long the transcription job takes.
+      expect(mockNavigate).toHaveBeenCalledWith(
+        '/c/minted-convo-id?panel=transcript&file=source-file-1',
+        { replace: true },
+      );
+      // Only the initial pending-upload placeholder - no second `addFile`
+      // for the transcribed source file, since it's carried by the real
+      // message the backend created instead of a composer chip.
+      expect(mockAddFile).toHaveBeenCalledTimes(1);
+      expect(mockAddFile).not.toHaveBeenCalledWith(
+        expect.objectContaining({ file_id: 'source-file-1' }),
+      );
+      expect(mockInvalidateQueries).toHaveBeenCalledWith([QueryKeys.messages, expect.any(String)]);
       // Real bug this guards: without this reset, `ChatRoute`'s hydration
       // effect skips re-initializing the conversation for the new id (it
       // was already `true` from the draft being left behind), so the URL
@@ -553,12 +585,13 @@ describe('useFileHandling', () => {
       expect(mockNavigate).toHaveBeenCalledTimes(1);
     });
 
-    it('queues against the existing conversation and adds a composer chip, without navigating', async () => {
+    it('queues against the existing conversation, refreshes its message list, and opens the transcript panel in place', async () => {
       mockConversation = {
         conversationId: 'existing-convo-id',
         endpoint: 'openAI',
         endpointType: 'openAI',
       };
+      mockLatestMessageId = 'leaf-message-id';
       mockInterceptAudioVideo.mockResolvedValueOnce({
         action: 'transcribe',
         options: { includeTimestamps: true, diarize: true },
@@ -582,9 +615,29 @@ describe('useFileHandling', () => {
       expect(mockTranscribeMutateAsync).toHaveBeenCalledTimes(1);
       const formData: FormData = mockTranscribeMutateAsync.mock.calls[0][0].formData;
       expect(formData.get('conversationId')).toBe('existing-convo-id');
+      // The new message links onto the conversation's current branch, not a
+      // fresh root - dropped mid-conversation, not at the start of one.
+      expect(formData.get('parentMessageId')).toBe('leaf-message-id');
+      // Already on this conversation's URL - the panel opens by adding query
+      // params to it, not a full navigate (which would be a needless remount).
       expect(mockNavigate).not.toHaveBeenCalled();
+      // Only the initial pending-upload placeholder - no second `addFile`
+      // for the transcribed source file (carried by the real message now).
+      expect(mockAddFile).toHaveBeenCalledTimes(1);
+      expect(mockAddFile).not.toHaveBeenCalledWith(
+        expect.objectContaining({ file_id: 'source-file-1' }),
+      );
+      expect(mockInvalidateQueries).toHaveBeenCalledWith([QueryKeys.messages, 'existing-convo-id']);
       // No navigation, no reason to touch the hydration flag.
       expect(mockHasSetConversation.current).toBe(true);
+      // Opens the transcript panel immediately - the audio player and an
+      // empty/loading transcript - instead of leaving only the inert
+      // `TranscriptCard` "Transcribing..." chip with nothing to look at.
+      expect(mockSetSearchParams).toHaveBeenCalledTimes(1);
+      const updater = mockSetSearchParams.mock.calls[0][0];
+      const nextParams = updater(new URLSearchParams());
+      expect(nextParams.get('panel')).toBe('transcript');
+      expect(nextParams.get('file')).toBe('source-file-1');
     });
   });
 });

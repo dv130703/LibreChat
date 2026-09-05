@@ -279,12 +279,9 @@ describe('initializeAgent — custom provider token lookup', () => {
       db,
     );
 
-    // providerEndpointMap["openAI"] = "openAI" (valid), not providerEndpointMap["EduGPT"] = undefined
-    expect(mockGetModelMaxTokens).toHaveBeenCalledWith(
-      'qwen3-235b-a22b',
-      EModelEndpoint.openAI,
-      undefined,
-    );
+    // providerEndpointMap is empty, so the endpoint arg is undefined — getModelMaxTokens
+    // falls back to its own default (EModelEndpoint.custom) internally.
+    expect(mockGetModelMaxTokens).toHaveBeenCalledWith('qwen3-235b-a22b', undefined, undefined);
   });
 
   it('uses endpointTokenConfig from the custom endpoint for unrecognized models', async () => {
@@ -314,7 +311,7 @@ describe('initializeAgent — custom provider token lookup', () => {
 
     expect(mockGetModelMaxTokens).toHaveBeenCalledWith(
       'my-custom-model-v1',
-      EModelEndpoint.openAI,
+      undefined,
       customTokenConfig,
     );
 

@@ -1,18 +1,8 @@
 import { useMemo, useCallback } from 'react';
-import { EModelEndpoint } from 'librechat-data-provider';
 import { useUserKeyQuery, useUpdateUserKeysMutation } from 'librechat-data-provider/react-query';
-import { useGetEndpointsQuery } from '~/data-provider';
 
 const useUserKey = (endpoint: string) => {
-  const { data: endpointsConfig } = useGetEndpointsQuery();
-  const config = endpointsConfig?.[endpoint ?? ''];
-
-  const { azure } = config ?? {};
-  let keyName = endpoint;
-
-  if (azure) {
-    keyName = EModelEndpoint.azureOpenAI;
-  }
+  const keyName = endpoint;
 
   const updateKey = useUpdateUserKeysMutation();
   const checkUserKey = useUserKeyQuery(keyName);

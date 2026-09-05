@@ -71,11 +71,6 @@ async function deleteConversationCascade(req, conversationIds) {
   await db.deleteTranscriptCorrections(conversationIds);
 }
 
-const assistantClients = {
-  [EModelEndpoint.azureAssistants]: require('~/server/services/Endpoints/azureAssistants'),
-  [EModelEndpoint.assistants]: require('~/server/services/Endpoints/assistants'),
-};
-
 const router = express.Router();
 router.use(requireJwtAuth);
 
@@ -174,20 +169,6 @@ router.delete('/', configMiddleware, async (req, res) => {
     filter = { conversationId };
   } else if (source === 'button') {
     return res.status(200).send('No conversationId provided');
-  }
-
-  if (
-    typeof endpoint !== 'undefined' &&
-    Object.prototype.propertyIsEnumerable.call(assistantClients, endpoint)
-  ) {
-    /** @type {{ openai: OpenAI }} */
-    const { openai } = await assistantClients[endpoint].initializeClient({ req, res });
-    try {
-      const response = await openai.beta.threads.delete(thread_id);
-      logger.debug('Deleted OpenAI thread:', response);
-    } catch (error) {
-      logger.error('Error deleting OpenAI thread:', error);
-    }
   }
 
   try {

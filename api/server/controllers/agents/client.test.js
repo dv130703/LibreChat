@@ -2,6 +2,11 @@ const { Providers } = require('@librechat/agents');
 const { Constants, ContentTypes, EModelEndpoint } = require('librechat-data-provider');
 const AgentClient = require('./client');
 
+/** Name of the mock custom (Ollama-style) endpoint used as `agent.provider`/`agent.endpoint`
+ *  throughout these tests — `getProviderConfig` resolves any provider through a name match
+ *  against `appConfig.endpoints.custom`, so tests must register a matching entry. */
+const TEST_PROVIDER_NAME = 'Ollama';
+
 jest.mock('@librechat/agents', () => ({
   ...jest.requireActual('@librechat/agents'),
   createMetadataAggregator: () => ({
@@ -96,8 +101,9 @@ describe('AgentClient - titleConvo', () => {
     // Mock agent - with both endpoint and provider
     mockAgent = {
       id: 'agent-123',
-      endpoint: EModelEndpoint.openAI, // Use a valid provider as endpoint for getProviderConfig
-      provider: EModelEndpoint.openAI, // Add provider property
+      // Named custom endpoint (e.g. Ollama) used as the provider for getProviderConfig
+      endpoint: TEST_PROVIDER_NAME,
+      provider: TEST_PROVIDER_NAME,
       model_parameters: {
         model: 'gpt-4',
       },
@@ -110,18 +116,23 @@ describe('AgentClient - titleConvo', () => {
       },
       body: {
         model: 'gpt-4',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: TEST_PROVIDER_NAME,
         key: null,
       },
       config: {
         endpoints: {
-          [EModelEndpoint.openAI]: {
-            // Match the agent endpoint
-            titleModel: 'gpt-3.5-turbo',
-            titlePrompt: 'Custom title prompt',
-            titleMethod: 'structured',
-            titlePromptTemplate: 'Template: {{content}}',
-          },
+          [EModelEndpoint.custom]: [
+            {
+              // Match the agent endpoint
+              name: TEST_PROVIDER_NAME,
+              apiKey: 'ollama',
+              baseURL: 'http://localhost:11434/v1',
+              titleModel: 'gpt-3.5-turbo',
+              titlePrompt: 'Custom title prompt',
+              titleMethod: 'structured',
+              titlePromptTemplate: 'Template: {{content}}',
+            },
+          ],
         },
       },
     };
@@ -251,54 +262,15 @@ describe('AgentClient - titleConvo', () => {
       expect(generateTitleCall.clientOptions.model).toBe('gpt-3.5-turbo');
     });
 
-    it('preserves Anthropic custom headers on title requests despite omitTitleOptions', async () => {
-      const prevKey = process.env.ANTHROPIC_API_KEY;
-      process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
-      try {
-        const req = {
-          user: { id: 'user-123' },
-          body: { model: 'claude-sonnet-4-5', endpoint: EModelEndpoint.anthropic, key: null },
-          config: {
-            endpoints: {
-              [EModelEndpoint.anthropic]: {
-                headers: { 'X-Conversation-Id': '{{LIBRECHAT_BODY_CONVERSATIONID}}' },
-              },
-            },
-          },
-        };
-        const agent = {
-          id: 'agent-anthropic',
-          endpoint: EModelEndpoint.anthropic,
-          provider: EModelEndpoint.anthropic,
-          model_parameters: { model: 'claude-sonnet-4-5' },
-        };
-        const anthropicClient = new AgentClient({ req, res: {}, agent, endpointTokenConfig: {} });
-        anthropicClient.run = mockRun;
-        anthropicClient.responseMessageId = 'response-123';
-        anthropicClient.conversationId = 'convo-123';
-        anthropicClient.contentParts = [{ type: 'text', text: 'Test content' }];
-        anthropicClient.recordCollectedUsage = jest.fn().mockResolvedValue();
-
-        await anthropicClient.titleConvo({ text: 'Hello', abortController: new AbortController() });
-
-        const defaultHeaders =
-          mockRun.generateTitle.mock.calls[0][0].clientOptions?.clientOptions?.defaultHeaders;
-        // Custom header survives the `omitTitleOptions` strip and resolves the conversationId
-        expect(defaultHeaders?.['X-Conversation-Id']).toBe('convo-123');
-        // Provider-managed beta header is preserved alongside it
-        expect(defaultHeaders?.['anthropic-beta']).toBeDefined();
-      } finally {
-        if (prevKey === undefined) {
-          delete process.env.ANTHROPIC_API_KEY;
-        } else {
-          process.env.ANTHROPIC_API_KEY = prevKey;
-        }
-      }
-    });
-
     it('should handle missing endpoint config gracefully', async () => {
-      // Remove endpoint config
-      mockReq.config = { endpoints: {} };
+      // Endpoint is registered, but carries no title-specific settings
+      mockReq.config = {
+        endpoints: {
+          [EModelEndpoint.custom]: [
+            { name: TEST_PROVIDER_NAME, apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' },
+          ],
+        },
+      };
 
       const text = 'Test conversation text';
       const abortController = new AbortController();
@@ -318,12 +290,17 @@ describe('AgentClient - titleConvo', () => {
       // Remove titleModel from config
       mockReq.config = {
         endpoints: {
-          [EModelEndpoint.openAI]: {
-            titlePrompt: 'Custom title prompt',
-            titleMethod: 'structured',
-            titlePromptTemplate: 'Template: {{content}}',
-            // titleModel is omitted
-          },
+          [EModelEndpoint.custom]: [
+            {
+              name: TEST_PROVIDER_NAME,
+              apiKey: 'ollama',
+              baseURL: 'http://localhost:11434/v1',
+              titlePrompt: 'Custom title prompt',
+              titleMethod: 'structured',
+              titlePromptTemplate: 'Template: {{content}}',
+              // titleModel is omitted
+            },
+          ],
         },
       };
 
@@ -339,12 +316,17 @@ describe('AgentClient - titleConvo', () => {
     it('should not use titleModel when it equals CURRENT_MODEL constant', async () => {
       mockReq.config = {
         endpoints: {
-          [EModelEndpoint.openAI]: {
-            titleModel: Constants.CURRENT_MODEL,
-            titlePrompt: 'Custom title prompt',
-            titleMethod: 'structured',
-            titlePromptTemplate: 'Template: {{content}}',
-          },
+          [EModelEndpoint.custom]: [
+            {
+              name: TEST_PROVIDER_NAME,
+              apiKey: 'ollama',
+              baseURL: 'http://localhost:11434/v1',
+              titleModel: Constants.CURRENT_MODEL,
+              titlePrompt: 'Custom title prompt',
+              titleMethod: 'structured',
+              titlePromptTemplate: 'Template: {{content}}',
+            },
+          ],
         },
       };
 
@@ -455,13 +437,18 @@ describe('AgentClient - titleConvo', () => {
       // Set titleConvo to false in endpoint config
       mockReq.config = {
         endpoints: {
-          [EModelEndpoint.openAI]: {
-            titleConvo: false,
-            titleModel: 'gpt-3.5-turbo',
-            titlePrompt: 'Custom title prompt',
-            titleMethod: 'structured',
-            titlePromptTemplate: 'Template: {{content}}',
-          },
+          [EModelEndpoint.custom]: [
+            {
+              name: TEST_PROVIDER_NAME,
+              apiKey: 'ollama',
+              baseURL: 'http://localhost:11434/v1',
+              titleConvo: false,
+              titleModel: 'gpt-3.5-turbo',
+              titlePrompt: 'Custom title prompt',
+              titleMethod: 'structured',
+              titlePromptTemplate: 'Template: {{content}}',
+            },
+          ],
         },
       };
 
@@ -503,6 +490,9 @@ describe('AgentClient - titleConvo', () => {
       // Set titleConvo to false in "all" config
       mockReq.config = {
         endpoints: {
+          [EModelEndpoint.custom]: [
+            { name: TEST_PROVIDER_NAME, apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' },
+          ],
           all: {
             titleConvo: false,
             titleModel: 'gpt-4o-mini',
@@ -534,45 +524,36 @@ describe('AgentClient - titleConvo', () => {
       //
       // The code path is:
       // 1. endpoints?.all is checked (undefined in this test)
-      // 2. endpoints?.[endpoint] is checked (our test config)
-      // 3. Would fall back to titleProviderConfig.customEndpointConfig (for real custom endpoints)
-      //
-      // We simulate a custom endpoint scenario using a dynamically named endpoint config
+      // 2. endpoints?.[endpoint] is checked (undefined — custom endpoints aren't top-level keys)
+      // 3. Falls back to titleProviderConfig.customEndpointConfig, resolved by name from
+      //    endpoints.custom[] (the real shape a custom endpoint config takes)
 
-      // Create a unique endpoint name that represents a custom endpoint
       const customEndpointName = 'customEndpoint';
 
-      // Configure the endpoint to have titleConvo: false
-      // This simulates what would be in customEndpointConfig for a real custom endpoint
       mockReq.config = {
         endpoints: {
-          // No 'all' config - so it will check endpoints[endpoint]
-          // This config represents what customEndpointConfig would contain
-          [customEndpointName]: {
-            titleConvo: false,
-            titleModel: 'custom-model-v1',
-            titlePrompt: 'Custom endpoint title prompt',
-            titleMethod: 'completion',
-            titlePromptTemplate: 'Custom template: {{content}}',
-            baseURL: 'https://api.custom-llm.com/v1',
-            apiKey: 'test-custom-key',
-            // Additional custom endpoint properties
-            models: {
-              default: ['custom-model-v1', 'custom-model-v2'],
+          // No 'all' config - so it will check endpoints[endpoint], then customEndpointConfig
+          [EModelEndpoint.custom]: [
+            {
+              name: customEndpointName,
+              titleConvo: false,
+              titleModel: 'custom-model-v1',
+              titlePrompt: 'Custom endpoint title prompt',
+              titleMethod: 'completion',
+              titlePromptTemplate: 'Custom template: {{content}}',
+              baseURL: 'https://api.custom-llm.com/v1',
+              apiKey: 'test-custom-key',
+              models: {
+                default: ['custom-model-v1', 'custom-model-v2'],
+              },
             },
-          },
+          ],
         },
       };
 
-      // Set up agent to use our custom endpoint
-      // Use openAI as base but override with custom endpoint name for this test
-      mockAgent.endpoint = EModelEndpoint.openAI;
-      mockAgent.provider = EModelEndpoint.openAI;
-
-      // Override the endpoint in the config to point to our custom config
-      mockReq.config.endpoints[EModelEndpoint.openAI] =
-        mockReq.config.endpoints[customEndpointName];
-      delete mockReq.config.endpoints[customEndpointName];
+      // Set up agent to use our named custom endpoint
+      mockAgent.endpoint = customEndpointName;
+      mockAgent.provider = customEndpointName;
 
       const text = 'Test custom endpoint conversation';
       const abortController = new AbortController();
@@ -589,51 +570,14 @@ describe('AgentClient - titleConvo', () => {
       expect(client.recordCollectedUsage).not.toHaveBeenCalled();
     });
 
-    it('should pass titleEndpoint configuration to generateTitle', async () => {
-      // Mock the API key just for this test
-      const originalApiKey = process.env.ANTHROPIC_API_KEY;
-      process.env.ANTHROPIC_API_KEY = 'test-api-key';
-
-      // Add titleEndpoint to the config
-      mockReq.config = {
-        endpoints: {
-          [EModelEndpoint.openAI]: {
-            titleModel: 'gpt-3.5-turbo',
-            titleEndpoint: EModelEndpoint.anthropic,
-            titleMethod: 'structured',
-            titlePrompt: 'Custom title prompt',
-            titlePromptTemplate: 'Custom template',
-          },
-        },
-      };
-
-      const text = 'Test conversation text';
-      const abortController = new AbortController();
-
-      await client.titleConvo({ text, abortController });
-
-      // Verify generateTitle was called with the custom configuration
-      expect(mockRun.generateTitle).toHaveBeenCalledWith(
-        expect.objectContaining({
-          titleMethod: 'structured',
-          provider: Providers.ANTHROPIC,
-          titlePrompt: 'Custom title prompt',
-          titlePromptTemplate: 'Custom template',
-        }),
-      );
-
-      // Restore the original API key
-      if (originalApiKey) {
-        process.env.ANTHROPIC_API_KEY = originalApiKey;
-      } else {
-        delete process.env.ANTHROPIC_API_KEY;
-      }
-    });
 
     it('should use all config when endpoint config is missing', async () => {
       // Set 'all' config without endpoint-specific config
       mockReq.config = {
         endpoints: {
+          [EModelEndpoint.custom]: [
+            { name: TEST_PROVIDER_NAME, apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' },
+          ],
           all: {
             titleModel: 'gpt-4o-mini',
             titlePrompt: 'All config title prompt',
@@ -666,12 +610,17 @@ describe('AgentClient - titleConvo', () => {
       // Set both endpoint and 'all' config
       mockReq.config = {
         endpoints: {
-          [EModelEndpoint.openAI]: {
-            titleModel: 'gpt-3.5-turbo',
-            titlePrompt: 'Endpoint title prompt',
-            titleMethod: 'structured',
-            // titlePromptTemplate is omitted to test fallback
-          },
+          [EModelEndpoint.custom]: [
+            {
+              name: TEST_PROVIDER_NAME,
+              apiKey: 'ollama',
+              baseURL: 'http://localhost:11434/v1',
+              titleModel: 'gpt-3.5-turbo',
+              titlePrompt: 'Endpoint title prompt',
+              titleMethod: 'structured',
+              // titlePromptTemplate is omitted to test fallback
+            },
+          ],
           all: {
             titleModel: 'gpt-4o-mini',
             titlePrompt: 'All config title prompt',
@@ -700,60 +649,6 @@ describe('AgentClient - titleConvo', () => {
       expect(generateTitleCall.clientOptions.model).toBe('gpt-4o-mini');
     });
 
-    it('should use all config with titleEndpoint and verify provider switch', async () => {
-      // Mock the API key for the titleEndpoint provider
-      const originalApiKey = process.env.ANTHROPIC_API_KEY;
-      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
-
-      // Set comprehensive 'all' config with all new title options
-      mockReq.config = {
-        endpoints: {
-          all: {
-            titleConvo: true,
-            titleModel: 'claude-3-haiku-20240307',
-            titleMethod: 'completion', // Testing the new default method
-            titlePrompt: 'Generate a concise, descriptive title for this conversation',
-            titlePromptTemplate: 'Conversation summary: {{content}}',
-            titleEndpoint: EModelEndpoint.anthropic, // Should switch provider to Anthropic
-          },
-        },
-      };
-
-      const text = 'Test conversation about AI and machine learning';
-      const abortController = new AbortController();
-
-      await client.titleConvo({ text, abortController });
-
-      // Verify all config values were used
-      expect(mockRun.generateTitle).toHaveBeenCalledWith(
-        expect.objectContaining({
-          provider: Providers.ANTHROPIC, // Critical: Verify provider switched to Anthropic
-          titleMethod: 'completion',
-          titlePrompt: 'Generate a concise, descriptive title for this conversation',
-          titlePromptTemplate: 'Conversation summary: {{content}}',
-          inputText: text,
-          contentParts: client.contentParts,
-        }),
-      );
-
-      // Verify the model was set from 'all' config
-      const generateTitleCall = mockRun.generateTitle.mock.calls[0][0];
-      expect(generateTitleCall.clientOptions.model).toBe('claude-3-haiku-20240307');
-
-      // Verify other client options are set correctly
-      expect(generateTitleCall.clientOptions).toMatchObject({
-        model: 'claude-3-haiku-20240307',
-        // Note: Anthropic's getOptions may set its own maxTokens value
-      });
-
-      // Restore the original API key
-      if (originalApiKey) {
-        process.env.ANTHROPIC_API_KEY = originalApiKey;
-      } else {
-        delete process.env.ANTHROPIC_API_KEY;
-      }
-    });
-
     it('should test all titleMethod options from all config', async () => {
       // Test each titleMethod: 'completion', 'functions', 'structured'
       const titleMethods = ['completion', 'functions', 'structured'];
@@ -765,6 +660,9 @@ describe('AgentClient - titleConvo', () => {
         // Set 'all' config with specific titleMethod
         mockReq.config = {
           endpoints: {
+            [EModelEndpoint.custom]: [
+              { name: TEST_PROVIDER_NAME, apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' },
+            ],
             all: {
               titleModel: 'gpt-4o-mini',
               titleMethod: method,
@@ -790,320 +688,6 @@ describe('AgentClient - titleConvo', () => {
       }
     });
 
-    describe('Azure-specific title generation', () => {
-      let originalEnv;
-
-      beforeEach(() => {
-        // Reset mocks
-        jest.clearAllMocks();
-
-        // Save original environment variables
-        originalEnv = { ...process.env };
-
-        // Mock Azure API keys
-        process.env.AZURE_OPENAI_API_KEY = 'test-azure-key';
-        process.env.AZURE_API_KEY = 'test-azure-key';
-        process.env.EASTUS_API_KEY = 'test-eastus-key';
-        process.env.EASTUS2_API_KEY = 'test-eastus2-key';
-      });
-
-      afterEach(() => {
-        // Restore environment variables
-        process.env = originalEnv;
-      });
-
-      it('should use OPENAI provider for Azure serverless endpoints', async () => {
-        // Set up Azure endpoint with serverless config
-        mockAgent.endpoint = EModelEndpoint.azureOpenAI;
-        mockAgent.provider = EModelEndpoint.azureOpenAI;
-        mockReq.config = {
-          endpoints: {
-            [EModelEndpoint.azureOpenAI]: {
-              titleConvo: true,
-              titleModel: 'grok-3',
-              titleMethod: 'completion',
-              titlePrompt: 'Azure serverless title prompt',
-              streamRate: 35,
-              modelGroupMap: {
-                'grok-3': {
-                  group: 'Azure AI Foundry',
-                  deploymentName: 'grok-3',
-                },
-              },
-              groupMap: {
-                'Azure AI Foundry': {
-                  apiKey: '${AZURE_API_KEY}',
-                  baseURL: 'https://test.services.ai.azure.com/models',
-                  version: '2024-05-01-preview',
-                  serverless: true,
-                  models: {
-                    'grok-3': {
-                      deploymentName: 'grok-3',
-                    },
-                  },
-                },
-              },
-            },
-          },
-        };
-        mockReq.body.endpoint = EModelEndpoint.azureOpenAI;
-        mockReq.body.model = 'grok-3';
-
-        const text = 'Test Azure serverless conversation';
-        const abortController = new AbortController();
-
-        await client.titleConvo({ text, abortController });
-
-        // Verify provider was switched to OPENAI for serverless
-        expect(mockRun.generateTitle).toHaveBeenCalledWith(
-          expect.objectContaining({
-            provider: Providers.OPENAI, // Should be OPENAI for serverless
-            titleMethod: 'completion',
-            titlePrompt: 'Azure serverless title prompt',
-          }),
-        );
-      });
-
-      it('should use AZURE provider for Azure endpoints with instanceName', async () => {
-        // Set up Azure endpoint
-        mockAgent.endpoint = EModelEndpoint.azureOpenAI;
-        mockAgent.provider = EModelEndpoint.azureOpenAI;
-        mockReq.config = {
-          endpoints: {
-            [EModelEndpoint.azureOpenAI]: {
-              titleConvo: true,
-              titleModel: 'gpt-4o',
-              titleMethod: 'structured',
-              titlePrompt: 'Azure instance title prompt',
-              streamRate: 35,
-              modelGroupMap: {
-                'gpt-4o': {
-                  group: 'eastus',
-                  deploymentName: 'gpt-4o',
-                },
-              },
-              groupMap: {
-                eastus: {
-                  apiKey: '${EASTUS_API_KEY}',
-                  instanceName: 'region-instance',
-                  version: '2024-02-15-preview',
-                  models: {
-                    'gpt-4o': {
-                      deploymentName: 'gpt-4o',
-                    },
-                  },
-                },
-              },
-            },
-          },
-        };
-        mockReq.body.endpoint = EModelEndpoint.azureOpenAI;
-        mockReq.body.model = 'gpt-4o';
-
-        const text = 'Test Azure instance conversation';
-        const abortController = new AbortController();
-
-        await client.titleConvo({ text, abortController });
-
-        // Verify provider remains AZURE with instanceName
-        expect(mockRun.generateTitle).toHaveBeenCalledWith(
-          expect.objectContaining({
-            provider: Providers.AZURE,
-            titleMethod: 'structured',
-            titlePrompt: 'Azure instance title prompt',
-          }),
-        );
-      });
-
-      it('should handle Azure titleModel with CURRENT_MODEL constant', async () => {
-        // Set up Azure endpoint
-        mockAgent.endpoint = EModelEndpoint.azureOpenAI;
-        mockAgent.provider = EModelEndpoint.azureOpenAI;
-        mockAgent.model_parameters.model = 'gpt-4o-latest';
-        mockReq.config = {
-          endpoints: {
-            [EModelEndpoint.azureOpenAI]: {
-              titleConvo: true,
-              titleModel: Constants.CURRENT_MODEL,
-              titleMethod: 'functions',
-              streamRate: 35,
-              modelGroupMap: {
-                'gpt-4o-latest': {
-                  group: 'region-eastus',
-                  deploymentName: 'gpt-4o-mini',
-                  version: '2024-02-15-preview',
-                },
-              },
-              groupMap: {
-                'region-eastus': {
-                  apiKey: '${EASTUS2_API_KEY}',
-                  instanceName: 'test-instance',
-                  version: '2024-12-01-preview',
-                  models: {
-                    'gpt-4o-latest': {
-                      deploymentName: 'gpt-4o-mini',
-                      version: '2024-02-15-preview',
-                    },
-                  },
-                },
-              },
-            },
-          },
-        };
-        mockReq.body.endpoint = EModelEndpoint.azureOpenAI;
-        mockReq.body.model = 'gpt-4o-latest';
-
-        const text = 'Test Azure current model';
-        const abortController = new AbortController();
-
-        await client.titleConvo({ text, abortController });
-
-        // Verify it uses the correct model when titleModel is CURRENT_MODEL
-        const generateTitleCall = mockRun.generateTitle.mock.calls[0][0];
-        // When CURRENT_MODEL is used with Azure, the model gets mapped to the deployment name
-        // In this case, 'gpt-4o-latest' is mapped to 'gpt-4o-mini' deployment
-        expect(generateTitleCall.clientOptions.model).toBe('gpt-4o-mini');
-        // Also verify that CURRENT_MODEL constant was not passed as the model
-        expect(generateTitleCall.clientOptions.model).not.toBe(Constants.CURRENT_MODEL);
-      });
-
-      it('should handle Azure with multiple model groups', async () => {
-        // Set up Azure endpoint
-        mockAgent.endpoint = EModelEndpoint.azureOpenAI;
-        mockAgent.provider = EModelEndpoint.azureOpenAI;
-        mockReq.config = {
-          endpoints: {
-            [EModelEndpoint.azureOpenAI]: {
-              titleConvo: true,
-              titleModel: 'o1-mini',
-              titleMethod: 'completion',
-              streamRate: 35,
-              modelGroupMap: {
-                'gpt-4o': {
-                  group: 'eastus',
-                  deploymentName: 'gpt-4o',
-                },
-                'o1-mini': {
-                  group: 'region-eastus',
-                  deploymentName: 'o1-mini',
-                },
-                'codex-mini': {
-                  group: 'codex-mini',
-                  deploymentName: 'codex-mini',
-                },
-              },
-              groupMap: {
-                eastus: {
-                  apiKey: '${EASTUS_API_KEY}',
-                  instanceName: 'region-eastus',
-                  version: '2024-02-15-preview',
-                  models: {
-                    'gpt-4o': {
-                      deploymentName: 'gpt-4o',
-                    },
-                  },
-                },
-                'region-eastus': {
-                  apiKey: '${EASTUS2_API_KEY}',
-                  instanceName: 'region-eastus2',
-                  version: '2024-12-01-preview',
-                  models: {
-                    'o1-mini': {
-                      deploymentName: 'o1-mini',
-                    },
-                  },
-                },
-                'codex-mini': {
-                  apiKey: '${AZURE_API_KEY}',
-                  baseURL: 'https://example.cognitiveservices.azure.com/openai/',
-                  version: '2025-04-01-preview',
-                  serverless: true,
-                  models: {
-                    'codex-mini': {
-                      deploymentName: 'codex-mini',
-                    },
-                  },
-                },
-              },
-            },
-          },
-        };
-        mockReq.body.endpoint = EModelEndpoint.azureOpenAI;
-        mockReq.body.model = 'o1-mini';
-
-        const text = 'Test Azure multi-group conversation';
-        const abortController = new AbortController();
-
-        await client.titleConvo({ text, abortController });
-
-        // Verify correct model and provider are used
-        expect(mockRun.generateTitle).toHaveBeenCalledWith(
-          expect.objectContaining({
-            provider: Providers.AZURE,
-            titleMethod: 'completion',
-          }),
-        );
-
-        const generateTitleCall = mockRun.generateTitle.mock.calls[0][0];
-        expect(generateTitleCall.clientOptions.model).toBe('o1-mini');
-        expect(generateTitleCall.clientOptions.maxTokens).toBeUndefined(); // o1 models shouldn't have maxTokens
-      });
-
-      it('should use all config as fallback for Azure endpoints', async () => {
-        // Set up Azure endpoint with minimal config
-        mockAgent.endpoint = EModelEndpoint.azureOpenAI;
-        mockAgent.provider = EModelEndpoint.azureOpenAI;
-        mockReq.body.endpoint = EModelEndpoint.azureOpenAI;
-        mockReq.body.model = 'gpt-4';
-
-        // Set 'all' config as fallback with a serverless Azure config
-        mockReq.config = {
-          endpoints: {
-            all: {
-              titleConvo: true,
-              titleModel: 'gpt-4',
-              titleMethod: 'structured',
-              titlePrompt: 'Fallback title prompt from all config',
-              titlePromptTemplate: 'Template: {{content}}',
-              modelGroupMap: {
-                'gpt-4': {
-                  group: 'default-group',
-                  deploymentName: 'gpt-4',
-                },
-              },
-              groupMap: {
-                'default-group': {
-                  apiKey: '${AZURE_API_KEY}',
-                  baseURL: 'https://default.openai.azure.com/',
-                  version: '2024-02-15-preview',
-                  serverless: true,
-                  models: {
-                    'gpt-4': {
-                      deploymentName: 'gpt-4',
-                    },
-                  },
-                },
-              },
-            },
-          },
-        };
-
-        const text = 'Test Azure with all config fallback';
-        const abortController = new AbortController();
-
-        await client.titleConvo({ text, abortController });
-
-        // Verify all config is used
-        expect(mockRun.generateTitle).toHaveBeenCalledWith(
-          expect.objectContaining({
-            provider: Providers.OPENAI, // Should be OPENAI when no instanceName
-            titleMethod: 'structured',
-            titlePrompt: 'Fallback title prompt from all config',
-            titlePromptTemplate: 'Template: {{content}}',
-          }),
-        );
-      });
-    });
   });
 
   describe('getOptions method - GPT-5+ model handling', () => {
@@ -1117,8 +701,8 @@ describe('AgentClient - titleConvo', () => {
 
       mockAgent = {
         id: 'agent-123',
-        endpoint: EModelEndpoint.openAI,
-        provider: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
+        provider: EModelEndpoint.custom,
         model_parameters: {
           model: 'gpt-5',
         },
@@ -1388,8 +972,8 @@ describe('AgentClient - titleConvo', () => {
 
       mockAgent = {
         id: 'agent-123',
-        endpoint: EModelEndpoint.openAI,
-        provider: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
+        provider: EModelEndpoint.custom,
         instructions: 'Base agent instructions',
         model_parameters: {
           model: 'gpt-4',
@@ -1402,7 +986,7 @@ describe('AgentClient - titleConvo', () => {
           id: 'user-123',
         },
         body: {
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
         },
         config: {},
       };
@@ -1588,8 +1172,8 @@ describe('AgentClient - titleConvo', () => {
 
       mockAgent = {
         id: 'primary-agent',
-        endpoint: EModelEndpoint.openAI,
-        provider: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
+        provider: EModelEndpoint.custom,
         instructions: 'Primary instructions',
         model_parameters: {
           model: 'gpt-4',
@@ -1605,7 +1189,7 @@ describe('AgentClient - titleConvo', () => {
           },
         },
         body: {
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           fileTokenLimit: 1000,
         },
         config: {
@@ -1685,8 +1269,8 @@ describe('AgentClient - titleConvo', () => {
       );
       const handoffAgent = {
         id: 'handoff-agent',
-        endpoint: EModelEndpoint.openAI,
-        provider: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
+        provider: EModelEndpoint.custom,
         instructions: 'Handoff instructions',
         model_parameters: {
           model: 'gpt-4',
@@ -1878,8 +1462,8 @@ describe('AgentClient - titleConvo', () => {
 
       mockAgent = {
         id: 'agent-123',
-        endpoint: EModelEndpoint.openAI,
-        provider: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
+        provider: EModelEndpoint.custom,
         model_parameters: {
           model: 'gpt-4',
         },
@@ -2343,8 +1927,8 @@ describe('AgentClient - titleConvo', () => {
       mockAgent = {
         id: 'primary-agent',
         name: 'Primary Agent',
-        endpoint: EModelEndpoint.openAI,
-        provider: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
+        provider: EModelEndpoint.custom,
         instructions: 'Primary agent instructions',
         model_parameters: {
           model: 'gpt-4',
@@ -2360,7 +1944,7 @@ describe('AgentClient - titleConvo', () => {
           },
         },
         body: {
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
         },
         config: {
           memory: {
@@ -2395,14 +1979,14 @@ describe('AgentClient - titleConvo', () => {
         id: 'parallel-agent-1',
         name: 'Parallel Agent 1',
         instructions: 'Parallel agent 1 instructions',
-        provider: EModelEndpoint.openAI,
+        provider: EModelEndpoint.custom,
       };
 
       const parallelAgent2 = {
         id: 'parallel-agent-2',
         name: 'Parallel Agent 2',
         instructions: 'Parallel agent 2 instructions',
-        provider: EModelEndpoint.anthropic,
+        provider: 'anthropic',
       };
 
       client.agentConfigs = new Map([
@@ -2454,7 +2038,7 @@ describe('AgentClient - titleConvo', () => {
         id: 'parallel-agent-1',
         name: 'Parallel Agent 1',
         instructions: 'Parallel agent instructions',
-        provider: EModelEndpoint.openAI,
+        provider: EModelEndpoint.custom,
       };
 
       client.agentConfigs = new Map([['parallel-agent-1', parallelAgent]]);
@@ -2490,7 +2074,7 @@ describe('AgentClient - titleConvo', () => {
         id: 'parallel-agent-1',
         name: 'Parallel Agent 1',
         instructions: 'Original parallel instructions',
-        provider: EModelEndpoint.openAI,
+        provider: EModelEndpoint.custom,
       };
 
       client.agentConfigs = new Map([['parallel-agent-1', parallelAgent]]);
@@ -2522,7 +2106,7 @@ describe('AgentClient - titleConvo', () => {
       const parallelAgentNoInstructions = {
         id: 'parallel-agent-no-instructions',
         name: 'Parallel Agent No Instructions',
-        provider: EModelEndpoint.openAI,
+        provider: EModelEndpoint.custom,
       };
 
       client.agentConfigs = new Map([
@@ -2625,8 +2209,8 @@ describe('AgentClient - titleConvo', () => {
 
       mockAgent = {
         id: 'agent-123',
-        endpoint: EModelEndpoint.openAI,
-        provider: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
+        provider: EModelEndpoint.custom,
         instructions: 'Test instructions',
         model: 'gpt-4',
         model_parameters: {
@@ -2650,7 +2234,7 @@ describe('AgentClient - titleConvo', () => {
           },
           endpoints: {
             [EModelEndpoint.agents]: {
-              allowedProviders: [EModelEndpoint.openAI],
+              allowedProviders: [EModelEndpoint.custom],
             },
           },
         },
@@ -2680,7 +2264,7 @@ describe('AgentClient - titleConvo', () => {
       mockCheckAccess.mockResolvedValue(true);
       mockInitializeAgent.mockResolvedValue({
         ...mockAgent,
-        provider: EModelEndpoint.openAI,
+        provider: EModelEndpoint.custom,
       });
       mockCreateMemoryProcessor.mockResolvedValue([undefined, jest.fn()]);
 
@@ -2703,7 +2287,7 @@ describe('AgentClient - titleConvo', () => {
       const differentAgentId = 'different-agent-456';
       const differentAgent = {
         id: differentAgentId,
-        provider: EModelEndpoint.openAI,
+        provider: EModelEndpoint.custom,
         model: 'gpt-4',
         instructions: 'Different agent instructions',
       };
@@ -2714,7 +2298,7 @@ describe('AgentClient - titleConvo', () => {
       mockLoadAgent.mockResolvedValue(differentAgent);
       mockInitializeAgent.mockResolvedValue({
         ...differentAgent,
-        provider: EModelEndpoint.openAI,
+        provider: EModelEndpoint.custom,
       });
       mockCreateMemoryProcessor.mockResolvedValue([undefined, jest.fn()]);
 
@@ -2844,7 +2428,7 @@ describe('AgentClient - titleConvo', () => {
         agent: {
           enabled: true,
           model: 'gpt-4',
-          provider: EModelEndpoint.openAI,
+          provider: EModelEndpoint.custom,
         },
       };
 
@@ -2852,7 +2436,7 @@ describe('AgentClient - titleConvo', () => {
       mockInitializeAgent.mockResolvedValue({
         id: Constants.EPHEMERAL_AGENT_ID,
         model: 'gpt-4',
-        provider: EModelEndpoint.openAI,
+        provider: EModelEndpoint.custom,
       });
       mockCreateMemoryProcessor.mockResolvedValue([undefined, jest.fn()]);
 
@@ -2868,7 +2452,7 @@ describe('AgentClient - titleConvo', () => {
           agent: expect.objectContaining({
             id: Constants.EPHEMERAL_AGENT_ID,
             model: 'gpt-4',
-            provider: EModelEndpoint.openAI,
+            provider: EModelEndpoint.custom,
           }),
         }),
         expect.any(Object),
@@ -2892,8 +2476,8 @@ describe('AgentClient - finalizeSubagentContent', () => {
       res: {},
       agent: {
         id: 'agent',
-        endpoint: EModelEndpoint.openAI,
-        provider: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
+        provider: EModelEndpoint.custom,
         model_parameters: { model: 'gpt-4' },
       },
       contentParts: [],

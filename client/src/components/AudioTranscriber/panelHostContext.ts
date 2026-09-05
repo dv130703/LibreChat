@@ -26,6 +26,12 @@ export interface PanelComponentProps {
    *  caller can access (deleted, failed, not owned) - closes the panel with
    *  a toast instead of rendering an in-panel error state. */
   onUnresolvable: () => void;
+  /** Closes the panel outright - the user is done with it, not that
+   *  anything went wrong. `ChatPanelHost`'s own `closePanel`, threaded
+   *  through so a panel component can offer this from wherever makes sense
+   *  in its own layout (its header, on desktop as well as mobile) rather
+   *  than only from the host's mobile-overlay wrapper. */
+  onClose: () => void;
 }
 
 interface ChatPanelHostContextValue {

@@ -1,8 +1,5 @@
 import { createContext, useContext } from 'react';
-import { useAssistantsMap } from '~/hooks/Assistants';
-type AssistantsMapContextType = ReturnType<typeof useAssistantsMap>;
+import type { TAssistantsMap } from 'librechat-data-provider';
 
-export const AssistantsMapContext = createContext<AssistantsMapContextType>(
-  {} as AssistantsMapContextType,
-);
+export const AssistantsMapContext = createContext<TAssistantsMap>({});
 export const useAssistantsMapContext = () => useContext(AssistantsMapContext);

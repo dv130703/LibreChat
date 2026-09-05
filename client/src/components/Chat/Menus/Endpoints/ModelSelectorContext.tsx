@@ -91,7 +91,6 @@ export function ModelSelectorProvider({ children, startupConfig }: ModelSelector
 
   const { mappedEndpoints, endpointRequiresUserKey } = useEndpoints({
     agents,
-    assistantsMap,
     startupConfig,
     endpointsConfig,
   });

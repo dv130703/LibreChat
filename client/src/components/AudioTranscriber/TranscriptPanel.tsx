@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import * as Popover from '@radix-ui/react-popover';
 import { isEqual } from 'lodash';
 import {
+  X,
   Mic,
   FileText,
   Download,
@@ -16,7 +17,6 @@ import { Spinner, usePopoverZIndex } from '@librechat/client';
 import {
   useGetConvoIdQuery,
   useFilePreview,
-  useFileDownload,
   useTranscriptCorrectionsQuery,
   useRenameTranscriptSpeakerMutation,
   useReassignTranscriptSegmentMutation,
@@ -28,6 +28,7 @@ import {
   useExportMeetingMinutesDocxMutation,
   useTranscribeStatusQuery,
   useRetryTranscriptionMutation,
+  useTranscribeAudioTokenQuery,
 } from '~/data-provider';
 import { parseTranscriptText } from 'librechat-data-provider';
 import type { InterviewTranscriptForm, MeetingMinutesForm } from 'librechat-data-provider';
@@ -109,11 +110,13 @@ function TranscriptPanelHeader({
   isRetranscribing,
   isExportingInterview,
   isExportingMeetingMinutes,
+  showActions,
   onOpenRoster,
   onExportTxt,
   onExportInterview,
   onExportMeetingMinutes,
   onRetranscribe,
+  onClose,
 }: {
   lineCount: number;
   speakerCount: number;
@@ -121,11 +124,19 @@ function TranscriptPanelHeader({
   isRetranscribing: boolean;
   isExportingInterview: boolean;
   isExportingMeetingMinutes: boolean;
+  /** False while there's no transcript yet to act on (loading/queued/
+   *  transcribing/failed) - the roster/retranscribe/export actions all
+   *  operate on a transcript that doesn't exist yet, so only the title and
+   *  close button render then. The header itself is otherwise always
+   *  present, not gated on this - the user needs to be able to close the
+   *  panel in every one of those states too, not just once it's ready. */
+  showActions: boolean;
   onOpenRoster: () => void;
   onExportTxt: () => void;
   onExportInterview: () => void;
   onExportMeetingMinutes: () => void;
   onRetranscribe: () => void;
+  onClose: () => void;
 }) {
   const localize = useLocalize();
   const rowRef = useRef<HTMLDivElement>(null);
@@ -173,123 +184,137 @@ function TranscriptPanelHeader({
           <h2 className="truncate text-sm font-semibold leading-tight text-text-primary">
             {localize('com_ui_transcript')}
           </h2>
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-xs text-text-secondary">
-              {localize('com_ui_transcript_line_count', { count: lineCount })}
-            </span>
-            {modelUsed != null && modelUsed !== '' && (
-              <span
-                title={localize('com_ui_transcript_model', { 0: modelUsed })}
-                aria-label={localize('com_ui_transcript_model', { 0: modelUsed })}
-                className="shrink-0 whitespace-nowrap rounded border border-border-medium px-1.5 py-px font-mono text-[10px] leading-4 text-text-secondary"
-              >
-                {modelUsed}
+          {showActions && (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-xs text-text-secondary">
+                {localize('com_ui_transcript_line_count', { count: lineCount })}
               </span>
-            )}
-          </div>
+              {modelUsed != null && modelUsed !== '' && (
+                <span
+                  title={localize('com_ui_transcript_model', { 0: modelUsed })}
+                  aria-label={localize('com_ui_transcript_model', { 0: modelUsed })}
+                  className="shrink-0 whitespace-nowrap rounded border border-border-medium px-1.5 py-px font-mono text-[10px] leading-4 text-text-secondary"
+                >
+                  {modelUsed}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        {speakerCount > 0 && (
-          <button
-            type="button"
-            onClick={onOpenRoster}
-            aria-label={speakersLabel}
-            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
-          >
-            <Mic className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            {showSpeakersLabel && <span>{speakersLabel}</span>}
-          </button>
+        {showActions && (
+          <>
+            {speakerCount > 0 && (
+              <button
+                type="button"
+                onClick={onOpenRoster}
+                aria-label={speakersLabel}
+                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+              >
+                <Mic className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {showSpeakersLabel && <span>{speakersLabel}</span>}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onRetranscribe}
+              disabled={isRetranscribing}
+              aria-label={localize('com_ui_transcript_retranscribe')}
+              title={localize('com_ui_transcript_retranscribe_hint')}
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isRetranscribing ? (
+                <Spinner className="h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              )}
+              {showRetranscribeLabel && <span>{localize('com_ui_transcript_retranscribe')}</span>}
+            </button>
+            <Popover.Root open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
+              <Popover.Trigger asChild>
+                <button
+                  type="button"
+                  aria-label={localize('com_ui_transcript_export')}
+                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+                >
+                  {isExportingInterview || isExportingMeetingMinutes ? (
+                    <Spinner className="h-3.5 w-3.5 shrink-0" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  )}
+                  {showExportLabel && <span>{localize('com_ui_transcript_export')}</span>}
+                  {showExportChevron && (
+                    <ChevronDown
+                      className={cn(
+                        'h-3 w-3 shrink-0 text-text-secondary transition-transform',
+                        exportMenuOpen && 'rotate-180',
+                      )}
+                      aria-hidden="true"
+                    />
+                  )}
+                </button>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  side="bottom"
+                  align="end"
+                  sideOffset={4}
+                  style={{ zIndex: exportMenuZIndex }}
+                  className="w-56 rounded-lg border border-border-medium bg-surface-primary p-1 shadow-lg"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      onExportTxt();
+                    }}
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm text-text-primary hover:bg-surface-hover"
+                  >
+                    {localize('com_ui_transcript_export_format_txt')}
+                    <span className="text-xs text-text-secondary">
+                      {localize('com_ui_transcript_export_txt')}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      onExportInterview();
+                    }}
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm text-text-primary hover:bg-surface-hover"
+                  >
+                    {localize('com_ui_transcript_export_format_interview')}
+                    <span className="text-xs text-text-secondary">
+                      {localize('com_ui_transcript_export_docx')}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExportMenuOpen(false);
+                      onExportMeetingMinutes();
+                    }}
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm text-text-primary hover:bg-surface-hover"
+                  >
+                    {localize('com_ui_transcript_export_format_meeting_minutes')}
+                    <span className="text-xs text-text-secondary">
+                      {localize('com_ui_transcript_export_docx')}
+                    </span>
+                  </button>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
+          </>
         )}
         <button
           type="button"
-          onClick={onRetranscribe}
-          disabled={isRetranscribing}
-          aria-label={localize('com_ui_transcript_retranscribe')}
-          title={localize('com_ui_transcript_retranscribe_hint')}
-          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={onClose}
+          aria-label={localize('com_ui_close')}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
         >
-          {isRetranscribing ? (
-            <Spinner className="h-3.5 w-3.5 shrink-0" />
-          ) : (
-            <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          )}
-          {showRetranscribeLabel && <span>{localize('com_ui_transcript_retranscribe')}</span>}
+          <X className="h-4 w-4" />
         </button>
-        <Popover.Root open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
-          <Popover.Trigger asChild>
-            <button
-              type="button"
-              aria-label={localize('com_ui_transcript_export')}
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-medium px-2 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
-            >
-              {isExportingInterview || isExportingMeetingMinutes ? (
-                <Spinner className="h-3.5 w-3.5 shrink-0" />
-              ) : (
-                <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              )}
-              {showExportLabel && <span>{localize('com_ui_transcript_export')}</span>}
-              {showExportChevron && (
-                <ChevronDown
-                  className={cn(
-                    'h-3 w-3 shrink-0 text-text-secondary transition-transform',
-                    exportMenuOpen && 'rotate-180',
-                  )}
-                  aria-hidden="true"
-                />
-              )}
-            </button>
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Content
-              side="bottom"
-              align="end"
-              sideOffset={4}
-              style={{ zIndex: exportMenuZIndex }}
-              className="w-56 rounded-lg border border-border-medium bg-surface-primary p-1 shadow-lg"
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setExportMenuOpen(false);
-                  onExportTxt();
-                }}
-                className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm text-text-primary hover:bg-surface-hover"
-              >
-                {localize('com_ui_transcript_export_format_txt')}
-                <span className="text-xs text-text-secondary">
-                  {localize('com_ui_transcript_export_txt')}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setExportMenuOpen(false);
-                  onExportInterview();
-                }}
-                className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm text-text-primary hover:bg-surface-hover"
-              >
-                {localize('com_ui_transcript_export_format_interview')}
-                <span className="text-xs text-text-secondary">
-                  {localize('com_ui_transcript_export_docx')}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setExportMenuOpen(false);
-                  onExportMeetingMinutes();
-                }}
-                className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm text-text-primary hover:bg-surface-hover"
-              >
-                {localize('com_ui_transcript_export_format_meeting_minutes')}
-                <span className="text-xs text-text-secondary">
-                  {localize('com_ui_transcript_export_docx')}
-                </span>
-              </button>
-            </Popover.Content>
-          </Popover.Portal>
-        </Popover.Root>
       </div>
     </div>
   );
@@ -312,9 +337,10 @@ function TranscriptPanel({
   fileId,
   onResolved,
   onUnresolvable,
+  onClose,
 }: PanelComponentProps) {
   const localize = useLocalize();
-  const { user, isAuthenticated } = useAuthContext();
+  const { isAuthenticated } = useAuthContext();
   const {
     data: conversation,
     isLoading: isConvoLoading,
@@ -612,30 +638,25 @@ function TranscriptPanel({
 
   const [rosterModalOpen, setRosterModalOpen] = useState(false);
 
-  const audioQuery = useFileDownload(user?.id, sourceFileId);
-  useEffect(() => {
-    // `sourceFileId` is a stable pointer to immutable file content, durably
-    // persisted on the conversation - nothing about the audio itself needs
-    // to survive a reload, only this id does, so re-fetching by it is
-    // exactly the point rather than something to route around. Within a
-    // session, react-query already holds the resolved blob URL in cache (see
-    // the `cacheTime`/`staleTime` on `useFileDownload`), so remounting this
-    // panel reuses it instead of re-downloading; a hard reload/reopen wipes
-    // that in-memory cache entirely, which is expected - this just looks up
-    // the same pointer again from scratch.
-    //
-    // Waiting on `user?.id` too (not just `sourceFileId`) matters on exactly
-    // that reload path: auth can resolve after the conversation does, and
-    // `useFileDownload`'s query fn silently no-ops without a userId - firing
-    // once during that gap would otherwise "succeed" with empty data and
-    // never retry, permanently losing the player for the rest of the session.
-    if (sourceFileId && user?.id && audioQuery.data == null) {
-      audioQuery.refetch();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceFileId, user?.id]);
+  // A direct, streamable URL (transcription/ARCHITECTURE.md §12 #13) - not a
+  // blob fetched into memory and cached forever. `useTranscribeAudioTokenQuery`
+  // uses react-query's normal retry/backoff, so a transient failure (the only
+  // thing that can fail here - minting a token moves no file bytes) recovers
+  // on its own; `audioQuery.refetch` below is still exposed for the header's
+  // own manual retry affordance on a harder failure.
+  const audioQuery = useTranscribeAudioTokenQuery(sourceFileId);
+  const audioSrc = audioQuery.data?.url;
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  /** Bumped once `TranscriptHeader` reports its `<audio>` node has actually
+   *  mounted (`onAudioMounted` below), purely to give the listener-attachment
+   *  effect further down a dependency that reflects when `audioRef.current`
+   *  becomes non-null - see that effect's comment for why `[audioSrc]` alone
+   *  isn't enough. */
+  const [audioElVersion, setAudioElVersion] = useState(0);
+  const handleAudioMounted = useCallback(() => {
+    setAudioElVersion((version) => version + 1);
+  }, []);
   const rowsContainerRef = useRef<HTMLDivElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -682,9 +703,12 @@ function TranscriptPanel({
   // `useChatHeaderSlot`'s own comment on why this replaced a DOM portal.
   useChatHeaderSlot(
     <TranscriptHeader
-      audioSrc={audioQuery.data}
+      audioSrc={audioSrc}
       audioRef={audioRef}
+      hasError={audioQuery.isError}
+      onRetry={audioQuery.refetch}
       onUnboundedPlaybackRequested={clearBoundary}
+      onAudioMounted={handleAudioMounted}
     />,
   );
 
@@ -693,6 +717,22 @@ function TranscriptPanel({
     if (!audioEl) {
       return;
     }
+    /**
+     * `<audio>` itself is rendered by `TranscriptHeader`, which
+     * `useChatHeaderSlot` lifts into `ChatPanelHost`'s own state (a header
+     * region this component doesn't render directly) - so on the render
+     * where `audioSrc` first becomes truthy, that DOM node doesn't exist
+     * yet; it only mounts once `ChatPanelHost` re-renders with the new
+     * header-slot content, one commit later. An effect keyed on `[audioSrc]`
+     * alone runs too early, finds `audioRef.current` still `null`, and -
+     * since `audioSrc` doesn't change again - never gets a second chance to
+     * attach these listeners: audio keeps playing (the header's own inline
+     * JSX handlers on the same element are unaffected), but this
+     * component's `currentTime`/`isPlaying` never update, so segment
+     * highlighting/tracking silently never starts. `audioElVersion`
+     * (bumped by `setAudioEl`, the callback ref actually attached to the
+     * node) re-runs this effect the moment the node really exists.
+     */
     // Boundary enforcement for bounded playback lives in the rAF loop below,
     // not here - `timeupdate` only fires a few times a second (browsers
     // commonly throttle it to ~250ms), so by the time it would notice we'd
@@ -716,7 +756,7 @@ function TranscriptPanel({
       audioEl.removeEventListener('play', handlePlay);
       audioEl.removeEventListener('pause', handlePause);
     };
-  }, [audioQuery.data, stopBoundaryWatch]);
+  }, [audioSrc, audioElVersion, stopBoundaryWatch]);
 
   /** Whichever line the playhead currently falls within - drives both the
    *  "follow along" highlight/auto-scroll and, while `isPlaying`, doubles as
@@ -1271,21 +1311,21 @@ function TranscriptPanel({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {!isLoading && lines.length > 0 && (
-        <TranscriptPanelHeader
-          lineCount={lines.length}
-          speakerCount={uniqueSpeakerIds.length}
-          modelUsed={conversation?.transcription?.model}
-          isRetranscribing={retranscribe.isLoading}
-          isExportingInterview={exportInterviewDocx.isLoading}
-          isExportingMeetingMinutes={exportMeetingMinutesDocx.isLoading}
-          onOpenRoster={() => setRosterModalOpen(true)}
-          onExportTxt={handleExportTxt}
-          onExportInterview={() => setInterviewDialogOpen(true)}
-          onExportMeetingMinutes={() => setMeetingMinutesDialogOpen(true)}
-          onRetranscribe={() => setRetranscribeOpen(true)}
-        />
-      )}
+      <TranscriptPanelHeader
+        lineCount={lines.length}
+        speakerCount={uniqueSpeakerIds.length}
+        modelUsed={conversation?.transcription?.model}
+        isRetranscribing={retranscribe.isLoading}
+        isExportingInterview={exportInterviewDocx.isLoading}
+        isExportingMeetingMinutes={exportMeetingMinutesDocx.isLoading}
+        showActions={!isLoading && lines.length > 0}
+        onOpenRoster={() => setRosterModalOpen(true)}
+        onExportTxt={handleExportTxt}
+        onExportInterview={() => setInterviewDialogOpen(true)}
+        onExportMeetingMinutes={() => setMeetingMinutesDialogOpen(true)}
+        onRetranscribe={() => setRetranscribeOpen(true)}
+        onClose={onClose}
+      />
       <div
         ref={rowsContainerRef}
         className="flex-1 overflow-y-auto p-3"
@@ -1420,7 +1460,7 @@ function TranscriptPanel({
                     isFollowed={followedLineIndex === line.lineIndex}
                     isPreviewing={isPreviewing}
                     playbackRatio={playbackRatio}
-                    canPlay={audioQuery.data != null}
+                    canPlay={audioSrc != null}
                     speakerOptions={speakerOptions}
                     isAddingSpeaker={addingSpeakerForLine === line.lineIndex}
                     newSpeakerName={newSpeakerName}
@@ -1500,7 +1540,7 @@ function TranscriptPanel({
         onRename={renameSpeaker}
         onAddSpeaker={renameSpeaker}
         preview={speakerPreview}
-        canPlay={audioQuery.data != null}
+        canPlay={audioSrc != null}
         isPlaying={isPlaying}
         followedLineIndex={followedLineIndex}
         onTogglePreview={togglePlaySegment}

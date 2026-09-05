@@ -19,31 +19,31 @@ describe('buildTokenConfigMap', () => {
     const map = buildTokenConfigMap(
       {
         modelsConfig: {
-          [EModelEndpoint.openAI]: ['gpt-4o'],
-          [EModelEndpoint.anthropic]: ['claude-3-5-sonnet-20241022'],
+          ['openAI']: ['gpt-4o'],
+          ['anthropic']: ['claude-3-5-sonnet-20241022'],
         },
       },
       deps,
     );
 
-    expect(map[EModelEndpoint.openAI]['gpt-4o'].context).toBeGreaterThan(100000);
-    expect(map[EModelEndpoint.anthropic]['claude-3-5-sonnet-20241022'].context).toBe(200000);
-    expect(map[EModelEndpoint.openAI]['gpt-4o'].prompt).toBeUndefined();
-    expect(map[EModelEndpoint.openAI]['gpt-4o'].completion).toBeUndefined();
+    expect(map['openAI']['gpt-4o'].context).toBeGreaterThan(100000);
+    expect(map['anthropic']['claude-3-5-sonnet-20241022'].context).toBe(200000);
+    expect(map['openAI']['gpt-4o'].prompt).toBeUndefined();
+    expect(map['openAI']['gpt-4o'].completion).toBeUndefined();
   });
 
   it('includes pattern-matched pricing when enabled', () => {
     const map = buildTokenConfigMap(
       {
         modelsConfig: {
-          [EModelEndpoint.anthropic]: ['claude-3-5-sonnet-20241022'],
+          ['anthropic']: ['claude-3-5-sonnet-20241022'],
         },
         includePricing: true,
       },
       deps,
     );
 
-    const tokenomics = map[EModelEndpoint.anthropic]['claude-3-5-sonnet-20241022'];
+    const tokenomics = map['anthropic']['claude-3-5-sonnet-20241022'];
     expect(tokenomics.prompt).toBe(3);
     expect(tokenomics.completion).toBe(15);
     expect(tokenomics.cacheWrite).toBe(3.75);

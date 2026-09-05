@@ -1,7 +1,7 @@
 import { Providers } from '@librechat/agents';
 import { EModelEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
-import { getProviderConfig, providerConfigMap, resolveTitleTiming } from './providers';
+import { getProviderConfig, resolveTitleTiming } from './providers';
 
 const buildAppConfig = (
   customEndpoints: Array<{ name: string; baseURL?: string; apiKey?: string; provider?: string }>,
@@ -13,42 +13,17 @@ const buildAppConfig = (
   }) as unknown as AppConfig;
 
 describe('getProviderConfig', () => {
-  it('resolves the existing google (API key) path to initializeGoogle', () => {
-    // Regression guard: the API-key path uses `Providers.GOOGLE === 'google'`,
-    // which has always mapped via `EModelEndpoint.google`. Adding the
-    // `Providers.VERTEXAI` entry must not perturb this.
-    const result = getProviderConfig({
-      provider: Providers.GOOGLE,
-      appConfig: buildAppConfig([]),
-    });
-
-    expect(result.overrideProvider).toBe(Providers.GOOGLE);
-    expect(result.getOptions).toBe(providerConfigMap[EModelEndpoint.google]);
-    expect(result.customEndpointConfig).toBeUndefined();
-  });
-
-  it('vertexai resolves to the same initializer as google (issue #13006 follow-up)', () => {
-    const result = getProviderConfig({
-      provider: Providers.VERTEXAI,
-      appConfig: buildAppConfig([]),
-    });
-
-    expect(result.overrideProvider).toBe(Providers.VERTEXAI);
-    expect(result.getOptions).toBe(providerConfigMap[EModelEndpoint.google]);
-    expect(result.customEndpointConfig).toBeUndefined();
-  });
-
   it('falls back case-insensitively when only a CamelCase match exists', () => {
-    // Agent runtime resolved provider to lowercase `"openrouter"`, but the
-    // user's `librechat.yaml` declared `name: "OpenRouter"`.
+    // Agent runtime resolved provider to lowercase `"ollama"`, but the
+    // user's `librechat.yaml` declared `name: "Ollama"`.
     const appConfig = buildAppConfig([
-      { name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-test' },
+      { name: 'Ollama', baseURL: 'http://localhost:11434/v1', apiKey: 'ollama' },
     ]);
 
-    const result = getProviderConfig({ provider: 'openrouter', appConfig });
+    const result = getProviderConfig({ provider: 'ollama', appConfig });
 
-    expect(result.overrideProvider).toBe(Providers.OPENROUTER);
-    expect(result.customEndpointConfig?.name).toBe('OpenRouter');
+    expect(result.overrideProvider).toBe(Providers.OPENAI);
+    expect(result.customEndpointConfig?.name).toBe('Ollama');
   });
 
   it('prefers the exact-case match when both casings exist (preserves case-sensitive identity)', () => {
@@ -57,63 +32,47 @@ describe('getProviderConfig', () => {
     // exact-case lookup should win — case-insensitive fallback must not
     // shadow the user's intent.
     const appConfig = buildAppConfig([
-      { name: 'OpenRouter', baseURL: 'https://prod.example/v1', apiKey: 'prod' },
-      { name: 'openrouter', baseURL: 'https://staging.example/v1', apiKey: 'staging' },
+      { name: 'Ollama', baseURL: 'https://prod.example/v1', apiKey: 'prod' },
+      { name: 'ollama', baseURL: 'https://staging.example/v1', apiKey: 'staging' },
     ]);
 
-    const result = getProviderConfig({ provider: 'openrouter', appConfig });
+    const result = getProviderConfig({ provider: 'ollama', appConfig });
 
     expect(result.customEndpointConfig?.baseURL).toBe('https://staging.example/v1');
   });
 
   it('resolves an exact-case lowercase entry', () => {
     const appConfig = buildAppConfig([
-      { name: 'openrouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-test' },
+      { name: 'ollama', baseURL: 'http://localhost:11434/v1', apiKey: 'ollama' },
     ]);
 
-    const result = getProviderConfig({ provider: 'openrouter', appConfig });
+    const result = getProviderConfig({ provider: 'ollama', appConfig });
 
-    expect(result.customEndpointConfig?.name).toBe('openrouter');
+    expect(result.customEndpointConfig?.name).toBe('ollama');
   });
 
   it('throws on ambiguous case-insensitive matches when no exact-case entry exists (codex review)', () => {
     // User has two distinct entries differing only in case, both
     // non-lowercase. The agent runtime resolves provider to lowercase
-    // "openrouter" — neither matches case-sensitively, and silently
-    // picking array-first could route requests to the wrong baseURL/apiKey.
+    // "ollama" — neither matches case-sensitively, and silently picking
+    // array-first could route requests to the wrong baseURL/apiKey.
     const appConfig = buildAppConfig([
-      { name: 'OpenRouter', baseURL: 'https://prod.example/v1', apiKey: 'prod' },
-      { name: 'OPENROUTER', baseURL: 'https://canary.example/v1', apiKey: 'canary' },
+      { name: 'Ollama', baseURL: 'https://prod.example/v1', apiKey: 'prod' },
+      { name: 'OLLAMA', baseURL: 'https://canary.example/v1', apiKey: 'canary' },
     ]);
 
-    expect(() => getProviderConfig({ provider: 'openrouter', appConfig })).toThrow(
-      /ambiguous.*OpenRouter.*OPENROUTER/i,
+    expect(() => getProviderConfig({ provider: 'ollama', appConfig })).toThrow(
+      /ambiguous.*Ollama.*OLLAMA/i,
     );
   });
 
-  it('throws when openrouter has no matching custom endpoint at all', () => {
+  it('throws when a provider has no matching custom endpoint at all', () => {
     expect(() =>
-      getProviderConfig({ provider: 'openrouter', appConfig: buildAppConfig([]) }),
-    ).toThrow('Provider openrouter not supported');
+      getProviderConfig({ provider: 'ollama', appConfig: buildAppConfig([]) }),
+    ).toThrow('Provider ollama not supported');
   });
 
-  it('routes a custom endpoint with provider:anthropic to the Anthropic client', () => {
-    const appConfig = buildAppConfig([
-      {
-        name: 'Claude-Compatible',
-        baseURL: 'https://gateway.example.com',
-        apiKey: 'sk-ant',
-        provider: EModelEndpoint.anthropic,
-      },
-    ]);
-
-    const result = getProviderConfig({ provider: 'Claude-Compatible', appConfig });
-
-    expect(result.overrideProvider).toBe(Providers.ANTHROPIC);
-    expect(result.customEndpointConfig?.provider).toBe(EModelEndpoint.anthropic);
-  });
-
-  it('defaults a custom endpoint without provider to the OpenAI-compatible client', () => {
+  it('resolves a custom endpoint to the OpenAI-compatible client', () => {
     const appConfig = buildAppConfig([
       { name: 'My-LLM', baseURL: 'https://api.example.com/v1', apiKey: 'sk-test' },
     ]);
@@ -122,24 +81,6 @@ describe('getProviderConfig', () => {
 
     expect(result.overrideProvider).toBe(Providers.OPENAI);
     expect(result.customEndpointConfig?.name).toBe('My-LLM');
-  });
-
-  it('applies provider:anthropic even when the endpoint name collides with a known custom provider', () => {
-    // `openrouter` resolves via `providerConfigMap` first (skipping the generic
-    // custom branch); the override must still be re-applied from the config so
-    // overrideProvider-derived values (token/context budget) use the Anthropic map.
-    const appConfig = buildAppConfig([
-      {
-        name: 'openrouter',
-        baseURL: 'https://gateway.example.com',
-        apiKey: 'sk-ant',
-        provider: EModelEndpoint.anthropic,
-      },
-    ]);
-
-    const result = getProviderConfig({ provider: 'openrouter', appConfig });
-
-    expect(result.overrideProvider).toBe(Providers.ANTHROPIC);
   });
 });
 
@@ -189,12 +130,12 @@ describe('resolveTitleTiming', () => {
   it('checks endpoint candidates in order before provider fallback', () => {
     const appConfig = withEndpoints({
       [EModelEndpoint.agents]: { titleTiming: 'final' },
-      [EModelEndpoint.openAI]: { titleTiming: 'immediate' },
+      [EModelEndpoint.custom]: { titleTiming: 'immediate' },
     });
     expect(
       resolveTitleTiming({
         appConfig,
-        endpoint: [EModelEndpoint.agents, EModelEndpoint.openAI],
+        endpoint: [EModelEndpoint.agents, EModelEndpoint.custom],
       }),
     ).toBe('final');
   });
@@ -202,18 +143,18 @@ describe('resolveTitleTiming', () => {
   it('falls back to backing provider timing when agents has no titleTiming', () => {
     const appConfig = withEndpoints({
       [EModelEndpoint.agents]: { titleConvo: true },
-      [EModelEndpoint.openAI]: { titleTiming: 'final' },
+      [EModelEndpoint.custom]: { titleTiming: 'final' },
     });
     expect(
       resolveTitleTiming({
         appConfig,
-        endpoint: [EModelEndpoint.agents, EModelEndpoint.openAI],
+        endpoint: [EModelEndpoint.agents, EModelEndpoint.custom],
       }),
     ).toBe('final');
   });
 
   it("returns 'immediate' for an endpoint with no override and no `all`", () => {
-    const appConfig = withEndpoints({ [EModelEndpoint.openAI]: { titleTiming: 'final' } });
+    const appConfig = withEndpoints({ [EModelEndpoint.custom]: { titleTiming: 'final' } });
     expect(resolveTitleTiming({ appConfig, endpoint: EModelEndpoint.agents })).toBe('immediate');
   });
 
@@ -224,12 +165,12 @@ describe('resolveTitleTiming', () => {
     expect(resolveTitleTiming({ appConfig, endpoint: 'MyProvider' })).toBe('final');
   });
 
-  it('resolves a normalized custom provider name (openrouter -> OpenRouter)', () => {
+  it('resolves a normalized custom provider name (ollama -> Ollama)', () => {
     const appConfig = withEndpoints({
       [EModelEndpoint.custom]: [
-        { name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', titleTiming: 'final' },
+        { name: 'Ollama', baseURL: 'http://localhost:11434/v1', titleTiming: 'final' },
       ],
     });
-    expect(resolveTitleTiming({ appConfig, endpoint: 'openrouter' })).toBe('final');
+    expect(resolveTitleTiming({ appConfig, endpoint: 'ollama' })).toBe('final');
   });
 });

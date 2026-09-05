@@ -2,20 +2,8 @@ import { useState, useEffect } from 'react';
 import { useRecoilValue } from 'recoil';
 import { Outlet } from 'react-router-dom';
 import { useMediaQuery } from '@librechat/client';
-import {
-  PromptGroupsProvider,
-  AssistantsMapContext,
-  AgentsMapContext,
-  SetConvoProvider,
-  FileMapContext,
-} from '~/Providers';
-import {
-  useSearchEnabled,
-  useAssistantsMap,
-  useAuthContext,
-  useAgentsMap,
-  useFileMap,
-} from '~/hooks';
+import { PromptGroupsProvider, AgentsMapContext, SetConvoProvider, FileMapContext } from '~/Providers';
+import { useSearchEnabled, useAuthContext, useAgentsMap, useFileMap } from '~/hooks';
 import KeyboardShortcutsDialog from '~/components/Nav/KeyboardShortcutsDialog';
 import KeyboardDeleteDialog from '~/components/Nav/KeyboardDeleteDialog';
 import EnsureTranscriptFileSearch from '~/components/AudioTranscriber/EnsureTranscriptFileSearch';
@@ -48,7 +36,6 @@ export default function Root() {
 
   useHealthCheck(isAuthenticated);
 
-  const assistantsMap = useAssistantsMap({ isAuthenticated });
   const agentsMap = useAgentsMap({ isAuthenticated });
   const fileMap = useFileMap({ isAuthenticated });
 
@@ -81,8 +68,7 @@ export default function Root() {
   return (
     <SetConvoProvider>
       <FileMapContext.Provider value={fileMap}>
-        <AssistantsMapContext.Provider value={assistantsMap}>
-          <AgentsMapContext.Provider value={agentsMap}>
+        <AgentsMapContext.Provider value={agentsMap}>
             <PromptGroupsProvider>
               <Banner onHeightChange={setBannerHeight} />
               <div className="flex" style={{ height: `calc(100dvh - ${bannerHeight}px)` }}>
@@ -115,7 +101,6 @@ export default function Root() {
           )}
           <KeyboardShortcutsProvider />
           <EnsureTranscriptFileSearch />
-        </AssistantsMapContext.Provider>
       </FileMapContext.Provider>
     </SetConvoProvider>
   );

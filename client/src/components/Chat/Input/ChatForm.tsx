@@ -31,6 +31,7 @@ import { useGetStartupConfig } from '~/data-provider';
 import { mainTextareaId, BadgeItem } from '~/common';
 import PendingSteerChips from './PendingSteerChips';
 import PendingQuoteChips from './PendingQuoteChips';
+import ModelSelector from '~/components/Chat/Menus/Endpoints/ModelSelector';
 import AttachFileChat from './Files/AttachFileChat';
 import useSteering from '~/hooks/Chat/useSteering';
 import FileFormChat from './Files/FileFormChat';
@@ -390,7 +391,9 @@ const ChatForm = memo(function ChatForm({
   useQueryParams({ textAreaRef });
 
   const { ref, ...registerProps } = methods.register('text', {
-    required: true,
+    /** A caption-less attachment ("just send the photo") is a valid submission —
+     *  only require typed text when there's nothing else to send. */
+    required: files.size === 0,
     onChange: useCallback(
       (e: React.ChangeEvent<HTMLTextAreaElement>) =>
         methods.setValue('text', e.target.value, { shouldValidate: true }),
@@ -654,6 +657,12 @@ const ChatForm = memo(function ChatForm({
                   }
                 />
                 <div className="mx-auto flex" />
+                {/* Lives here, not the chat header, so the model/agent picker is
+                    always in view right where the user is typing - see the
+                    header's own note on why it moved. */}
+                <div className="max-w-[220px] shrink-0">
+                  <ModelSelector startupConfig={startupConfig} />
+                </div>
                 <TokenUsage index={index} conversation={conversation} isSubmitting={isSubmitting} />
                 {SpeechToText && (
                   <AudioRecorder
@@ -670,6 +679,7 @@ const ChatForm = memo(function ChatForm({
                         <SendButton
                           ref={submitButtonRef}
                           control={methods.control}
+                          hasFiles={files.size > 0}
                           disabled={
                             filesLoading ||
                             disableInputs ||

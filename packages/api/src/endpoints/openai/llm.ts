@@ -3,19 +3,14 @@ import {
   ReasoningEffort,
   ReasoningParameterFormat,
   removeNullishValues,
-  supportsAdaptiveThinking,
 } from 'librechat-data-provider';
 import type { BindToolsInput } from '@librechat/agents/langchain/language_models/chat_models';
-import type { AzureOpenAIInput } from '@librechat/agents/langchain/openai';
 import type { SettingDefinition } from 'librechat-data-provider';
 import type { OpenAI } from 'openai';
 import type * as t from '~/types';
-import { sanitizeModelName, constructAzureURL } from '~/utils/azure';
-import { isEnabled } from '~/utils/common';
 
 type OpenAILLMConfig = Omit<Partial<t.OAIClientOptions>, 'verbosity'> &
-  Omit<Partial<t.OpenAIParameters>, 'verbosity'> &
-  Omit<Partial<AzureOpenAIInput>, 'verbosity'> & {
+  Omit<Partial<t.OpenAIParameters>, 'verbosity'> & {
     verbosity?: string | null;
   };
 
@@ -114,10 +109,6 @@ function getReasoningObject({
     },
     true,
   ) as OpenAI.Reasoning;
-}
-
-function isOpenAIEndpoint(endpoint?: EModelEndpoint | string | null): boolean {
-  return endpoint === EModelEndpoint.openAI || endpoint === EModelEndpoint.azureOpenAI;
 }
 
 /**
@@ -230,18 +221,6 @@ function deleteConfigParam({
   }
 }
 
-const openRouterAnthropicVerbosityByEffort: Record<
-  string,
-  NonNullable<OpenAILLMConfig['verbosity']>
-> = {
-  minimal: 'low',
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  xhigh: 'xhigh',
-  max: 'max',
-};
-
 function isStringVerbosity(value: unknown): value is string {
   return typeof value === 'string' && value !== '';
 }
@@ -280,42 +259,13 @@ function applyVerbosityParam({
   return true;
 }
 
-function isOpenRouterAnthropicAdaptiveModel(model?: string | null): boolean {
-  if (typeof model !== 'string') {
-    return false;
-  }
-  const normalizedModel = normalizeOpenRouterModel(model);
-  return normalizedModel.startsWith('anthropic/') && supportsAdaptiveThinking(model);
-}
-
-function normalizeOpenRouterModel(model: string): string {
-  return model.toLowerCase().replace(/^~/, '');
-}
-
-function isOpenRouterClaude46Model(model: string): boolean {
-  const normalizedModel = normalizeOpenRouterModel(model);
-  return (
-    /claude[-.](?:opus|sonnet)[-.]4[-.]6/.test(normalizedModel) ||
-    /claude[-.]4[-.]6[-.](?:opus|sonnet)/.test(normalizedModel)
-  );
-}
-
-function getOpenRouterAnthropicVerbosity(
-  reasoningEffort?: string | null,
-  model?: string | null,
-): OpenAILLMConfig['verbosity'] | undefined {
-  if (!reasoningEffort) {
-    return undefined;
-  }
-  const verbosity = openRouterAnthropicVerbosityByEffort[reasoningEffort];
-  if (verbosity !== 'xhigh' || typeof model !== 'string') {
-    return verbosity;
-  }
-  return isOpenRouterClaude46Model(model) ? 'max' : 'xhigh';
-}
-
+/**
+ * Applies OpenRouter's `reasoning` gateway parameter. OpenRouter proxies many
+ * upstream model families with differing reasoning conventions; this stays
+ * intentionally generic (effort-based) rather than special-casing any one
+ * upstream provider's model-naming scheme.
+ */
 function applyOpenRouterReasoningConfig({
-  model,
   llmConfig,
   modelKwargs,
   reasoningEffort,
@@ -330,27 +280,16 @@ function applyOpenRouterReasoningConfig({
     return false;
   }
 
-  if (!isOpenRouterAnthropicAdaptiveModel(model)) {
-    modelKwargs.reasoning = { effort: reasoningEffort };
-    return true;
-  }
-
-  const adaptiveVerbosity = getOpenRouterAnthropicVerbosity(reasoningEffort, model);
-  if (adaptiveVerbosity != null && llmConfig.verbosity == null) {
-    llmConfig.verbosity = adaptiveVerbosity;
-  }
-
   if (reasoningEffort === 'none') {
     llmConfig.include_reasoning = false;
     return false;
   }
 
-  modelKwargs.reasoning = { enabled: true };
+  modelKwargs.reasoning = { effort: reasoningEffort };
   return true;
 }
 
 function applyReasoningConfig({
-  endpoint,
   llmConfig,
   modelKwargs,
   reasoningEffort,
@@ -359,7 +298,6 @@ function applyReasoningConfig({
   reasoningMode,
   reasoningContext,
 }: {
-  endpoint?: EModelEndpoint | string | null;
   llmConfig: OpenAILLMConfig;
   modelKwargs: Record<string, unknown>;
   reasoningEffort?: OpenAILLMConfig['reasoning_effort'];
@@ -386,17 +324,6 @@ function applyReasoningConfig({
     reasoningContext,
   });
   if (reasoningFormat === ReasoningParameterFormat.disabled) {
-    return false;
-  }
-
-  if (isOpenAIEndpoint(endpoint)) {
-    if (llmConfig.useResponsesApi === true) {
-      llmConfig.reasoning = reasoning;
-      return false;
-    }
-    if (reasoningEffort) {
-      llmConfig.reasoning_effort = reasoningEffort;
-    }
     return false;
   }
 
@@ -499,7 +426,6 @@ export function applyDefaultParams(
 }
 
 export function getOpenAILLMConfig({
-  azure,
   apiKey,
   baseURL,
   endpoint,
@@ -521,10 +447,7 @@ export function getOpenAILLMConfig({
   defaultParams?: Record<string, unknown>;
   useOpenRouter?: boolean;
   reasoningFormat?: ReasoningParameterFormat;
-  azure?: false | t.AzureOptions;
-}): Pick<t.LLMConfigResult, 'llmConfig' | 'tools'> & {
-  azure?: t.AzureOptions;
-} {
+}): Pick<t.LLMConfigResult, 'llmConfig' | 'tools'> {
   /** Clean empty strings from model options (e.g., temperature: "" should be removed) */
   const cleanedModelOptions = removeNullishValues(
     _modelOptions,
@@ -542,28 +465,60 @@ export function getOpenAILLMConfig({
     promptCacheTtl,
     frequency_penalty,
     presence_penalty,
+    top_p,
     ...modelOptions
   } = cleanedModelOptions as Partial<
-    t.OpenAIParameters & { promptCache?: boolean; promptCacheTtl?: '5m' | '1h' }
+    t.OpenAIParameters & {
+      promptCache?: boolean;
+      promptCacheTtl?: '5m' | '1h';
+      top_p?: number;
+    }
   >;
 
-  const llmConfig = Object.assign(
-    {
-      streaming,
-      model: modelOptions.model ?? '',
-    },
-    modelOptions,
-  ) as OpenAILLMConfig;
+  const llmConfig = {
+    streaming,
+    model: modelOptions.model ?? '',
+  } as OpenAILLMConfig;
 
+  /**
+   * `modelOptions` at this point holds every remaining conversation/preset
+   * field (temperature, stop, seed, max_tokens, and - for the `custom`
+   * endpoint (Ollama) - the Ollama-native fields: num_ctx, num_predict,
+   * repeat_penalty, repeat_last_n, mirostat, mirostat_eta, mirostat_tau,
+   * tfs_z, top_k). Anything the underlying LangChain-style OpenAI-compatible
+   * client actually recognizes as a constructor field is applied directly;
+   * anything else is routed into `modelKwargs`, the one place whose contents
+   * are guaranteed to reach the outgoing request body. Previously this was a
+   * blind `Object.assign`, so unrecognized fields (all of Ollama's native
+   * options) landed as inert properties on `llmConfig` and were silently
+   * dropped before the request was ever sent.
+   */
+  const modelKwargs: Record<string, unknown> = {};
+  let hasUnknownModelKwargs = false;
+  for (const [key, value] of Object.entries(modelOptions)) {
+    if (key === 'model' || value === undefined) {
+      continue;
+    }
+    /** `max_tokens` is snake_case on the wire but converted to `maxTokens` just
+     * below; route it onto `llmConfig` here so that conversion still finds it. */
+    if (knownOpenAIParams.has(key) || key === 'max_tokens') {
+      (llmConfig as Record<string, unknown>)[key] = value;
+    } else {
+      modelKwargs[key] = value;
+      hasUnknownModelKwargs = true;
+    }
+  }
+
+  if (top_p != null) {
+    llmConfig.topP = top_p;
+  }
   if (frequency_penalty != null) {
     llmConfig.frequencyPenalty = frequency_penalty;
   }
   if (presence_penalty != null) {
     llmConfig.presencePenalty = presence_penalty;
   }
-
-  const modelKwargs: Record<string, unknown> = {};
-  let hasModelKwargs = false;
+  let hasModelKwargs = hasUnknownModelKwargs;
   let reasoningEffort = reasoning_effort;
   let reasoningSummary = reasoning_summary;
   let reasoningMode = reasoning_mode;
@@ -770,16 +725,15 @@ export function getOpenAILLMConfig({
    * Reads `llmConfig.model` (reflects `addParams` overrides) and skips when
    * `dropParams` removes `reasoning_effort` later anyway (`'reasoning'` only
    * drops the nested object, not the flat param) or opts out of the Responses
-   * API entirely. Limited to first-party OpenAI: OpenRouter, custom gateways
-   * (non-canonical base URL), and `reasoningFormat: 'disabled'` (no reasoning
-   * payload is sent) keep their existing Chat Completions path.
+   * API entirely. Limited to a canonical OpenAI base URL: OpenRouter, other
+   * custom gateways, and `reasoningFormat: 'disabled'` (no reasoning payload
+   * is sent) keep their existing Chat Completions path.
    */
   const responsesApiOptedOut =
     dropParams != null &&
     (dropParams.includes('reasoning_effort') || dropParams.includes('useResponsesApi'));
   if (
     !useOpenRouter &&
-    endpoint === EModelEndpoint.openAI &&
     isCanonicalOpenAIBaseURL(baseURL) &&
     reasoningFormat !== ReasoningParameterFormat.disabled &&
     llmConfig.useResponsesApi == null &&
@@ -792,7 +746,6 @@ export function getOpenAILLMConfig({
   if (!useOpenRouter) {
     hasModelKwargs =
       applyReasoningConfig({
-        endpoint,
         llmConfig,
         modelKwargs,
         reasoningFormat,
@@ -885,52 +838,6 @@ export function getOpenAILLMConfig({
     llmConfig.modelKwargs = modelKwargs;
   }
 
-  if (!azure) {
-    llmConfig.apiKey = apiKey;
-    return { llmConfig, tools };
-  }
-
-  const useModelName = isEnabled(process.env.AZURE_USE_MODEL_AS_DEPLOYMENT_NAME);
-  const updatedAzure = { ...azure };
-  updatedAzure.azureOpenAIApiDeploymentName = useModelName
-    ? sanitizeModelName(llmConfig.model || '')
-    : azure.azureOpenAIApiDeploymentName;
-
-  if (process.env.AZURE_OPENAI_DEFAULT_MODEL) {
-    llmConfig.model = process.env.AZURE_OPENAI_DEFAULT_MODEL;
-  }
-
-  const constructAzureOpenAIBasePath = () => {
-    if (!baseURL) {
-      return;
-    }
-    const azureURL = constructAzureURL({
-      baseURL,
-      azureOptions: updatedAzure,
-    });
-    updatedAzure.azureOpenAIBasePath = azureURL.split(
-      `/${updatedAzure.azureOpenAIApiDeploymentName}`,
-    )[0];
-  };
-
-  constructAzureOpenAIBasePath();
-  Object.assign(llmConfig, updatedAzure);
-
-  const constructAzureResponsesApi = () => {
-    if (!llmConfig.useResponsesApi) {
-      return;
-    }
-
-    delete llmConfig.azureOpenAIApiDeploymentName;
-    delete llmConfig.azureOpenAIApiInstanceName;
-    delete llmConfig.azureOpenAIApiVersion;
-    delete llmConfig.azureOpenAIBasePath;
-    delete llmConfig.azureOpenAIApiKey;
-    llmConfig.apiKey = apiKey;
-  };
-
-  constructAzureResponsesApi();
-
-  llmConfig.model = updatedAzure.azureOpenAIApiDeploymentName;
-  return { llmConfig, tools, azure: updatedAzure };
+  llmConfig.apiKey = apiKey;
+  return { llmConfig, tools };
 }

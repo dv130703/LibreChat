@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef } from 'react';
 import { v4 } from 'uuid';
 import { useToastContext } from '@librechat/client';
 import { useRecoilValue, useSetRecoilState, useRecoilCallback } from 'recoil';
-import { Constants, ContentTypes, isAssistantsEndpoint } from 'librechat-data-provider';
+import { Constants, ContentTypes } from 'librechat-data-provider';
 import type { TMessage, TConversation, TMessageContentParts } from 'librechat-data-provider';
 import type { RunEnd, PendingSteer, QueuedMessage } from '~/store/families';
 import type { ExtendedFile, FileSetter } from '~/common';
@@ -125,12 +125,10 @@ export default function useSteering({
   const defaultAction = useRecoilValue<DuringRunAction>(store.duringRunDefaultAction);
   const setDefaultAction = useSetRecoilState(store.duringRunDefaultAction);
 
-  const endpoint = conversation?.endpointType ?? conversation?.endpoint;
-  const steerable = !isAssistantsEndpoint(endpoint);
   const hasRealConvoId =
     conversationId != null && conversationId !== '' && conversationId !== Constants.NEW_CONVO;
   /** v1 gates the during-run UI to the primary composer, like the HITL popover. */
-  const enabled = steerable && index === 0;
+  const enabled = index === 0;
   const duringRunActive = enabled && isSubmitting && !answerModeActive;
   const queueKey = hasRealConvoId ? conversationId : Constants.NEW_CONVO;
 

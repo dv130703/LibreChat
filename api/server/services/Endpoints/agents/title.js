@@ -4,12 +4,75 @@ const { CacheKeys } = require('librechat-data-provider');
 const getLogStores = require('~/cache/getLogStores');
 const { saveConvo } = require('~/models');
 
+/** Broad category a file's MIME `type` belongs to, for a human-readable fallback. */
+function describeFileKind(type) {
+  if (!type) {
+    return 'a file';
+  }
+  if (type.startsWith('image/')) {
+    return 'an image';
+  }
+  if (type.startsWith('audio/')) {
+    return 'an audio file';
+  }
+  if (type.startsWith('video/')) {
+    return 'a video file';
+  }
+  if (type === 'application/pdf') {
+    return 'a PDF document';
+  }
+  if (type.startsWith('text/')) {
+    return 'a text document';
+  }
+  return 'a file';
+}
+
+/**
+ * `title` timing runs in parallel with generation and, for the default
+ * `immediate` timing, never sees the assistant's response — only the user's
+ * raw typed `text`. A message that is only an attachment (drag in a photo or
+ * PDF and hit send, no caption) leaves that `text` empty, so the title model
+ * gets no signal at all and produces a generic/empty title. This builds a
+ * short, concrete stand-in from the attachment metadata already on the
+ * request (filenames + MIME type) so the title model has something to
+ * summarize, without altering the actual persisted user message text.
+ *
+ * @param {Array<{filename?: string, type?: string}>} files
+ * @returns {string}
+ */
+function describeAttachmentsForTitle(files) {
+  if (!Array.isArray(files) || files.length === 0) {
+    return '';
+  }
+
+  const named = files.filter((file) => file?.filename);
+  if (named.length === 0) {
+    return '';
+  }
+
+  const MAX_LISTED = 3;
+  const listed = named.slice(0, MAX_LISTED).map((file) => file.filename);
+  const remainder = named.length - listed.length;
+  const fileList =
+    remainder > 0 ? `${listed.join(', ')}, and ${remainder} more` : listed.join(', ');
+
+  if (named.length === 1) {
+    return `[User shared ${describeFileKind(named[0].type)}: ${fileList}]`;
+  }
+  return `[User shared ${named.length} files: ${fileList}]`;
+}
+
 /**
  * Add title to conversation in a way that avoids memory retention.
  *
  * @param {ServerRequest} req
  * @param {Object} params
  * @param {string} params.text - The user's first message.
+ * @param {Array<{filename?: string, type?: string}>} [params.files] - The user's
+ *   attachments for this turn (e.g. `req.body.files`, or a resumed message's own
+ *   `files`). Used only as a fallback title-generation input when `text` is
+ *   empty/whitespace (an attachment sent with no caption) — see
+ *   `describeAttachmentsForTitle`.
  * @param {TMessage} [params.response] - The assistant response (legacy/`final` timing only).
  * @param {AgentClient} params.client
  * @param {string} [params.conversationId] - Required for `immediate` timing, where
@@ -36,6 +99,7 @@ const addTitle = async (
   req,
   {
     text,
+    files,
     response,
     client,
     conversationId,
@@ -88,11 +152,14 @@ const addTitle = async (
         signal.addEventListener('abort', () => abortController.abort(), { once: true });
       }
     }
+    const titleInputText =
+      text?.trim() || describeAttachmentsForTitle(files ?? req?.body?.files) || text;
+
     if (client && typeof client.titleConvo === 'function') {
       titlePromise = Promise.race([
         client
           .titleConvo({
-            text,
+            text: titleInputText,
             abortController,
             immediate,
           })

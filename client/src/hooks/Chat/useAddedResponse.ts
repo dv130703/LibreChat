@@ -1,15 +1,9 @@
 import { useCallback, useMemo } from 'react';
 import { useRecoilValue } from 'recoil';
 import { useGetModelsQuery } from 'librechat-data-provider/react-query';
-import {
-  getEndpointField,
-  LocalStorageKeys,
-  isAssistantsEndpoint,
-  getDefaultParamsEndpoint,
-} from 'librechat-data-provider';
+import { getEndpointField, getDefaultParamsEndpoint } from 'librechat-data-provider';
 import type { TEndpointsConfig, EModelEndpoint, TConversation } from 'librechat-data-provider';
-import type { AssistantListItem, NewConversationParams } from '~/common';
-import useAssistantListMap from '~/hooks/Assistants/useAssistantListMap';
+import type { NewConversationParams } from '~/common';
 import { buildDefaultConvo, getDefaultEndpoint } from '~/utils';
 import { useGetEndpointsQuery } from '~/data-provider';
 import { mainTextareaId } from '~/common';
@@ -24,7 +18,6 @@ const ADDED_INDEX = 1;
  */
 export default function useAddedResponse() {
   const modelsQuery = useGetModelsQuery();
-  const assistantsListMap = useAssistantListMap();
   const rootConvo = useRecoilValue(store.conversationByKeySelector(0));
   const { data: endpointsConfig = {} as TEndpointsConfig } = useGetEndpointsQuery();
   const { conversation, setConversation } = store.useCreateConversationAtom(ADDED_INDEX);
@@ -59,32 +52,7 @@ export default function useAddedResponse() {
         newConversation.endpointType = undefined;
       }
 
-      const isAssistantEndpoint = isAssistantsEndpoint(defaultEndpoint);
-      const assistants: AssistantListItem[] = assistantsListMap[defaultEndpoint ?? ''] ?? [];
-
-      if (
-        newConversation.assistant_id &&
-        !assistantsListMap[defaultEndpoint ?? '']?.[newConversation.assistant_id]
-      ) {
-        newConversation.assistant_id = undefined;
-      }
-
-      if (!newConversation.assistant_id && isAssistantEndpoint) {
-        newConversation.assistant_id =
-          localStorage.getItem(`${LocalStorageKeys.ASST_ID_PREFIX}0${defaultEndpoint}`) ??
-          assistants[0]?.id;
-      }
-
-      if (
-        newConversation.assistant_id != null &&
-        isAssistantEndpoint &&
-        newConversation.conversationId === 'new'
-      ) {
-        const assistant = assistants.find((asst) => asst.id === newConversation.assistant_id);
-        newConversation.model = assistant?.model;
-      }
-
-      if (newConversation.assistant_id != null && !isAssistantEndpoint) {
+      if (newConversation.assistant_id != null) {
         newConversation.assistant_id = undefined;
       }
 
@@ -113,13 +81,7 @@ export default function useAddedResponse() {
 
       return newConversation;
     },
-    [
-      endpointsConfig,
-      setConversation,
-      modelsQuery.data,
-      assistantsListMap,
-      rootConvo?.conversationId,
-    ],
+    [endpointsConfig, setConversation, modelsQuery.data, rootConvo?.conversationId],
   );
 
   return useMemo(

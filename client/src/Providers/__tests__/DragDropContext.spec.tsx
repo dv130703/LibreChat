@@ -5,9 +5,9 @@ import type { TEndpointsConfig, Agent } from 'librechat-data-provider';
 import { DragDropProvider, useDragDropContext } from '../DragDropContext';
 
 const mockEndpointsConfig: TEndpointsConfig = {
-  [EModelEndpoint.openAI]: { userProvide: false, order: 0 },
+  ['openAI']: { userProvide: false, order: 0 },
   [EModelEndpoint.agents]: { userProvide: false, order: 1 },
-  [EModelEndpoint.anthropic]: { userProvide: false, order: 6 },
+  ['anthropic']: { userProvide: false, order: 6 },
   Moonshot: { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
   'Some Endpoint': { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
 };
@@ -48,9 +48,9 @@ describe('DragDropContext endpointType resolution', () => {
     });
 
     it('resolves endpoint name for a standard endpoint', () => {
-      mockConversation = { endpoint: EModelEndpoint.openAI };
+      mockConversation = { endpoint: 'openAI' };
       const { result } = renderHook(() => useDragDropContext(), { wrapper });
-      expect(result.current.endpointType).toBe(EModelEndpoint.openAI);
+      expect(result.current.endpointType).toBe('openAI');
     });
   });
 
@@ -76,19 +76,19 @@ describe('DragDropContext endpointType resolution', () => {
     it('resolves to openAI for agent with openAI provider', () => {
       mockConversation = { endpoint: EModelEndpoint.agents, agent_id: 'agent-1' };
       mockAgentsMap = {
-        'agent-1': { provider: EModelEndpoint.openAI, model_parameters: {} } as Partial<Agent>,
+        'agent-1': { provider: 'openAI', model_parameters: {} } as Partial<Agent>,
       };
       const { result } = renderHook(() => useDragDropContext(), { wrapper });
-      expect(result.current.endpointType).toBe(EModelEndpoint.openAI);
+      expect(result.current.endpointType).toBe('openAI');
     });
 
     it('resolves to anthropic for agent with anthropic provider', () => {
       mockConversation = { endpoint: EModelEndpoint.agents, agent_id: 'agent-1' };
       mockAgentsMap = {
-        'agent-1': { provider: EModelEndpoint.anthropic, model_parameters: {} } as Partial<Agent>,
+        'agent-1': { provider: 'anthropic', model_parameters: {} } as Partial<Agent>,
       };
       const { result } = renderHook(() => useDragDropContext(), { wrapper });
-      expect(result.current.endpointType).toBe(EModelEndpoint.anthropic);
+      expect(result.current.endpointType).toBe('anthropic');
     });
   });
 
@@ -104,11 +104,11 @@ describe('DragDropContext endpointType resolution', () => {
     it('falls back to agentsMap provider when agentData omits provider', () => {
       mockConversation = { endpoint: EModelEndpoint.agents, agent_id: 'agent-1' };
       mockAgentsMap = {
-        'agent-1': { provider: EModelEndpoint.openAI, model_parameters: {} } as Partial<Agent>,
+        'agent-1': { provider: 'openAI', model_parameters: {} } as Partial<Agent>,
       };
       mockAgentQueryData = {} as Partial<Agent>;
       const { result } = renderHook(() => useDragDropContext(), { wrapper });
-      expect(result.current.endpointType).toBe(EModelEndpoint.openAI);
+      expect(result.current.endpointType).toBe('openAI');
     });
   });
 
@@ -116,7 +116,7 @@ describe('DragDropContext endpointType resolution', () => {
     it('uses fetched agent model parameters when conversation does not override them', () => {
       mockConversation = { endpoint: EModelEndpoint.agents, agent_id: 'agent-1' };
       mockAgentQueryData = {
-        provider: EModelEndpoint.azureOpenAI,
+        provider: 'azureOpenAI',
         model_parameters: { useResponsesApi: true },
       } as Partial<Agent>;
       const { result } = renderHook(() => useDragDropContext(), { wrapper });
@@ -127,11 +127,11 @@ describe('DragDropContext endpointType resolution', () => {
       mockConversation = { endpoint: EModelEndpoint.agents, agent_id: 'agent-1' };
       mockAgentsMap = {
         'agent-1': {
-          provider: EModelEndpoint.azureOpenAI,
+          provider: 'azureOpenAI',
           model_parameters: { useResponsesApi: true },
         } as Partial<Agent>,
       };
-      mockAgentQueryData = { provider: EModelEndpoint.azureOpenAI } as Partial<Agent>;
+      mockAgentQueryData = { provider: 'azureOpenAI' } as Partial<Agent>;
       const { result } = renderHook(() => useDragDropContext(), { wrapper });
       expect(result.current.useResponsesApi).toBe(true);
     });
@@ -143,7 +143,7 @@ describe('DragDropContext endpointType resolution', () => {
         useResponsesApi: false,
       };
       mockAgentQueryData = {
-        provider: EModelEndpoint.azureOpenAI,
+        provider: 'azureOpenAI',
         model_parameters: { useResponsesApi: true },
       } as Partial<Agent>;
       const { result } = renderHook(() => useDragDropContext(), { wrapper });

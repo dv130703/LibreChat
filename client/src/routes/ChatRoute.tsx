@@ -22,13 +22,7 @@ import {
   useGetEndpointsQuery,
   useProjectQuery,
 } from '~/data-provider';
-import {
-  useAssistantListMap,
-  useIdChangeEffect,
-  useAppStartup,
-  useNewConvo,
-  useLocalize,
-} from '~/hooks';
+import { useIdChangeEffect, useAppStartup, useNewConvo, useLocalize } from '~/hooks';
 import { ToolCallsMapProvider } from '~/Providers';
 import ChatPanelHost from '~/components/AudioTranscriber/ChatPanelHost';
 import ChatView from '~/components/Chat/ChatView';
@@ -124,7 +118,6 @@ export default function ChatRoute() {
       isAuthenticated && conversationId !== Constants.NEW_CONVO && !hasSetConversation.current,
   });
   const endpointsQuery = useGetEndpointsQuery({ enabled: isAuthenticated });
-  const assistantListMap = useAssistantListMap();
 
   const isTemporaryChat = isTemporaryConversation(conversation);
 
@@ -229,32 +222,6 @@ export default function ChatRoute() {
         ...(spec ? { preset: getModelSpecPreset(spec) } : {}),
       });
       hasSetConversation.current = true;
-    } else if (
-      isNewConvo &&
-      assistantListMap[EModelEndpoint.assistants] &&
-      assistantListMap[EModelEndpoint.azureAssistants]
-    ) {
-      const preset = getNewConvoPreset();
-
-      logger.log('conversation', 'ChatRoute new convo, assistants effect', conversation);
-      clearMessagesCache(queryClient, conversation?.conversationId);
-      newConversation({
-        modelsData: modelsQuery.data,
-        template: projectTemplate,
-        ...(preset ? { preset } : {}),
-      });
-      hasSetConversation.current = true;
-    } else if (
-      assistantListMap[EModelEndpoint.assistants] &&
-      assistantListMap[EModelEndpoint.azureAssistants]
-    ) {
-      logger.log('conversation', 'ChatRoute convo, assistants effect', initialConvoQuery.data);
-      newConversation({
-        template: initialConvoQuery.data,
-        preset: initialConvoQuery.data as TPreset,
-        modelsData: modelsQuery.data,
-      });
-      hasSetConversation.current = true;
     }
     /* Creates infinite render if all dependencies included due to newConversation invocations exceeding call stack before hasSetConversation.current becomes truthy */
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -265,7 +232,6 @@ export default function ChatRoute() {
     initialConvoQuery.isError,
     endpointsQuery.data,
     modelsQuery.data,
-    assistantListMap,
     chatProjectId,
     projectQuery.data?._id,
     projectQuery.isLoading,

@@ -1,4 +1,3 @@
-import { EModelEndpoint, FileSources } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import { getFileRetentionSweepInterval, startExpiredFileSweep, sweepExpiredFiles } from './sweep';
 
@@ -19,39 +18,30 @@ describe('expired file sweep helpers', () => {
     delete process.env.FILE_RETENTION_SWEEP_INTERVAL_MS;
   });
 
-  it('loads endpoint config and deletes expired OpenAI storage files', async () => {
+  it('deletes expired files scoped to their owning user', async () => {
     const getExpiredFiles = jest.fn().mockResolvedValue([
       {
-        file_id: 'expired-openai-file',
-        source: FileSources.openai,
+        file_id: 'expired-file',
+        source: 'local',
         user: { toString: () => 'user-123' },
         tenantId: 'tenant-a',
       },
     ]);
     const processDeleteRequest = jest.fn().mockResolvedValue({
-      deletedFileIds: ['expired-openai-file'],
+      deletedFileIds: ['expired-file'],
       failedFileIds: [],
     });
-    const loadAppConfig = jest.fn().mockResolvedValue({
-      endpoints: {
-        [EModelEndpoint.assistants]: { version: 'v3' },
-      },
-    } as AppConfig);
 
     const result = await sweepExpiredFiles(
-      { appConfig: {} as AppConfig, loadAppConfig, limit: 1 },
+      { appConfig: {} as AppConfig, limit: 1 },
       { getExpiredFiles, processDeleteRequest, logger },
     );
 
-    expect(loadAppConfig).toHaveBeenCalledTimes(1);
     expect(processDeleteRequest).toHaveBeenCalledWith({
       req: expect.objectContaining({
-        baseUrl: '/api/assistants/v3',
-        originalUrl: '/api/assistants/v3/files',
-        body: { endpoint: EModelEndpoint.assistants, version: '3' },
         user: { id: 'user-123', tenantId: 'tenant-a' },
       }),
-      files: [expect.objectContaining({ file_id: 'expired-openai-file' })],
+      files: [expect.objectContaining({ file_id: 'expired-file' })],
     });
     expect(result).toEqual({ scanned: 1, deleted: 1, failed: 0 });
   });

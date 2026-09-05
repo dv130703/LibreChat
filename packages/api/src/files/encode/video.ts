@@ -2,7 +2,7 @@ import { Providers } from '@librechat/agents';
 import { isDocumentSupportedProvider } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
 import type { ServerRequest, StrategyFunctions, VideoResult } from '~/types';
-import { getFileStream, getConfiguredFileSizeLimit } from './utils';
+import { getFileStream } from './utils';
 import { validateVideo } from '~/files/validation';
 import { runGuardedEncode } from './memoryGuard';
 
@@ -22,7 +22,7 @@ export async function encodeAndFormatVideos(
   params: { provider: Providers; endpoint?: string },
   getStrategyFunctions: (source: string) => StrategyFunctions,
 ): Promise<VideoResult> {
-  const { provider, endpoint } = params;
+  const { provider } = params;
   if (!files?.length) {
     return { videos: [], files: [] };
   }
@@ -61,30 +61,13 @@ export async function encodeAndFormatVideos(
 
     const videoBuffer = Buffer.from(content, 'base64');
 
-    /** Extract configured file size limit from fileConfig for this endpoint */
-    const configuredFileSizeLimit = getConfiguredFileSizeLimit(req, {
-      provider,
-      endpoint,
-    });
-
-    const validation = await validateVideo(
-      videoBuffer,
-      videoBuffer.length,
-      provider,
-      configuredFileSizeLimit,
-    );
+    const validation = await validateVideo(videoBuffer, videoBuffer.length);
 
     if (!validation.isValid) {
       throw new Error(`Video validation failed: ${validation.error}`);
     }
 
-    if (provider === Providers.GOOGLE || provider === Providers.VERTEXAI) {
-      result.videos.push({
-        type: 'media',
-        mimeType: file.type,
-        data: content,
-      });
-    } else if (provider === Providers.OPENROUTER) {
+    if (provider === Providers.OPENROUTER) {
       result.videos.push({
         type: 'video_url',
         video_url: {

@@ -51,7 +51,6 @@ describe('getViableUploadOptions', () => {
 
     it('offers every destination for a PDF', () => {
       expect(getViableUploadOptions([file('application/pdf', 'doc.pdf')], baseCtx())).toEqual([
-        undefined,
         EToolResources.file_search,
         EToolResources.execute_code,
         EToolResources.context,

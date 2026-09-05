@@ -1,4 +1,5 @@
 import { QueryClient, InfiniteData } from '@tanstack/react-query';
+import { EModelEndpoint } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
 import {
   dateKeys,
@@ -579,14 +580,14 @@ describe('Conversation Utilities', () => {
           conversationId: 'a',
           updatedAt: '2024-01-01T12:00:00Z',
           createdAt: '2024-01-01T10:00:00Z',
-          endpoint: 'openAI',
+          endpoint: EModelEndpoint.custom,
           model: 'gpt-3',
           title: 'Conversation A',
         } as TConversation;
         convoB = {
           conversationId: 'b',
           updatedAt: '2024-01-02T12:00:00Z',
-          endpoint: 'openAI',
+          endpoint: EModelEndpoint.custom,
           model: 'gpt-3',
         } as TConversation;
         queryClient.setQueryData(['allConversations'], {

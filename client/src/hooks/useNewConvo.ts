@@ -13,7 +13,6 @@ import {
   isAgentsEndpoint,
   LocalStorageKeys,
   isEphemeralAgentId,
-  isAssistantsEndpoint,
   getDefaultParamsEndpoint,
 } from 'librechat-data-provider';
 import type {
@@ -23,9 +22,7 @@ import type {
   TConversation,
   TEndpointsConfig,
 } from 'librechat-data-provider';
-import type { AssistantListItem } from '~/common';
 import {
-  updateLastSelectedModel,
   getLocalStorageItems,
   getDefaultModelSpec,
   getDefaultEndpoint,
@@ -37,7 +34,6 @@ import {
 } from '~/utils';
 import { useDeleteFilesMutation, useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
 import useGetConversation from './Conversations/useGetConversation';
-import useAssistantListMap from './Assistants/useAssistantListMap';
 import { useResetChatBadges } from './useChatBadges';
 import { useApplyModelSpecEffects } from './Agents';
 import { usePauseGlobalAudio } from './Audio';
@@ -64,7 +60,6 @@ const useNewConvo = (index = 0) => {
   });
 
   const modelsQuery = useGetModelsQuery();
-  const assistantsListMap = useAssistantListMap();
   const { pauseGlobalAudio } = usePauseGlobalAudio(index);
   const saveDrafts = useRecoilValue<boolean>(store.saveDrafts);
   const resetBadges = useResetChatBadges();
@@ -163,38 +158,7 @@ const useNewConvo = (index = 0) => {
             conversation.endpointType = undefined;
           }
 
-          const isAssistantEndpoint = isAssistantsEndpoint(defaultEndpoint);
-          const assistants: AssistantListItem[] = assistantsListMap[defaultEndpoint] ?? [];
-          const currentAssistantId = conversation.assistant_id ?? '';
-          const currentAssistant = assistantsListMap[defaultEndpoint]?.[currentAssistantId] as
-            | AssistantListItem
-            | undefined;
-
-          if (currentAssistantId && !currentAssistant) {
-            conversation.assistant_id = undefined;
-          }
-
-          if (!currentAssistantId && isAssistantEndpoint) {
-            conversation.assistant_id =
-              localStorage.getItem(
-                `${LocalStorageKeys.ASST_ID_PREFIX}${index}${defaultEndpoint}`,
-              ) ?? assistants[0]?.id;
-          }
-
-          if (
-            currentAssistantId &&
-            isAssistantEndpoint &&
-            conversation.conversationId === Constants.NEW_CONVO
-          ) {
-            const assistant = assistants.find((asst) => asst.id === currentAssistantId);
-            conversation.model = assistant?.model;
-            updateLastSelectedModel({
-              endpoint: defaultEndpoint,
-              model: conversation.model,
-            });
-          }
-
-          if (currentAssistantId && !isAssistantEndpoint) {
+          if (conversation.assistant_id) {
             conversation.assistant_id = undefined;
           }
 
@@ -278,14 +242,7 @@ const useNewConvo = (index = 0) => {
         }
         navigate(path, { replace: true });
       },
-    [
-      endpointsConfig,
-      defaultPreset,
-      assistantsListMap,
-      modelsQuery.data,
-      hasAgentAccess,
-      searchParams,
-    ],
+    [endpointsConfig, defaultPreset, modelsQuery.data, hasAgentAccess, searchParams],
   );
 
   const newConversation = useCallback(

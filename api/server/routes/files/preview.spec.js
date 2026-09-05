@@ -44,10 +44,6 @@ jest.mock('~/server/services/Files/strategies', () => ({
   getStrategyFunctions: jest.fn(() => ({})),
 }));
 
-jest.mock('~/server/controllers/assistants/helpers', () => ({
-  getOpenAIClient: jest.fn(),
-}));
-
 jest.mock('~/server/middleware/roles/capabilities', () => ({
   hasCapability: jest.fn(() => (_req, _res, next) => next()),
 }));

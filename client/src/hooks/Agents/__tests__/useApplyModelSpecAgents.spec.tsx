@@ -17,7 +17,7 @@ const createModelSpec = (name: string): TModelSpec =>
     name,
     label: name,
     preset: {
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       model: name,
     },
   }) as TModelSpec;

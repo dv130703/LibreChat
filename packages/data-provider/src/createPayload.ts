@@ -27,18 +27,12 @@ export default function createPayload(submission: t.TSubmission) {
     clientRequestId,
   } = submission;
   const { conversationId } = s.tConvoUpdateSchema.parse(conversation);
-  const { endpoint: _e, endpointType } = endpointOption as {
+  const { endpoint: _e } = endpointOption as {
     endpoint: s.EModelEndpoint;
-    endpointType?: s.EModelEndpoint;
   };
 
   const endpoint = _e as s.EModelEndpoint;
-  let server = `${EndpointURLs[s.EModelEndpoint.agents]}/${endpoint}`;
-  if (s.isAssistantsEndpoint(endpoint)) {
-    server =
-      EndpointURLs[(endpointType ?? endpoint) as 'assistants' | 'azureAssistants'] +
-      (isEdited ? '/modify' : '');
-  }
+  const server = `${EndpointURLs[s.EModelEndpoint.agents]}/${endpoint}`;
 
   const payload: t.TPayload = {
     ...userMessage,

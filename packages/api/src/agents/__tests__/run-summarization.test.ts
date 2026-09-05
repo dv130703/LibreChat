@@ -573,7 +573,9 @@ describe('custom-endpoint provider resolution', () => {
     expect((agents[0].summarizationConfig as Record<string, unknown>).provider).toBe('openAI');
   });
 
-  it('does not match non-Ollama endpoints with different casing', async () => {
+  it('matches non-Ollama endpoints case-insensitively too (generalized fallback)', async () => {
+    // getProviderConfig's case-insensitive fallback isn't Ollama-specific — it applies
+    // to any custom endpoint name, so a differently-cased provider still resolves.
     const appConfig = makeAppConfig([
       { name: 'Together', baseURL: 'https://api.together.ai/v1', apiKey: 'together-key' },
     ]);
@@ -582,8 +584,8 @@ describe('custom-endpoint provider resolution', () => {
       appConfig,
     });
     const config = agents[0].summarizationConfig as Record<string, unknown>;
-    expect(config.provider).toBe('together');
-    expect(config.parameters).toBeUndefined();
+    expect(config.provider).toBe('openAI');
+    expect((config.parameters as Record<string, unknown>).apiKey).toBe('together-key');
   });
 
   it('leaves known SDK providers untouched', async () => {

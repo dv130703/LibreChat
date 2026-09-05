@@ -8,7 +8,7 @@ describe('DragDropModal - Provider Detection', () => {
   describe('endpointType priority over currentProvider', () => {
     it('should show upload option for LiteLLM with OpenAI endpointType', () => {
       const currentProvider = 'litellm'; // NOT in documentSupportedProviders
-      const endpointType = EModelEndpoint.openAI; // IS in documentSupportedProviders
+      const endpointType = EModelEndpoint.custom; // IS in documentSupportedProviders
 
       // With fix: endpointType checked
       const withFix =
@@ -22,7 +22,7 @@ describe('DragDropModal - Provider Detection', () => {
 
     it('should show upload option for any custom gateway with OpenAI endpointType', () => {
       const currentProvider = 'my-custom-gateway';
-      const endpointType = EModelEndpoint.openAI;
+      const endpointType = EModelEndpoint.custom;
 
       const result =
         isDocumentSupportedProvider(endpointType) || isDocumentSupportedProvider(currentProvider);
@@ -30,7 +30,7 @@ describe('DragDropModal - Provider Detection', () => {
     });
 
     it('should fallback to currentProvider when endpointType is undefined', () => {
-      const currentProvider = EModelEndpoint.openAI;
+      const currentProvider = EModelEndpoint.custom;
       const endpointType = undefined;
 
       const result =
@@ -39,7 +39,7 @@ describe('DragDropModal - Provider Detection', () => {
     });
 
     it('should fallback to currentProvider when endpointType is null', () => {
-      const currentProvider = EModelEndpoint.anthropic;
+      const currentProvider = EModelEndpoint.custom;
       const endpointType = null;
 
       const result =
@@ -60,9 +60,7 @@ describe('DragDropModal - Provider Detection', () => {
 
   describe('supported providers', () => {
     const supportedProviders = [
-      { name: 'OpenAI', value: EModelEndpoint.openAI },
-      { name: 'Anthropic', value: EModelEndpoint.anthropic },
-      { name: 'Google', value: EModelEndpoint.google },
+      { name: 'OpenAI', value: EModelEndpoint.custom },
       { name: 'Custom', value: EModelEndpoint.custom },
     ];
 
@@ -73,7 +71,7 @@ describe('DragDropModal - Provider Detection', () => {
     });
 
     it('should NOT recognize Azure OpenAI as supported (requires useResponsesApi)', () => {
-      expect(isDocumentSupportedProvider(EModelEndpoint.azureOpenAI)).toBe(false);
+      expect(isDocumentSupportedProvider('azureOpenAI')).toBe(false);
     });
   });
 
@@ -81,7 +79,7 @@ describe('DragDropModal - Provider Detection', () => {
     it('should handle LiteLLM gateway pointing to OpenAI', () => {
       const scenario = {
         currentProvider: 'litellm',
-        endpointType: EModelEndpoint.openAI,
+        endpointType: EModelEndpoint.custom,
       };
 
       expect(
@@ -92,8 +90,8 @@ describe('DragDropModal - Provider Detection', () => {
 
     it('should handle direct OpenAI connection', () => {
       const scenario = {
-        currentProvider: EModelEndpoint.openAI,
-        endpointType: EModelEndpoint.openAI,
+        currentProvider: EModelEndpoint.custom,
+        endpointType: EModelEndpoint.custom,
       };
 
       expect(
@@ -115,7 +113,7 @@ describe('DragDropModal - Provider Detection', () => {
     });
     it('should handle agents endpoints with document supported providers', () => {
       const scenario = {
-        currentProvider: EModelEndpoint.google,
+        currentProvider: EModelEndpoint.custom,
         endpointType: EModelEndpoint.agents,
       };
 
@@ -126,15 +124,16 @@ describe('DragDropModal - Provider Detection', () => {
     });
 
     it('should handle Azure OpenAI endpointType when Responses API is enabled', () => {
-      const scenario = {
-        currentProvider: EModelEndpoint.agents,
-        endpointType: EModelEndpoint.azureOpenAI,
-        useResponsesApi: true,
-      };
+      const scenario: { currentProvider: string; endpointType: string; useResponsesApi: boolean } =
+        {
+          currentProvider: EModelEndpoint.agents,
+          endpointType: 'azureOpenAI',
+          useResponsesApi: true,
+        };
 
       const isAzureWithResponsesApi =
-        (scenario.currentProvider === EModelEndpoint.azureOpenAI ||
-          scenario.endpointType === EModelEndpoint.azureOpenAI) &&
+        (scenario.currentProvider === 'azureOpenAI' ||
+          scenario.endpointType === 'azureOpenAI') &&
         scenario.useResponsesApi === true;
 
       expect(

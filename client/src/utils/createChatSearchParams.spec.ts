@@ -6,22 +6,22 @@ describe('createChatSearchParams', () => {
   describe('conversation inputs', () => {
     it('handles basic conversation properties', () => {
       const conversation: Partial<TConversation> = {
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         model: 'gpt-4',
         temperature: 0.7,
       };
 
       const result = createChatSearchParams(conversation as TConversation);
-      expect(result.get('endpoint')).toBe(EModelEndpoint.openAI);
+      expect(result.get('endpoint')).toBe(EModelEndpoint.custom);
       expect(result.get('model')).toBe('gpt-4');
       expect(result.get('temperature')).toBe('0.7');
     });
 
     it('applies only the endpoint property when other conversation fields are absent', () => {
       const endpointOnly = createChatSearchParams({
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       } as TConversation);
-      expect(endpointOnly.get('endpoint')).toBe(EModelEndpoint.openAI);
+      expect(endpointOnly.get('endpoint')).toBe(EModelEndpoint.custom);
       expect(endpointOnly.has('model')).toBe(false);
       expect(endpointOnly.has('endpoint')).toBe(true);
     });
@@ -31,20 +31,6 @@ describe('createChatSearchParams', () => {
       expect(modelOnly.has('endpoint')).toBe(false);
       expect(modelOnly.get('model')).toBe('gpt-4');
       expect(modelOnly.has('model')).toBe(true);
-    });
-
-    it('includes assistant_id when endpoint is assistants', () => {
-      const withAssistantId = createChatSearchParams({
-        endpoint: EModelEndpoint.assistants,
-        model: 'gpt-4',
-        assistant_id: 'asst_123',
-        temperature: 0.7,
-      } as TConversation);
-
-      expect(withAssistantId.get('assistant_id')).toBe('asst_123');
-      expect(withAssistantId.has('endpoint')).toBe(false);
-      expect(withAssistantId.has('model')).toBe(false);
-      expect(withAssistantId.has('temperature')).toBe(false);
     });
 
     it('includes agent_id when endpoint is agents', () => {
@@ -59,21 +45,6 @@ describe('createChatSearchParams', () => {
       expect(withAgentId.has('endpoint')).toBe(false);
       expect(withAgentId.has('model')).toBe(false);
       expect(withAgentId.has('temperature')).toBe(false);
-    });
-
-    it('excludes all parameters except assistant_id when endpoint is assistants', () => {
-      const withAssistantId = createChatSearchParams({
-        endpoint: EModelEndpoint.assistants,
-        model: 'gpt-4',
-        assistant_id: 'asst_123',
-        temperature: 0.7,
-      } as TConversation);
-
-      expect(withAssistantId.get('assistant_id')).toBe('asst_123');
-      expect(withAssistantId.has('endpoint')).toBe(false);
-      expect(withAssistantId.has('model')).toBe(false);
-      expect(withAssistantId.has('temperature')).toBe(false);
-      expect([...withAssistantId.entries()].length).toBe(1);
     });
 
     it('excludes all parameters except agent_id when endpoint is agents', () => {
@@ -102,17 +73,6 @@ describe('createChatSearchParams', () => {
       expect([...result.entries()].length).toBe(0);
     });
 
-    it('returns empty params when assistants endpoint has no assistant_id', () => {
-      const result = createChatSearchParams({
-        endpoint: EModelEndpoint.assistants,
-        model: 'gpt-4',
-        temperature: 0.7,
-      } as TConversation);
-
-      expect(result.toString()).toBe('');
-      expect([...result.entries()].length).toBe(0);
-    });
-
     it('ignores agent_id when it matches EPHEMERAL_AGENT_ID', () => {
       const result = createChatSearchParams({
         endpoint: EModelEndpoint.agents,
@@ -130,42 +90,42 @@ describe('createChatSearchParams', () => {
 
     it('handles stop arrays correctly by joining with commas', () => {
       const withStopArray = createChatSearchParams({
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         model: 'gpt-4',
         stop: ['stop1', 'stop2'],
       } as TConversation);
 
-      expect(withStopArray.get('endpoint')).toBe(EModelEndpoint.openAI);
+      expect(withStopArray.get('endpoint')).toBe(EModelEndpoint.custom);
       expect(withStopArray.get('model')).toBe('gpt-4');
       expect(withStopArray.get('stop')).toBe('stop1,stop2');
     });
 
     it('filters out non-supported array properties', () => {
       const withOtherArray = createChatSearchParams({
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         model: 'gpt-4',
         otherArrayProp: ['value1', 'value2'],
       } as any);
 
-      expect(withOtherArray.get('endpoint')).toBe(EModelEndpoint.openAI);
+      expect(withOtherArray.get('endpoint')).toBe(EModelEndpoint.custom);
       expect(withOtherArray.get('model')).toBe('gpt-4');
       expect(withOtherArray.has('otherArrayProp')).toBe(false);
     });
 
     it('includes empty arrays in output params', () => {
       const result = createChatSearchParams({
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         stop: [],
       });
 
-      expect(result.get('endpoint')).toBe(EModelEndpoint.openAI);
+      expect(result.get('endpoint')).toBe(EModelEndpoint.custom);
       expect(result.has('stop')).toBe(true);
       expect(result.get('stop')).toBe('');
     });
 
     it('handles non-stop arrays correctly in paramMap', () => {
       const conversation: any = {
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         model: 'gpt-4',
         top_p: ['0.7', '0.8'],
       };
@@ -174,19 +134,19 @@ describe('createChatSearchParams', () => {
 
       const expectedJson = JSON.stringify(['0.7', '0.8']);
       expect(result.get('top_p')).toBe(expectedJson);
-      expect(result.get('endpoint')).toBe(EModelEndpoint.openAI);
+      expect(result.get('endpoint')).toBe(EModelEndpoint.custom);
       expect(result.get('model')).toBe('gpt-4');
     });
 
     it('includes empty non-stop arrays as serialized empty arrays', () => {
       const result = createChatSearchParams({
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         model: 'gpt-4',
         temperature: 0.7,
         top_p: [],
       } as any);
 
-      expect(result.get('endpoint')).toBe(EModelEndpoint.openAI);
+      expect(result.get('endpoint')).toBe(EModelEndpoint.custom);
       expect(result.get('model')).toBe('gpt-4');
       expect(result.get('temperature')).toBe('0.7');
       expect(result.has('top_p')).toBe(true);
@@ -195,7 +155,7 @@ describe('createChatSearchParams', () => {
 
     it('excludes parameters with null or undefined values from the output', () => {
       const result = createChatSearchParams({
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         model: 'gpt-4',
         temperature: 0.7,
         top_p: undefined,
@@ -203,7 +163,7 @@ describe('createChatSearchParams', () => {
         frequency_penalty: null,
       } as any);
 
-      expect(result.get('endpoint')).toBe(EModelEndpoint.openAI);
+      expect(result.get('endpoint')).toBe(EModelEndpoint.custom);
       expect(result.get('model')).toBe('gpt-4');
       expect(result.get('temperature')).toBe('0.7');
       expect(result.has('top_p')).toBe(false);
@@ -214,13 +174,13 @@ describe('createChatSearchParams', () => {
 
     it('handles float parameter values correctly', () => {
       const result = createChatSearchParams({
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
         model: 'gemini-pro',
         frequency_penalty: 0.25,
         temperature: 0.75,
       });
 
-      expect(result.get('endpoint')).toBe(EModelEndpoint.google);
+      expect(result.get('endpoint')).toBe('google');
       expect(result.get('model')).toBe('gemini-pro');
       expect(result.get('frequency_penalty')).toBe('0.25');
       expect(result.get('temperature')).toBe('0.75');
@@ -228,13 +188,13 @@ describe('createChatSearchParams', () => {
 
     it('handles integer parameter values correctly', () => {
       const result = createChatSearchParams({
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
         model: 'gemini-pro',
         topK: 40,
         maxOutputTokens: 2048,
       });
 
-      expect(result.get('endpoint')).toBe(EModelEndpoint.google);
+      expect(result.get('endpoint')).toBe('google');
       expect(result.get('model')).toBe('gemini-pro');
       expect(result.get('topK')).toBe('40');
       expect(result.get('maxOutputTokens')).toBe('2048');
@@ -244,14 +204,14 @@ describe('createChatSearchParams', () => {
   describe('preset inputs', () => {
     it('handles preset objects correctly', () => {
       const preset: Partial<TPreset> = {
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
         model: 'gemini-pro',
         temperature: 0.5,
         topP: 0.8,
       };
 
       const result = createChatSearchParams(preset as TPreset);
-      expect(result.get('endpoint')).toBe(EModelEndpoint.google);
+      expect(result.get('endpoint')).toBe('google');
       expect(result.get('model')).toBe('gemini-pro');
       expect(result.get('temperature')).toBe('0.5');
       expect(result.get('topP')).toBe('0.8');
@@ -259,7 +219,7 @@ describe('createChatSearchParams', () => {
 
     it('returns only spec param when spec property is present', () => {
       const preset: Partial<TPreset> = {
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
         model: 'gemini-pro',
         temperature: 0.5,
         spec: 'special_spec',
@@ -277,7 +237,7 @@ describe('createChatSearchParams', () => {
   describe('record inputs', () => {
     it('includes allowed parameters from Record inputs', () => {
       const record: Record<string, any> = {
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
         model: 'claude-2',
         temperature: '0.8',
         top_p: '0.95',
@@ -287,7 +247,7 @@ describe('createChatSearchParams', () => {
       };
 
       const result = createChatSearchParams(record);
-      expect(result.get('endpoint')).toBe(EModelEndpoint.anthropic);
+      expect(result.get('endpoint')).toBe('anthropic');
       expect(result.get('model')).toBe('claude-2');
       expect(result.get('temperature')).toBe('0.8');
       expect(result.get('top_p')).toBe('0.95');
@@ -295,7 +255,7 @@ describe('createChatSearchParams', () => {
 
     it('excludes disallowed parameters from Record inputs', () => {
       const record: Record<string, any> = {
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
         model: 'claude-2',
         extraParam: 'should-not-be-included',
         invalidParam1: 'value1',

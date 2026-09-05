@@ -10,10 +10,10 @@ import {
 } from './config';
 
 const endpointsConfig: TEndpointsConfig = {
-  [EModelEndpoint.openAI]: { userProvide: false, order: 0 },
+  ['openAI']: { userProvide: false, order: 0 },
   [EModelEndpoint.agents]: { userProvide: false, order: 1 },
-  [EModelEndpoint.anthropic]: { userProvide: false, order: 6 },
-  [EModelEndpoint.bedrock]: { userProvide: false, order: 7 },
+  ['anthropic']: { userProvide: false, order: 6 },
+  ['bedrock']: { userProvide: false, order: 7 },
   Moonshot: { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
   'Some Endpoint': { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
   Gemini: { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
@@ -33,34 +33,6 @@ describe('excludedKeys', () => {
   });
 });
 
-describe('bedrockEndpointSchema', () => {
-  it('preserves guardrailConfig from configSchema parsing', () => {
-    const guardrailConfig = {
-      guardrailIdentifier: '${BEDROCK_GUARDRAIL_ID}',
-      guardrailVersion: '${BEDROCK_GUARDRAIL_VERSION}',
-      trace: 'enabled_full',
-      streamProcessingMode: 'sync',
-    };
-
-    const result = configSchema.safeParse({
-      version: '1.0',
-      endpoints: {
-        bedrock: {
-          streamRate: 25,
-          availableRegions: ['us-west-2'],
-          guardrailConfig,
-        },
-      },
-    });
-
-    expect(result.success).toBe(true);
-    if (!result.success) {
-      return;
-    }
-    expect(result.data.endpoints?.bedrock?.guardrailConfig).toEqual(guardrailConfig);
-  });
-});
-
 describe('resolveEndpointType', () => {
   describe('non-agents endpoints', () => {
     it('returns the config type for a custom endpoint', () => {
@@ -72,20 +44,20 @@ describe('resolveEndpointType', () => {
     });
 
     it('returns the endpoint itself for a standard endpoint without a type field', () => {
-      expect(resolveEndpointType(endpointsConfig, EModelEndpoint.openAI)).toBe(
-        EModelEndpoint.openAI,
+      expect(resolveEndpointType(endpointsConfig, 'openAI')).toBe(
+        'openAI',
       );
     });
 
     it('returns the endpoint itself for anthropic', () => {
-      expect(resolveEndpointType(endpointsConfig, EModelEndpoint.anthropic)).toBe(
-        EModelEndpoint.anthropic,
+      expect(resolveEndpointType(endpointsConfig, 'anthropic')).toBe(
+        'anthropic',
       );
     });
 
     it('ignores agentProvider when endpoint is not agents', () => {
-      expect(resolveEndpointType(endpointsConfig, EModelEndpoint.openAI, 'Moonshot')).toBe(
-        EModelEndpoint.openAI,
+      expect(resolveEndpointType(endpointsConfig, 'openAI', 'Moonshot')).toBe(
+        'openAI',
       );
     });
   });
@@ -105,14 +77,14 @@ describe('resolveEndpointType', () => {
 
     it('returns the provider itself for a standard agent provider (no type field)', () => {
       expect(
-        resolveEndpointType(endpointsConfig, EModelEndpoint.agents, EModelEndpoint.openAI),
-      ).toBe(EModelEndpoint.openAI);
+        resolveEndpointType(endpointsConfig, EModelEndpoint.agents, 'openAI'),
+      ).toBe('openAI');
     });
 
     it('returns bedrock for a bedrock agent provider', () => {
       expect(
-        resolveEndpointType(endpointsConfig, EModelEndpoint.agents, EModelEndpoint.bedrock),
-      ).toBe(EModelEndpoint.bedrock);
+        resolveEndpointType(endpointsConfig, EModelEndpoint.agents, 'bedrock'),
+      ).toBe('bedrock');
     });
 
     it('returns the provider name when provider is not in endpointsConfig', () => {
@@ -227,12 +199,18 @@ describe('resolveEndpointType + getEndpointFileConfig integration', () => {
     expect(config.fileLimit).toBe(5);
   });
 
-  it('non-agents standard endpoint falls back to default when no specific config', () => {
-    const endpointType = resolveEndpointType(endpointsConfig, EModelEndpoint.openAI);
+  it('the agents endpoint itself falls back to default when no specific config', () => {
+    const fileConfigWithoutAgents = mergeFileConfig({
+      endpoints: {
+        Moonshot: { fileLimit: 5 },
+        default: { fileLimit: 10 },
+      },
+    });
+    const endpointType = resolveEndpointType(endpointsConfig, EModelEndpoint.agents);
     const config = getEndpointFileConfig({
-      fileConfig,
+      fileConfig: fileConfigWithoutAgents,
       endpointType,
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.agents,
     });
     expect(config.fileLimit).toBe(10);
   });
@@ -258,31 +236,13 @@ describe('resolveEndpointType + isDocumentSupportedProvider (upload menu)', () =
     expect(isDocumentSupportedProvider(endpointType)).toBe(false);
   });
 
-  it('agent with openAI provider is document-supported', () => {
+  it('agent with an unresolvable provider is not document-supported (only `custom` remains)', () => {
     const endpointType = resolveEndpointType(
       endpointsConfig,
       EModelEndpoint.agents,
-      EModelEndpoint.openAI,
+      'someUnresolvedProvider',
     );
-    expect(isDocumentSupportedProvider(endpointType)).toBe(true);
-  });
-
-  it('agent with anthropic provider is document-supported', () => {
-    const endpointType = resolveEndpointType(
-      endpointsConfig,
-      EModelEndpoint.agents,
-      EModelEndpoint.anthropic,
-    );
-    expect(isDocumentSupportedProvider(endpointType)).toBe(true);
-  });
-
-  it('agent with bedrock provider is document-supported', () => {
-    const endpointType = resolveEndpointType(
-      endpointsConfig,
-      EModelEndpoint.agents,
-      EModelEndpoint.bedrock,
-    );
-    expect(isDocumentSupportedProvider(endpointType)).toBe(true);
+    expect(isDocumentSupportedProvider(endpointType)).toBe(false);
   });
 
   it('direct custom endpoint (not agents) is document-supported', () => {
@@ -290,9 +250,9 @@ describe('resolveEndpointType + isDocumentSupportedProvider (upload menu)', () =
     expect(isDocumentSupportedProvider(endpointType)).toBe(true);
   });
 
-  it('direct standard endpoint is document-supported', () => {
-    const endpointType = resolveEndpointType(endpointsConfig, EModelEndpoint.openAI);
-    expect(isDocumentSupportedProvider(endpointType)).toBe(true);
+  it('direct unresolvable endpoint is not document-supported (only `custom` remains)', () => {
+    const endpointType = resolveEndpointType(endpointsConfig, 'someUnresolvedEndpoint');
+    expect(isDocumentSupportedProvider(endpointType)).toBe(false);
   });
 
   it('agent with unknown provider not in endpointsConfig is not document-supported', () => {

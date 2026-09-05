@@ -6,7 +6,6 @@ const {
   VisionModes,
   ImageDetail,
   ContentTypes,
-  EModelEndpoint,
   mergeFileConfig,
   getEndpointFileConfig,
 } = require('librechat-data-provider');
@@ -72,13 +71,7 @@ async function fetchImageToBase64(url) {
   }
 }
 
-const base64Only = new Set([
-  EModelEndpoint.google,
-  EModelEndpoint.anthropic,
-  'Ollama',
-  'ollama',
-  EModelEndpoint.bedrock,
-]);
+const base64Only = new Set(['Ollama', 'ollama']);
 
 const blobStorageSources = new Set([
   FileSources.azure_blob,
@@ -230,28 +223,6 @@ async function encodeAndFormat(req, files, params, mode) {
       result.image_urls.push({ ...imagePart });
       result.files.push({ ...fileMetadata });
       continue;
-    }
-
-    if (
-      effectiveEndpoint &&
-      effectiveEndpoint === EModelEndpoint.google &&
-      mode === VisionModes.generative
-    ) {
-      delete imagePart.image_url;
-      imagePart.inlineData = {
-        mimeType: file.type,
-        data: imageContent,
-      };
-    } else if (effectiveEndpoint && effectiveEndpoint === EModelEndpoint.google) {
-      imagePart.image_url = imagePart.image_url.url;
-    } else if (effectiveEndpoint && effectiveEndpoint === EModelEndpoint.anthropic) {
-      imagePart.type = 'image';
-      imagePart.source = {
-        type: 'base64',
-        media_type: file.type,
-        data: imageContent,
-      };
-      delete imagePart.image_url;
     }
 
     result.image_urls.push({ ...imagePart });

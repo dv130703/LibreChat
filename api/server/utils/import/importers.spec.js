@@ -1,18 +1,12 @@
 const fs = require('fs');
 const path = require('path');
-const {
-  EModelEndpoint,
-  Constants,
-  RetentionMode,
-  openAISettings,
-  anthropicSettings,
-} = require('librechat-data-provider');
+const { EModelEndpoint, Constants, RetentionMode } = require('librechat-data-provider');
 const { getImporter, processAssistantMessage } = require('./importers');
 const { ImportBatchBuilder } = require('./importBatchBuilder');
 const { bulkSaveMessages, bulkSaveConvos: _bulkSaveConvos } = require('~/models');
 
 const mockGetEndpointsConfig = jest.fn().mockResolvedValue({
-  [EModelEndpoint.openAI]: { userProvide: false },
+  [EModelEndpoint.custom]: { userProvide: false },
 });
 
 const mockGetModelsConfig = jest.fn().mockResolvedValue({});
@@ -54,7 +48,7 @@ describe('importChatGptConvo', () => {
     const importer = getImporter(jsonData);
     await importer(jsonData, requestUserId, () => importBatchBuilder);
 
-    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.openAI);
+    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.custom);
     expect(importBatchBuilder.saveMessage).toHaveBeenCalledTimes(expectedNumberOfMessages);
     expect(importBatchBuilder.finishConversation).toHaveBeenCalledTimes(jsonData.length);
     expect(importBatchBuilder.saveBatch).toHaveBeenCalled();
@@ -497,11 +491,12 @@ describe('importChatGptConvo', () => {
     expect(claude.sender).toBe('claude-3-opus');
     expect(claude.model).toBe('claude-3-opus');
 
-    // Test missing model slug (should default to openAISettings.model.default)
+    // Test missing model slug (no hardcoded fallback model exists anymore)
     const noModel = savedMessages.find((msg) => msg.text === 'No model slug response');
-    // When no model slug is provided, it defaults to gpt-4o-mini which gets formatted to GPT-4o-mini
-    expect(noModel.sender).toBe('GPT-4o-mini');
-    expect(noModel.model).toBe(openAISettings.model.default);
+    // When no model slug is resolvable, the model is an empty string and the sender
+    // falls back to the generic 'assistant' label.
+    expect(noModel.sender).toBe('assistant');
+    expect(noModel.model).toBe('');
 
     // Verify user message is unaffected
     const userMsg = savedMessages.find((msg) => msg.text === 'Test message');
@@ -826,8 +821,8 @@ describe('importChatGptConvo', () => {
 
     const userMessage = savedMessages.find((msg) => msg.isCreatedByUser);
     const assistantMessage = savedMessages.find((msg) => !msg.isCreatedByUser);
-    expect(userMessage.model).toBe(openAISettings.model.default);
-    expect(assistantMessage.model).toBe(openAISettings.model.default);
+    expect(userMessage.model).toBe('');
+    expect(assistantMessage.model).toBe('');
     expect(assistantMessage.parentMessageId).toBe(userMessage.messageId);
   });
 
@@ -853,7 +848,7 @@ describe('importLibreChatConvo', () => {
 
   it('should import conversation correctly', async () => {
     mockGetEndpointsConfig.mockResolvedValue({
-      [EModelEndpoint.openAI]: {},
+      [EModelEndpoint.custom]: {},
     });
     const expectedNumberOfMessages = 6;
     const jsonData = JSON.parse(
@@ -871,7 +866,7 @@ describe('importLibreChatConvo', () => {
     const importer = getImporter(jsonData);
     await importer(jsonData, requestUserId, () => importBatchBuilder);
 
-    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.openAI);
+    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.custom);
     expect(importBatchBuilder.saveMessage).toHaveBeenCalledTimes(expectedNumberOfMessages);
     expect(importBatchBuilder.finishConversation).toHaveBeenCalledTimes(1);
     expect(importBatchBuilder.saveBatch).toHaveBeenCalled();
@@ -879,7 +874,7 @@ describe('importLibreChatConvo', () => {
 
   it('should import linear, non-recursive thread correctly with correct endpoint', async () => {
     mockGetEndpointsConfig.mockResolvedValue({
-      [EModelEndpoint.azureOpenAI]: {},
+      [EModelEndpoint.custom]: {},
     });
 
     const jsonData = JSON.parse(
@@ -905,7 +900,7 @@ describe('importLibreChatConvo', () => {
       lastMessageId = message.messageId;
     }
 
-    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.azureOpenAI);
+    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.custom);
     expect(importBatchBuilder.saveMessage).toHaveBeenCalledTimes(jsonData.messages.length);
     expect(importBatchBuilder.finishConversation).toHaveBeenCalled();
     expect(importBatchBuilder.saveBatch).toHaveBeenCalled();
@@ -1019,7 +1014,7 @@ describe('importLibreChatConvo', () => {
 
   it('should retain properties from the original conversation as well as new settings', async () => {
     mockGetEndpointsConfig.mockResolvedValue({
-      [EModelEndpoint.azureOpenAI]: {},
+      [EModelEndpoint.custom]: {},
     });
     const requestUserId = 'user-123';
     const importBatchBuilder = new ImportBatchBuilder(requestUserId);
@@ -1042,12 +1037,12 @@ describe('importLibreChatConvo', () => {
       updatedAt: createdAt,
       overrideTimestamp: true,
       endpoint: importBatchBuilder.endpoint,
-      model: originalConvo.model || openAISettings.model.default,
+      model: originalConvo.model || '',
     });
 
     expect(convo.title).toBe('Original');
     expect(convo.createdAt).toBeInstanceOf(Date);
-    expect(convo.endpoint).toBe(EModelEndpoint.azureOpenAI);
+    expect(convo.endpoint).toBe(EModelEndpoint.custom);
     expect(convo.model).toBe('gpt-4o');
   });
 
@@ -1096,7 +1091,9 @@ describe('importLibreChatConvo', () => {
       });
     });
 
-    it('should use default values if not provided in the original conversation or as parameters', () => {
+    it('should use an empty-string model when not provided in the original conversation or as a parameter', () => {
+      // There is no universal hardcoded default model — custom endpoint models are
+      // entirely admin/user-configured — so an empty string is the last resort.
       const requestUserId = 'user-123';
       const builder = new ImportBatchBuilder(requestUserId);
       builder.conversationId = 'conv-id-123';
@@ -1104,29 +1101,18 @@ describe('importLibreChatConvo', () => {
       builder.endpoint = 'test-endpoint';
       const result = builder.finishConversation();
       expect(result.conversation.title).toBe('Imported Chat');
-      expect(result.conversation.model).toBe(openAISettings.model.default);
+      expect(result.conversation.model).toBe('');
     });
 
-    it('should default to the anthropic model for anthropic-endpoint conversations', () => {
+    it('uses the resolved defaultModel when provided, regardless of endpoint', () => {
       const requestUserId = 'user-123';
       const builder = new ImportBatchBuilder(requestUserId);
       builder.conversationId = 'conv-id-123';
       builder.messages = [{ text: 'Hello, world!' }];
-      builder.endpoint = EModelEndpoint.anthropic;
-      const result = builder.finishConversation();
-      expect(result.conversation.endpoint).toBe(EModelEndpoint.anthropic);
-      expect(result.conversation.model).toBe(anthropicSettings.model.default);
-    });
-
-    it('should default to the openAI model for openAI-endpoint conversations', () => {
-      const requestUserId = 'user-123';
-      const builder = new ImportBatchBuilder(requestUserId);
-      builder.conversationId = 'conv-id-123';
-      builder.messages = [{ text: 'Hello, world!' }];
-      builder.endpoint = EModelEndpoint.openAI;
-      const result = builder.finishConversation();
-      expect(result.conversation.endpoint).toBe(EModelEndpoint.openAI);
-      expect(result.conversation.model).toBe(openAISettings.model.default);
+      builder.endpoint = EModelEndpoint.custom;
+      const result = builder.finishConversation('Imported Chat', undefined, {}, 'llama3');
+      expect(result.conversation.endpoint).toBe(EModelEndpoint.custom);
+      expect(result.conversation.model).toBe('llama3');
     });
 
     it('applies all-data retention to imported conversations and messages', () => {
@@ -1135,7 +1121,7 @@ describe('importLibreChatConvo', () => {
         retentionMode: RetentionMode.ALL,
         temporaryChatRetention: 24,
       });
-      builder.startConversation(EModelEndpoint.openAI);
+      builder.startConversation(EModelEndpoint.custom);
       const message = builder.addUserMessage('Retained import');
       const result = builder.finishConversation('Imported retained chat');
 
@@ -1167,7 +1153,7 @@ describe('importChatBotUiConvo', () => {
     const importer = getImporter(jsonData);
     await importer(jsonData, requestUserId, () => importBatchBuilder);
 
-    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.openAI);
+    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.custom);
     expect(importBatchBuilder.addUserMessage).toHaveBeenCalledTimes(3);
     expect(importBatchBuilder.addUserMessage).toHaveBeenNthCalledWith(
       1,
@@ -1489,7 +1475,7 @@ describe('importClaudeConvo', () => {
     const importer = getImporter(jsonData);
     await importer(jsonData, requestUserId, () => importBatchBuilder);
 
-    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.anthropic);
+    expect(importBatchBuilder.startConversation).toHaveBeenCalledWith(EModelEndpoint.custom);
     expect(importBatchBuilder.saveMessage).toHaveBeenCalledTimes(2);
     expect(importBatchBuilder.finishConversation).toHaveBeenCalledWith(
       'Test Conversation',
@@ -1504,7 +1490,7 @@ describe('importClaudeConvo', () => {
     const userMsg = savedMessages.find((msg) => msg.text === 'Hello Claude');
     expect(userMsg.isCreatedByUser).toBe(true);
     expect(userMsg.sender).toBe('user');
-    expect(userMsg.endpoint).toBe(EModelEndpoint.anthropic);
+    expect(userMsg.endpoint).toBe(EModelEndpoint.custom);
 
     // Check assistant message
     const assistantMsg = savedMessages.find((msg) => msg.text === 'Hello! How can I help you?');
@@ -1617,14 +1603,13 @@ describe('importClaudeConvo', () => {
 
     expect(importBatchBuilder.conversations).toHaveLength(1);
     const convo = importBatchBuilder.conversations[0];
-    expect(convo.endpoint).toBe(EModelEndpoint.anthropic);
-    expect(convo.model).toBe(anthropicSettings.model.default);
-    expect(convo.model).not.toBe(openAISettings.model.default);
+    expect(convo.endpoint).toBe(EModelEndpoint.custom);
+    expect(convo.model).toBe('');
   });
 
-  it('should prefer the first runtime-configured anthropic model over the hardcoded default', async () => {
+  it('should prefer the first runtime-configured model over an empty default', async () => {
     mockGetModelsConfig.mockResolvedValueOnce({
-      [EModelEndpoint.anthropic]: ['claude-opus-4-7', 'claude-3-5-sonnet-latest'],
+      [EModelEndpoint.custom]: ['claude-opus-4-7', 'claude-3-5-sonnet-latest'],
     });
 
     const jsonData = [
@@ -1650,13 +1635,13 @@ describe('importClaudeConvo', () => {
     await importer(jsonData, requestUserId, () => importBatchBuilder);
 
     const convo = importBatchBuilder.conversations[0];
-    expect(convo.endpoint).toBe(EModelEndpoint.anthropic);
+    expect(convo.endpoint).toBe(EModelEndpoint.custom);
     expect(convo.model).toBe('claude-opus-4-7');
   });
 
-  it('should fall back to the anthropic hardcoded default when modelsConfig has no anthropic models', async () => {
+  it('should fall back to an empty-string model when modelsConfig has no models for the endpoint', async () => {
     mockGetModelsConfig.mockResolvedValueOnce({
-      [EModelEndpoint.anthropic]: [],
+      [EModelEndpoint.custom]: [],
     });
 
     const jsonData = [
@@ -1682,11 +1667,11 @@ describe('importClaudeConvo', () => {
     await importer(jsonData, requestUserId, () => importBatchBuilder);
 
     const convo = importBatchBuilder.conversations[0];
-    expect(convo.endpoint).toBe(EModelEndpoint.anthropic);
-    expect(convo.model).toBe(anthropicSettings.model.default);
+    expect(convo.endpoint).toBe(EModelEndpoint.custom);
+    expect(convo.model).toBe('');
   });
 
-  it('should fall back to the anthropic hardcoded default when getModelsConfig throws', async () => {
+  it('should fall back to an empty-string model when getModelsConfig throws', async () => {
     mockGetModelsConfig.mockRejectedValueOnce(new Error('boom'));
 
     const jsonData = [
@@ -1712,8 +1697,8 @@ describe('importClaudeConvo', () => {
     await importer(jsonData, requestUserId, () => importBatchBuilder);
 
     const convo = importBatchBuilder.conversations[0];
-    expect(convo.endpoint).toBe(EModelEndpoint.anthropic);
-    expect(convo.model).toBe(anthropicSettings.model.default);
+    expect(convo.endpoint).toBe(EModelEndpoint.custom);
+    expect(convo.model).toBe('');
   });
 
   it('should correct timestamp inversions (child before parent)', async () => {

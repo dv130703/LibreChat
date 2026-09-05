@@ -20,6 +20,11 @@ jest.mock('@librechat/api', () => ({
   isCodeSessionToolName: jest.fn((name) =>
     ['execute_code', 'bash_tool', 'read_file'].includes(name),
   ),
+  // No test here exercises the OfficeCLI tool-output path directly (see
+  // Office/process.spec.js for that); these stubs just keep the module's
+  // destructured imports defined so unrelated tests don't touch `undefined`.
+  snapshotOfficeFiles: jest.fn().mockResolvedValue(new Map()),
+  diffOfficeFiles: jest.fn().mockReturnValue([]),
 }));
 
 jest.mock('@librechat/data-schemas', () => ({
@@ -64,6 +69,10 @@ jest.mock('~/server/services/Files/Code/process', () => ({
         /* swallowed in the mock — see process.spec.js for catch coverage */
       });
   },
+}));
+
+jest.mock('~/server/services/Files/Office/process', () => ({
+  processOfficeCliOutput: jest.fn(),
 }));
 
 jest.mock('~/server/services/Tools/credentials', () => ({
@@ -262,6 +271,46 @@ describe('createToolEndCallback', () => {
 
       expect(artifactPromises).toHaveLength(0);
       expect(res.write).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('officecli screenshot fall-through (regression)', () => {
+    it('attaches an officecli screenshot image instead of dropping it (does not return before the generic content branch)', async () => {
+      const { saveBase64Image } = require('~/server/services/Files/process');
+      saveBase64Image.mockResolvedValue({
+        file_id: 'img-1',
+        filename: 'officecli_mcp_officecli_img_mock-id.png',
+        filepath: '/uploads/user123/img-1.png',
+      });
+
+      const toolEndCallback = createToolEndCallback({ req, res, artifactPromises });
+
+      // Shape produced by `formatToolContent` for a `view <file> screenshot`
+      // call: no file_search/ui_resources/web_search/memory keys, just an
+      // image_url content part — output.artifact is truthy here (unlike a
+      // plain text officecli response), so this exercises the fall-through.
+      const output = {
+        name: 'officecli_mcp_officecli',
+        tool_call_id: 'tool123',
+        artifact: {
+          content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }],
+        },
+      };
+
+      const metadata = { run_id: 'run456', thread_id: 'thread789', provider: 'openAI' };
+
+      await toolEndCallback({ output }, metadata);
+      const results = await Promise.all(artifactPromises);
+
+      expect(saveBase64Image).toHaveBeenCalledWith(
+        'data:image/png;base64,AAAA',
+        expect.objectContaining({ endpoint: 'openAI' }),
+      );
+      // Two artifactPromises: the officecli file-detection branch (empty —
+      // diffOfficeFiles is mocked to return []) and the image branch.
+      expect(results).toContainEqual(
+        expect.objectContaining({ file_id: 'img-1', toolCallId: 'tool123' }),
+      );
     });
   });
 

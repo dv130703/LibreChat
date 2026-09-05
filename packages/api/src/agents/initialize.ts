@@ -1031,14 +1031,20 @@ export async function initializeAgent(
 
   const options: InitializeResultBase = await getOptions({
     req,
-    endpoint: provider,
+    /**
+     * `getProviderConfig` case-insensitively resolves `provider` (e.g. lowercase
+     * `"ollama"` after a prior normalization) against `customEndpointConfig`, but
+     * doesn't correct the caller's copy. `initializeCustom` re-looks-up the config
+     * by exact name, so pass the resolved name — falling back to `provider` for
+     * non-custom providers, where `customEndpointConfig` is undefined.
+     */
+    endpoint: customEndpointConfig?.name ?? provider,
     model_parameters: finalModelOptions,
     db,
   });
 
   const llmConfig = options.llmConfig as Record<string, unknown>;
-  const tokensModel =
-    agent.provider === EModelEndpoint.azureOpenAI ? agent.model : (llmConfig?.model as string);
+  const tokensModel = llmConfig?.model as string;
   const maxOutputTokens = optionalChainWithEmptyCheck(
     llmConfig?.maxOutputTokens as number | undefined,
     llmConfig?.maxTokens as number | undefined,
@@ -1053,13 +1059,6 @@ export async function initializeAgent(
     ),
     DEFAULT_MAX_CONTEXT_TOKENS,
   );
-
-  if (
-    agent.endpoint === EModelEndpoint.azureOpenAI &&
-    (llmConfig?.azureOpenAIApiInstanceName as string | undefined) == null
-  ) {
-    agent.provider = Providers.OPENAI;
-  }
 
   if (options.provider != null) {
     agent.provider = options.provider;

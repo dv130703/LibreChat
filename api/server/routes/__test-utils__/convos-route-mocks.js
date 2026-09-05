@@ -3,6 +3,11 @@ module.exports = {
 
   api: (overrides = {}) => ({
     isEnabled: jest.fn(),
+    ImageService: jest.fn().mockImplementation(() => ({
+      uploadImage: jest.fn(),
+      prepareImageURL: jest.fn(),
+      processAvatar: jest.fn(),
+    })),
     resolveImportMaxFileSize: jest.fn(() => 262144000),
     createAxiosInstance: jest.fn(() => ({
       get: jest.fn(),
@@ -36,8 +41,22 @@ module.exports = {
   dataProvider: (overrides = {}) => ({
     CacheKeys: { GEN_TITLE: 'GEN_TITLE' },
     EModelEndpoint: {
-      azureAssistants: 'azureAssistants',
-      assistants: 'assistants',
+      agents: 'agents',
+    },
+    FileSources: {
+      local: 'local',
+      firebase: 'firebase',
+      azure: 'azure',
+      azure_blob: 'azure_blob',
+      s3: 's3',
+      cloudfront: 'cloudfront',
+      vectordb: 'vectordb',
+      execute_code: 'execute_code',
+      mistral_ocr: 'mistral_ocr',
+      azure_mistral_ocr: 'azure_mistral_ocr',
+      vertexai_mistral_ocr: 'vertexai_mistral_ocr',
+      text: 'text',
+      document_parser: 'document_parser',
     },
     FileContext: { transcript_rag: 'transcript_rag' },
     ...overrides,
@@ -102,6 +121,4 @@ module.exports = {
         next();
       }),
     })),
-
-  assistantEndpoint: () => ({ initializeClient: jest.fn() }),
 };

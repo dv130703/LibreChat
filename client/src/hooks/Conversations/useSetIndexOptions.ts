@@ -31,13 +31,10 @@ const useSetIndexOptions: TUseSetOptions = (preset = false) => {
       };
     }
 
-    // Auto-enable Responses API when web search is enabled (only for OpenAI/Azure/Custom endpoints)
+    // Auto-enable Responses API when web search is enabled (only for the custom/Ollama endpoint)
     if (param === 'web_search' && newValue === true) {
       const currentEndpoint = conversation?.endpoint;
-      const isOpenAICompatible =
-        currentEndpoint === EModelEndpoint.openAI ||
-        currentEndpoint === EModelEndpoint.azureOpenAI ||
-        currentEndpoint === EModelEndpoint.custom;
+      const isOpenAICompatible = currentEndpoint === EModelEndpoint.custom;
 
       if (isOpenAICompatible) {
         const currentUseResponsesApi = conversation?.useResponsesApi ?? false;

@@ -37,16 +37,8 @@ function MentionContent({
   const getConversation = useGetConversation(0);
   const assistantsMap = useAssistantsMapContext();
   const setShowPopover = useSetRecoilState(popoverAtom);
-  const {
-    options,
-    presets,
-    isLoading,
-    modelSpecs,
-    agentsList,
-    modelsConfig,
-    endpointsConfig,
-    assistantListMap,
-  } = useMentions({ assistantMap: assistantsMap || {}, includeAssistants });
+  const { options, presets, isLoading, modelSpecs, agentsList, modelsConfig, endpointsConfig } =
+    useMentions({ assistantMap: assistantsMap || {}, includeAssistants });
   const { onSelectMention } = useSelectMention({
     presets,
     modelSpecs,
@@ -93,16 +85,6 @@ function MentionContent({
     if (mention.type === 'endpoint' && mention.value === EModelEndpoint.agents) {
       setSearchValue('');
       setInputOptions(agentsList ?? []);
-      setActiveIndex(0);
-      inputRef.current?.focus();
-    } else if (mention.type === 'endpoint' && mention.value === EModelEndpoint.assistants) {
-      setSearchValue('');
-      setInputOptions(assistantListMap[EModelEndpoint.assistants] ?? []);
-      setActiveIndex(0);
-      inputRef.current?.focus();
-    } else if (mention.type === 'endpoint' && mention.value === EModelEndpoint.azureAssistants) {
-      setSearchValue('');
-      setInputOptions(assistantListMap[EModelEndpoint.azureAssistants] ?? []);
       setActiveIndex(0);
       inputRef.current?.focus();
     } else if (mention.type === 'endpoint') {

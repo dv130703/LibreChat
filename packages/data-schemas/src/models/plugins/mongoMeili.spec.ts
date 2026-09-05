@@ -119,7 +119,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId: new mongoose.Types.ObjectId(),
       user: new mongoose.Types.ObjectId(),
       title: 'Test Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
     });
     expect(mockAddDocuments).toHaveBeenCalledWith(
       [expect.objectContaining({ conversationId: expect.anything() })],
@@ -132,7 +132,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId: new mongoose.Types.ObjectId(),
       user: new mongoose.Types.ObjectId(),
       title: 'Test Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       expiredAt: null,
     });
     expect(mockAddDocuments).toHaveBeenCalled();
@@ -143,7 +143,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId: new mongoose.Types.ObjectId(),
       user: new mongoose.Types.ObjectId(),
       title: 'Test Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       isTemporary: false,
       expiredAt: new Date(Date.now() + 60 * 60 * 1000),
     });
@@ -155,7 +155,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId: new mongoose.Types.ObjectId(),
       user: new mongoose.Types.ObjectId(),
       title: 'Test Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       isTemporary: false,
       expiredAt: new Date(Date.now() - 60 * 60 * 1000),
     });
@@ -167,7 +167,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId: new mongoose.Types.ObjectId(),
       user: new mongoose.Types.ObjectId(),
       title: 'Test Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       isTemporary: true,
       expiredAt: new Date(),
     });
@@ -242,7 +242,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId: new mongoose.Types.ObjectId().toString(),
       user: new mongoose.Types.ObjectId(),
       title: 'Original Title',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
     });
     mockUpdateDocuments.mockClear();
 
@@ -305,7 +305,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId,
       user: new mongoose.Types.ObjectId(),
       title: 'Pipe Test',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
     });
     mockUpdateDocuments.mockClear();
 
@@ -327,7 +327,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId: new mongoose.Types.ObjectId(),
       user: new mongoose.Types.ObjectId(),
       title: 'Test Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       isTemporary: true,
       expiredAt: new Date(),
     });
@@ -349,7 +349,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId,
       user: new mongoose.Types.ObjectId().toString(),
       title: 'Legacy Temporary Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       expiredAt: new Date(Date.now() + 60 * 60 * 1000),
       _meiliIndex: false,
       createdAt: new Date(),
@@ -376,7 +376,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId,
       user: new mongoose.Types.ObjectId().toString(),
       title: 'Legacy Temporary Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       expiredAt: new Date(Date.now() + 60 * 60 * 1000),
       _meiliIndex: false,
       createdAt: new Date(),
@@ -408,7 +408,7 @@ describe('Meilisearch Mongoose plugin', () => {
       conversationId,
       user: new mongoose.Types.ObjectId().toString(),
       title: 'Legacy Temporary Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       expiredAt: new Date(Date.now() + 60 * 60 * 1000),
       _meiliIndex: false,
       createdAt: new Date(),
@@ -523,14 +523,14 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Test Conversation 1',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       await conversationModel.create({
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Test Conversation 2',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       // Trigger sync - should use estimatedDocumentCount internally
@@ -563,14 +563,14 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Test 1',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       await conversationModel.create({
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Test 2',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       const estimatedCount = await conversationModel.estimatedDocumentCount();
@@ -664,7 +664,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Test Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: false,
         expiredAt: null,
       });
@@ -694,7 +694,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Test Retry',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       // Wait for async operations to complete
@@ -715,7 +715,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Indexed',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: true,
         expiredAt: null,
       });
@@ -724,7 +724,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Not Indexed',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: false,
         expiredAt: null,
       });
@@ -747,7 +747,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Syncable Indexed',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: true,
         expiredAt: null,
       });
@@ -756,7 +756,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Syncable Not Indexed',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: false,
         expiredAt: null,
       });
@@ -766,7 +766,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'TTL Document 1',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: true,
         expiredAt: new Date(),
       });
@@ -775,7 +775,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'TTL Document 2',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: false,
         expiredAt: new Date(),
       });
@@ -842,7 +842,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Test Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: false,
         expiredAt: null,
       });
@@ -876,7 +876,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Test Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: false,
         expiredAt: null,
       });
@@ -950,7 +950,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId(),
           user: new mongoose.Types.ObjectId(),
           title: `Test Conversation ${i}`,
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           _meiliIndex: false,
           expiredAt: null,
         });
@@ -1004,7 +1004,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: new mongoose.Types.ObjectId(),
         user: new mongoose.Types.ObjectId(),
         title: 'Test',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: false,
         expiredAt: null,
       });
@@ -1051,7 +1051,7 @@ describe('Meilisearch Mongoose plugin', () => {
         conversationId: existingConvoId,
         user: new mongoose.Types.ObjectId(),
         title: 'Existing Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         _meiliIndex: true,
         expiredAt: null,
       });
@@ -1143,7 +1143,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: existingId1,
           user: new mongoose.Types.ObjectId(),
           title: 'Conversation 1',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           _meiliIndex: true,
           expiredAt: null,
         },
@@ -1151,7 +1151,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: existingId2,
           user: new mongoose.Types.ObjectId(),
           title: 'Conversation 2',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           _meiliIndex: true,
           expiredAt: null,
         },
@@ -1199,7 +1199,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: id1,
           user: new mongoose.Types.ObjectId(),
           title: 'Conversation 1',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           _meiliIndex: true,
           expiredAt: null,
         },
@@ -1207,7 +1207,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: id2,
           user: new mongoose.Types.ObjectId(),
           title: 'Conversation 2',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           _meiliIndex: true,
           expiredAt: null,
         },
@@ -1296,7 +1296,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: id1,
           user: new mongoose.Types.ObjectId(),
           title: 'Conversation 1',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           _meiliIndex: true,
           expiredAt: null,
         },
@@ -1304,7 +1304,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: id2,
           user: new mongoose.Types.ObjectId(),
           title: 'Conversation 2',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           _meiliIndex: true,
           expiredAt: null,
         },
@@ -1433,7 +1433,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId().toString(),
           user: new mongoose.Types.ObjectId(),
           title: 'Old Conversation 1',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           _meiliIndex: false,
           expiredAt: null,
           createdAt: pastDate,
@@ -1443,7 +1443,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId().toString(),
           user: new mongoose.Types.ObjectId(),
           title: 'Old Conversation 2',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           _meiliIndex: false,
           expiredAt: null,
           createdAt: pastDate,
@@ -1532,7 +1532,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId(),
           user: new mongoose.Types.ObjectId(),
           title: 'Missing _meiliIndex',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           expiredAt: null,
           // _meiliIndex is not set (missing/undefined)
         },
@@ -1540,7 +1540,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId(),
           user: new mongoose.Types.ObjectId(),
           title: 'Explicit false',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           expiredAt: null,
           _meiliIndex: false,
         },
@@ -1548,7 +1548,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId(),
           user: new mongoose.Types.ObjectId(),
           title: 'Already indexed',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           expiredAt: null,
           _meiliIndex: true,
         },
@@ -1630,7 +1630,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId(),
           user: new mongoose.Types.ObjectId(),
           title: 'Missing',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           expiredAt: null,
           // _meiliIndex is missing
         },
@@ -1638,7 +1638,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId(),
           user: new mongoose.Types.ObjectId(),
           title: 'False',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           expiredAt: null,
           _meiliIndex: false,
         },
@@ -1646,7 +1646,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId(),
           user: new mongoose.Types.ObjectId(),
           title: 'True',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           expiredAt: null,
           _meiliIndex: true,
         },
@@ -1727,7 +1727,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId(),
           user: new mongoose.Types.ObjectId(),
           title: 'Missing',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           expiredAt: null,
           // _meiliIndex is missing
         },
@@ -1735,7 +1735,7 @@ describe('Meilisearch Mongoose plugin', () => {
           conversationId: new mongoose.Types.ObjectId(),
           user: new mongoose.Types.ObjectId(),
           title: 'False',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           expiredAt: null,
           _meiliIndex: false,
         },

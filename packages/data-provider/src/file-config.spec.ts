@@ -3,7 +3,6 @@ import type { FileConfig } from './types/files';
 import {
   fileConfig as baseFileConfig,
   getConfiguredMimeAccept,
-  bedrockDocumentMimeTypes,
   isPermissiveMimeConfig,
   convertStringsToRegex,
   documentParserMimeTypes,
@@ -495,7 +494,7 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.openAI]: {
+          [EModelEndpoint.agents]: {
             disabled: true,
             fileLimit: 15,
           },
@@ -505,7 +504,7 @@ describe('getEndpointFileConfig', () => {
       const result = getEndpointFileConfig({
         fileConfig,
         endpoint: 'someOtherName',
-        endpointType: EModelEndpoint.openAI,
+        endpointType: EModelEndpoint.agents,
       });
 
       expect(result.disabled).toBe(true);
@@ -517,7 +516,7 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.anthropic]: {
+          ['anthropic']: {
             disabled: false,
             fileLimit: 25,
           },
@@ -526,7 +525,7 @@ describe('getEndpointFileConfig', () => {
 
       const result = getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
       });
 
       expect(result.disabled).toBe(false);
@@ -611,11 +610,11 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.openAI]: {
+          default: {
             disabled: true,
             fileLimit: 5,
           },
-          [EModelEndpoint.anthropic]: {
+          [EModelEndpoint.agents]: {
             disabled: false,
             fileLimit: 10,
           },
@@ -625,8 +624,8 @@ describe('getEndpointFileConfig', () => {
       /** endpointType should take priority */
       const result = getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.openAI,
-        endpointType: EModelEndpoint.anthropic,
+        endpoint: 'default',
+        endpointType: EModelEndpoint.agents,
       });
 
       expect(result.disabled).toBe(false);
@@ -638,7 +637,7 @@ describe('getEndpointFileConfig', () => {
     it('should return default when fileConfig is null', () => {
       const result = getEndpointFileConfig({
         fileConfig: null,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: 'openAI',
       });
 
       expect(result).toBeDefined();
@@ -648,7 +647,7 @@ describe('getEndpointFileConfig', () => {
     it('should return default when fileConfig is undefined', () => {
       const result = getEndpointFileConfig({
         fileConfig: undefined,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: 'openAI',
       });
 
       expect(result).toBeDefined();
@@ -723,22 +722,22 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.openAI]: {
+          ['openAI']: {
             disabled: false,
             fileLimit: 10,
           },
         },
       };
 
-      const originalDisabled = fileConfig.endpoints[EModelEndpoint.openAI]!.disabled;
+      const originalDisabled = fileConfig.endpoints['openAI']!.disabled;
 
       getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: 'openAI',
       });
 
       /** Config should not be mutated */
-      expect(fileConfig.endpoints[EModelEndpoint.openAI]!.disabled).toBe(originalDisabled);
+      expect(fileConfig.endpoints['openAI']!.disabled).toBe(originalDisabled);
     });
   });
 
@@ -748,7 +747,7 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.assistants]: {
+          ['assistants']: {
             disabled: false,
             fileLimit: 20,
           },
@@ -757,7 +756,7 @@ describe('getEndpointFileConfig', () => {
 
       const result = getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.assistants,
+        endpoint: 'assistants',
       });
 
       expect(result.disabled).toBe(false);
@@ -769,7 +768,7 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.azureAssistants]: {
+          ['azureAssistants']: {
             disabled: true,
             fileLimit: 15,
           },
@@ -778,38 +777,13 @@ describe('getEndpointFileConfig', () => {
 
       const result = getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.azureAssistants,
+        endpoint: 'azureAssistants',
       });
 
       expect(result.disabled).toBe(true);
       expect(result.fileLimit).toBe(15);
     });
 
-    it('should not fallback to agents for assistants endpoints', () => {
-      const fileConfig: FileConfig = {
-        ...baseFileConfig,
-        endpoints: {
-          ...baseFileConfig.endpoints,
-          [EModelEndpoint.agents]: {
-            disabled: true,
-            fileLimit: 5,
-          },
-          default: {
-            disabled: false,
-            fileLimit: 10,
-          },
-        },
-      };
-
-      const result = getEndpointFileConfig({
-        fileConfig,
-        endpoint: 'unknownAssistants',
-        endpointType: EModelEndpoint.assistants,
-      });
-
-      /** Should use default, not agents */
-      expect(result.fileLimit).toBe(10);
-    });
   });
 
   describe('agents endpoint handling', () => {
@@ -839,7 +813,7 @@ describe('getEndpointFileConfig', () => {
     it('should work with mergeFileConfig output for disabled endpoint', () => {
       const dynamicConfig = {
         endpoints: {
-          [EModelEndpoint.openAI]: {
+          ['openAI']: {
             disabled: true,
           },
         },
@@ -848,7 +822,7 @@ describe('getEndpointFileConfig', () => {
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: 'openAI',
       });
 
       expect(result.disabled).toBe(true);
@@ -862,7 +836,7 @@ describe('getEndpointFileConfig', () => {
     it('should work with mergeFileConfig output for enabled endpoint', () => {
       const dynamicConfig = {
         endpoints: {
-          [EModelEndpoint.anthropic]: {
+          ['anthropic']: {
             disabled: false,
             fileLimit: 5,
             fileSizeLimit: 10,
@@ -873,7 +847,7 @@ describe('getEndpointFileConfig', () => {
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
       });
 
       expect(result.disabled).toBe(false);
@@ -901,7 +875,7 @@ describe('getEndpointFileConfig', () => {
     it('should preserve disabled: false in merged config', () => {
       const dynamicConfig = {
         endpoints: {
-          [EModelEndpoint.anthropic]: {
+          ['anthropic']: {
             disabled: false,
             fileLimit: 8,
           },
@@ -911,7 +885,7 @@ describe('getEndpointFileConfig', () => {
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
       });
 
       expect(result.disabled).toBe(false);
@@ -943,7 +917,7 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.openAI]: {
+          [EModelEndpoint.agents]: {
             disabled: true,
             fileLimit: 1,
           },
@@ -957,7 +931,7 @@ describe('getEndpointFileConfig', () => {
       const result = getEndpointFileConfig({
         fileConfig,
         endpoint: 'wrongEndpoint',
-        endpointType: EModelEndpoint.openAI,
+        endpointType: EModelEndpoint.agents,
       });
 
       /** Should use endpointType config, not endpoint */
@@ -992,7 +966,7 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.openAI]: {
+          ['openAI']: {
             disabled: true,
             fileLimit: 0,
             fileSizeLimit: 0,
@@ -1004,7 +978,7 @@ describe('getEndpointFileConfig', () => {
 
       const result = getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: 'openAI',
       });
 
       expect(result.disabled).toBe(true);
@@ -1019,7 +993,7 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.anthropic]: {
+          ['anthropic']: {
             disabled: false,
             fileLimit: 10,
           },
@@ -1028,7 +1002,7 @@ describe('getEndpointFileConfig', () => {
 
       const result = getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
       });
 
       expect(result.disabled).toBe(false);
@@ -1040,7 +1014,7 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.google]: {
+          ['google']: {
             fileLimit: 10,
           },
         },
@@ -1048,7 +1022,7 @@ describe('getEndpointFileConfig', () => {
 
       const result = getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
       });
 
       /** disabled should not be explicitly true */
@@ -1070,7 +1044,7 @@ describe('getEndpointFileConfig', () => {
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
       });
 
       /** Should have the configured fileSizeLimit */
@@ -1097,7 +1071,7 @@ describe('getEndpointFileConfig', () => {
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
       });
 
       /** Should keep explicitly configured values */
@@ -1119,7 +1093,7 @@ describe('getEndpointFileConfig', () => {
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: 'openAI',
       });
 
       expect(result.fileSizeLimit).toBe(100 * 1024 * 1024);
@@ -1142,7 +1116,7 @@ describe('getEndpointFileConfig', () => {
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
       });
 
       /** Should have the massive fileSizeLimit configured */
@@ -1206,10 +1180,10 @@ describe('getEndpointFileConfig', () => {
         ...baseFileConfig,
         endpoints: {
           ...baseFileConfig.endpoints,
-          [EModelEndpoint.openAI]: {
+          ['openAI']: {
             disabled: true,
           },
-          [EModelEndpoint.anthropic]: {
+          ['anthropic']: {
             disabled: false,
             fileLimit: 15,
           },
@@ -1218,13 +1192,13 @@ describe('getEndpointFileConfig', () => {
 
       const openaiResult = getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: 'openAI',
       });
       expect(openaiResult.disabled).toBe(true);
 
       const anthropicResult = getEndpointFileConfig({
         fileConfig,
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
       });
       expect(anthropicResult.disabled).toBe(false);
       expect(anthropicResult.fileLimit).toBe(15);
@@ -1238,13 +1212,16 @@ describe('getEndpointFileConfig', () => {
           default: {
             fileLimit: 7,
           },
+          [EModelEndpoint.agents]: {
+            fileLimit: 7,
+          },
         },
       };
 
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
       });
 
       expect(result.fileLimit).toBe(7);
@@ -1269,7 +1246,7 @@ describe('getEndpointFileConfig', () => {
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
       });
 
       /** fileLimit should come from user default */
@@ -1306,13 +1283,16 @@ describe('getEndpointFileConfig', () => {
           default: {
             disabled: true,
           },
+          [EModelEndpoint.agents]: {
+            disabled: true,
+          },
         },
       };
 
       const merged = mergeFileConfig(dynamicConfig);
       const result = getEndpointFileConfig({
         fileConfig: merged,
-        endpoint: EModelEndpoint.google,
+        endpoint: 'google',
       });
 
       expect(result.disabled).toBe(true);
@@ -1386,15 +1366,26 @@ describe('isPermissiveMimeConfig', () => {
 describe('getConfiguredMimeAccept', () => {
   const toSet = (accept?: string) => new Set((accept ?? '').split(',').filter(Boolean));
 
-  /** Provider capability tiers: image-only, document providers, Google/OpenRouter, and Bedrock. */
+  /** Provider capability tiers: image-only, document providers, and a rich document set. */
   const IMAGE_ONLY: MimeUploadCapability = { categories: ['image'] };
   const IMAGE_DOC: MimeUploadCapability = { categories: ['image', 'document'] };
   const ALL: MimeUploadCapability = { categories: ['image', 'document', 'audio', 'video'] };
-  const BEDROCK: MimeUploadCapability = {
+  const RICH_DOC_SET: MimeUploadCapability = {
     categories: ['image', 'document'],
-    documentMimeTypes: bedrockDocumentMimeTypes,
+    documentMimeTypes: [
+      'application/pdf',
+      'text/csv',
+      'application/csv',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/html',
+      'text/plain',
+      'text/markdown',
+    ],
   };
-  const GOOGLE: MimeUploadCapability = {
+  const OPENROUTER: MimeUploadCapability = {
     categories: ['image', 'document', 'audio', 'video'],
     documentMimeTypes: ['application/pdf'],
   };
@@ -1503,13 +1494,13 @@ describe('getConfiguredMimeAccept', () => {
     expect(getConfiguredMimeAccept([/^application\/.*$/], IMAGE_DOC)).toBeUndefined();
   });
 
-  it('restricts Bedrock document accepts to Bedrock-supported formats', () => {
+  it('restricts document accepts to the capability-provided document formats', () => {
     const config = convertStringsToRegex([
       '^application/pdf$',
       '^application/vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document$',
       '^application/vnd\\.openxmlformats-officedocument\\.presentationml\\.presentation$',
     ]);
-    const accept = toSet(getConfiguredMimeAccept(config, BEDROCK));
+    const accept = toSet(getConfiguredMimeAccept(config, RICH_DOC_SET));
     expect(accept.has('.pdf')).toBe(true);
     expect(accept.has('.docx')).toBe(true);
     expect(accept.has('.pptx')).toBe(false);
@@ -1519,20 +1510,20 @@ describe('getConfiguredMimeAccept', () => {
   });
 
   it('includes both .html and .htm when translating text/html', () => {
-    const accept = toSet(getConfiguredMimeAccept([/^text\/html$/], BEDROCK));
+    const accept = toSet(getConfiguredMimeAccept([/^text\/html$/], RICH_DOC_SET));
     expect(accept.has('.html')).toBe(true);
     expect(accept.has('.htm')).toBe(true);
     expect(accept.has('text/html')).toBe(true);
   });
 
-  it('restricts Google/OpenRouter documents to PDF while keeping media categories', () => {
+  it('restricts OpenRouter documents to PDF while keeping media categories', () => {
     const config = convertStringsToRegex([
       '^image/.*$',
       '^application/pdf$',
       '^application/vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document$',
       '^audio/.*$',
     ]);
-    const accept = toSet(getConfiguredMimeAccept(config, GOOGLE));
+    const accept = toSet(getConfiguredMimeAccept(config, OPENROUTER));
     expect(accept.has('image/*')).toBe(true);
     expect(accept.has('.pdf')).toBe(true);
     expect(accept.has('audio/*')).toBe(true);
@@ -1540,14 +1531,14 @@ describe('getConfiguredMimeAccept', () => {
   });
 
   it('translates a sampled audio subtype (audio/webm) rather than hiding it', () => {
-    const accept = toSet(getConfiguredMimeAccept([/^image\/.*$/, /^audio\/webm$/], GOOGLE));
+    const accept = toSet(getConfiguredMimeAccept([/^image\/.*$/, /^audio\/webm$/], OPENROUTER));
     expect(accept.has('image/*')).toBe(true);
     expect(accept.has('audio/*')).toBe(true);
   });
 
   it('falls back when a configured pattern matches no known MIME type', () => {
     expect(
-      getConfiguredMimeAccept([/^image\/.*$/, /^audio\/x-librechat-unknown$/], GOOGLE),
+      getConfiguredMimeAccept([/^image\/.*$/, /^audio\/x-librechat-unknown$/], OPENROUTER),
     ).toBeUndefined();
   });
 

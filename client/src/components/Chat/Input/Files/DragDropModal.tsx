@@ -8,13 +8,7 @@ import {
   FileImageIcon,
   TerminalSquareIcon,
 } from 'lucide-react';
-import {
-  Constants,
-  Providers,
-  EToolResources,
-  EModelEndpoint,
-  isDocumentSupportedProvider,
-} from 'librechat-data-provider';
+import { Constants, Providers, EToolResources, isDocumentSupportedProvider } from 'librechat-data-provider';
 import {
   useLocalize,
   useUploadOptions,
@@ -27,7 +21,7 @@ import { ephemeralAgentByConvoId } from '~/store';
 const DragDropModal = () => {
   const localize = useLocalize();
   const { isVisible, files, closeModal } = useUploadModalContext();
-  const { conversationId, agentId, endpoint, endpointType, useResponsesApi } = useDragDropContext();
+  const { conversationId, agentId, endpoint, endpointType } = useDragDropContext();
   const ephemeralAgent = useRecoilValue(
     ephemeralAgentByConvoId(conversationId ?? Constants.NEW_CONVO),
   );
@@ -40,16 +34,8 @@ const DragDropModal = () => {
     if (currentProvider.toLowerCase() === Providers.OPENROUTER) {
       currentProvider = Providers.OPENROUTER;
     }
-    const isAzureWithResponsesApi =
-      (currentProvider === EModelEndpoint.azureOpenAI ||
-        endpointType === EModelEndpoint.azureOpenAI) &&
-      useResponsesApi === true;
-    return (
-      isDocumentSupportedProvider(endpointType) ||
-      isDocumentSupportedProvider(currentProvider) ||
-      isAzureWithResponsesApi
-    );
-  }, [provider, endpoint, endpointType, useResponsesApi]);
+    return isDocumentSupportedProvider(endpointType) || isDocumentSupportedProvider(currentProvider);
+  }, [provider, endpoint, endpointType]);
 
   const getOptionMeta = (value: EToolResources | undefined) => {
     switch (value) {

@@ -13,16 +13,10 @@ const {
  * @param {Object} params.message - The message object to format.
  * @param {string} [params.message.role] - The role of the message sender (must be 'user').
  * @param {string} [params.message.content] - The text content of the message.
- * @param {EModelEndpoint} [params.endpoint] - Identifier for specific endpoint handling
  * @param {Array<string>} [params.image_urls] - The image_urls to attach to the message.
  * @returns {(Object)} - The formatted message.
  */
-const formatVisionMessage = ({ message, image_urls, endpoint }) => {
-  if (endpoint === EModelEndpoint.anthropic) {
-    message.content = [...image_urls, { type: ContentTypes.TEXT, text: message.content }];
-    return message;
-  }
-
+const formatVisionMessage = ({ message, image_urls }) => {
   message.content = [{ type: ContentTypes.TEXT, text: message.content }, ...image_urls];
 
   return message;
@@ -67,7 +61,6 @@ const formatMessage = ({ message, userName, assistantName, endpoint, langChain =
     return formatVisionMessage({
       message: formattedMessage,
       image_urls: message.image_urls,
-      endpoint,
     });
   }
 

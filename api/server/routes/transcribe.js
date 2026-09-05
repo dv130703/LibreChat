@@ -8,6 +8,7 @@ const express = require('express');
 const multer = require('multer');
 const { logger, tenantStorage } = require('@librechat/data-schemas');
 const {
+  Constants,
   inferMimeType,
   mergeFileConfig,
   FileContext,
@@ -442,7 +443,7 @@ router.post('/', upload.single('file'), restoreTenantContextFromReq, async (req,
       fs.promises.unlink(extractedAudioPath).catch(() => {}),
     ]);
 
-  const { conversationId, endpoint, agent_id } = req.body;
+  const { conversationId, endpoint, agent_id, parentMessageId } = req.body;
   if (!conversationId) {
     await cleanupUploadTempFiles();
     return res.status(400).json({ error: 'conversationId is required' });
@@ -546,8 +547,64 @@ router.post('/', upload.single('file'), restoreTenantContextFromReq, async (req,
       logger.info(`[TRANSCRIPTION] conversation ready conversationId=${conversationId}`);
     }
 
+    // A real, persisted chat message - not just a file record - is what
+    // makes this recording show up in the conversation the instant upload
+    // finishes, the same way any other attachment does: the client's
+    // ordinary message-list query (`GET /api/messages/:conversationId`,
+    // already polled/refetched on every conversation view) picks it up with
+    // no bespoke client-side plumbing, unlike a composer-only attachment,
+    // which only ever becomes a real message once the user manually sends.
+    // `Files.tsx` already routes an audio/video `message.files` entry to
+    // `TranscriptCard`, which polls this same job's status and opens the
+    // transcript panel on click - so this alone is what makes "submitted
+    // file bubble now, click to view the transcript later" work, matching
+    // the standalone page's own message-based flow instead of re-inventing
+    // a separate one for the composer.
+    const reqCtx = {
+      userId: req.user.id,
+      isTemporary: req.body.isTemporary === 'true',
+      interfaceConfig: req.config?.interfaceConfig,
+    };
+    const savedMessage = await db.saveMessage(
+      reqCtx,
+      {
+        messageId: crypto.randomUUID(),
+        conversationId,
+        parentMessageId: parentMessageId || Constants.NO_PARENT,
+        isCreatedByUser: true,
+        user: req.user.id,
+        sender: 'User',
+        text: '',
+        endpoint,
+        files: [
+          {
+            file_id: sourceFile.file_id,
+            filepath: sourceFile.filepath,
+            filename: sourceFile.filename,
+            type: sourceFile.type,
+            bytes: sourceFile.bytes,
+            source: sourceFile.source,
+            context: sourceFile.context,
+          },
+        ],
+      },
+      { context: 'POST /api/transcribe' },
+    );
+    if (savedMessage) {
+      // Deliberately *not* `saveConvo(reqCtx, savedMessage, ...)` (the
+      // `POST /api/messages/:conversationId` precedent) - `savedMessage.files`
+      // is an array of file objects, but `Conversation.files` is a plain
+      // `[String]` of ids, and spreading the former into the latter throws a
+      // Mongoose CastError. Passing just the id is enough: `saveConvo`
+      // unconditionally re-derives `messages` from what's actually
+      // persisted, so this alone refreshes the conversation's pointer to
+      // include the message just saved.
+      await db.saveConvo(reqCtx, { conversationId }, { context: 'POST /api/transcribe' });
+    }
+
     res.status(202).json({
       conversationId,
+      messageId: savedMessage?.messageId,
       sourceFile: { file_id: sourceFile.file_id, filename: sourceFile.filename },
       status: 'queued',
       queuePosition: getQueueDepth(),
@@ -637,6 +694,39 @@ router.get('/status', async (req, res) => {
     logger.error('[GET /api/transcribe/status] Failed', error);
     res.status(500).json({ error: 'Could not read transcription status' });
   }
+});
+
+/**
+ * Mints a short-lived, single-purpose token for `transcribeStream.js`'s
+ * `GET /:sourceFileId/audio` - transcription/ARCHITECTURE.md §12 #13. That
+ * route streams the raw audio bytes straight from wherever they're actually
+ * stored, so the browser's native `<audio>` element can point `src` directly
+ * at it (real HTTP range requests for seeking, no full-file download before
+ * anything can play) - but a plain `<audio src>` request can't carry the
+ * `Authorization` header `requireJwtAuth` needs, and that route is
+ * deliberately NOT behind `requireJwtAuth` for exactly that reason (see its
+ * own comment). This route *is* behind the normal auth chain, and is the
+ * only place that ever turns "this authenticated user" into a token that
+ * route will accept - `assertOwnsSourceFile` below is what keeps that scoped
+ * to files this caller actually owns, same as every other per-file route
+ * here. Six hours, not the `generateShortLivedToken` default five minutes -
+ * long enough to outlast an actual listening session (including someone
+ * leaving the tab open and coming back to it), short enough to still bound
+ * exposure if a token somehow leaked (a shared screenshot of the URL bar, a
+ * proxy access log).
+ */
+router.get('/:sourceFileId/audio-token', async (req, res) => {
+  const { sourceFileId } = req.params;
+  const sourceFile = await assertOwnsSourceFile(req, res, sourceFileId);
+  if (!sourceFile) {
+    return;
+  }
+  const expiresIn = '6h';
+  const token = generateShortLivedToken(req.user.id, expiresIn);
+  res.json({
+    url: `/api/transcribe/${encodeURIComponent(sourceFileId)}/audio?token=${token}`,
+    expiresIn: 6 * 60 * 60,
+  });
 });
 
 /**

@@ -8,13 +8,7 @@ import {
   getEndpointField,
   getConfigDefaults,
 } from 'librechat-data-provider';
-import type {
-  TEndpointsConfig,
-  TAssistantsMap,
-  TStartupConfig,
-  Assistant,
-  Agent,
-} from 'librechat-data-provider';
+import type { TEndpointsConfig, TStartupConfig, Agent } from 'librechat-data-provider';
 import type { Endpoint } from '~/common';
 import { useHasAccess, useShowMarketplace } from '~/hooks';
 import { useGetEndpointsQuery } from '~/data-provider';
@@ -25,12 +19,10 @@ const defaultInterface = getConfigDefaults().interface;
 
 export const useEndpoints = ({
   agents,
-  assistantsMap,
   endpointsConfig,
   startupConfig,
 }: {
   agents?: Agent[] | null;
-  assistantsMap?: TAssistantsMap;
   endpointsConfig: TEndpointsConfig;
   startupConfig: TStartupConfig | undefined;
 }) => {
@@ -47,16 +39,6 @@ export const useEndpoints = ({
     permission: Permissions.USE,
   });
   const showAgentMarketplace = useShowMarketplace();
-
-  const assistants: Assistant[] = useMemo(
-    () => Object.values(assistantsMap?.[EModelEndpoint.assistants] ?? {}),
-    [assistantsMap],
-  );
-
-  const azureAssistants: Assistant[] = useMemo(
-    () => Object.values(assistantsMap?.[EModelEndpoint.azureAssistants] ?? {}),
-    [assistantsMap],
-  );
 
   const filteredEndpoints = useMemo(() => {
     if (!interfaceConfig.modelSelect) {
@@ -91,10 +73,7 @@ export const useEndpoints = ({
       const endpointIconURL = getEndpointField(endpointsConfig, ep, 'iconURL');
       const hasModels =
         (ep === EModelEndpoint.agents && ((agents?.length ?? 0) > 0 || showAgentMarketplace)) ||
-        (ep === EModelEndpoint.assistants && assistants?.length > 0) ||
-        (ep !== EModelEndpoint.assistants &&
-          ep !== EModelEndpoint.agents &&
-          (modelsQuery.data?.[ep]?.length ?? 0) > 0);
+        (ep !== EModelEndpoint.agents && (modelsQuery.data?.[ep]?.length ?? 0) > 0);
 
       if (ep === EModelEndpoint.agents && !hasModels) {
         return acc;
@@ -136,53 +115,8 @@ export const useEndpoints = ({
         }, {});
       }
 
-      // Handle assistants case
-      else if (ep === EModelEndpoint.assistants && assistants.length > 0) {
-        result.models = assistants.map((assistant: { id: string }) => ({
-          name: assistant.id,
-          isGlobal: false,
-        }));
-        result.assistantNames = assistants.reduce(
-          (acc: Record<string, string>, assistant: Assistant) => {
-            acc[assistant.id] = assistant.name || '';
-            return acc;
-          },
-          {},
-        );
-        result.modelIcons = assistants.reduce(
-          (acc: Record<string, string | undefined>, assistant: Assistant) => {
-            acc[assistant.id] = assistant.metadata?.avatar;
-            return acc;
-          },
-          {},
-        );
-      } else if (ep === EModelEndpoint.azureAssistants && azureAssistants.length > 0) {
-        result.models = azureAssistants.map((assistant: { id: string }) => ({
-          name: assistant.id,
-          isGlobal: false,
-        }));
-        result.assistantNames = azureAssistants.reduce(
-          (acc: Record<string, string>, assistant: Assistant) => {
-            acc[assistant.id] = assistant.name || '';
-            return acc;
-          },
-          {},
-        );
-        result.modelIcons = azureAssistants.reduce(
-          (acc: Record<string, string | undefined>, assistant: Assistant) => {
-            acc[assistant.id] = assistant.metadata?.avatar;
-            return acc;
-          },
-          {},
-        );
-      }
-
       // For other endpoints with models from the modelsQuery
-      else if (
-        ep !== EModelEndpoint.agents &&
-        ep !== EModelEndpoint.assistants &&
-        (modelsQuery.data?.[ep]?.length ?? 0) > 0
-      ) {
+      else if (ep !== EModelEndpoint.agents && (modelsQuery.data?.[ep]?.length ?? 0) > 0) {
         result.models = modelsQuery.data?.[ep]?.map((model) => ({
           name: model,
           isGlobal: false,
@@ -192,15 +126,7 @@ export const useEndpoints = ({
       acc.push(result);
       return acc;
     }, []);
-  }, [
-    agents,
-    assistants,
-    azureAssistants,
-    endpointsConfig,
-    filteredEndpoints,
-    modelsQuery.data,
-    showAgentMarketplace,
-  ]);
+  }, [agents, endpointsConfig, filteredEndpoints, modelsQuery.data, showAgentMarketplace]);
 
   return {
     mappedEndpoints,

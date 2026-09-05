@@ -320,6 +320,12 @@ export const transcribeStatus = (fileIds: string[]) =>
 export const retryTranscription = (sourceFileId: string) =>
   `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/retry`;
 
+/** Mints the short-lived token `transcribeStream`'s direct-streaming
+ *  `<audio src>` URL needs (§12 #13) - itself behind the normal auth chain,
+ *  unlike the streaming route it authorizes for. */
+export const transcribeAudioToken = (sourceFileId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/audio-token`;
+
 /** Rekeyed from `:conversationId` to `:sourceFileId` (§5.2) - a conversation
  *  may hold more than one recording, so `:conversationId` alone no longer
  *  says which one. */

@@ -161,22 +161,8 @@ describe('AttachFileMenu', () => {
     });
 
     it('shows "Upload to Provider" when endpointType is openAI', () => {
-      setupMocks({ provider: EModelEndpoint.openAI });
-      renderMenu({ endpointType: EModelEndpoint.openAI });
-      openMenu();
-      expect(screen.getByText('Attach Files')).toBeInTheDocument();
-    });
-
-    it('shows "Upload to Provider" when endpointType is anthropic', () => {
-      setupMocks({ provider: EModelEndpoint.anthropic });
-      renderMenu({ endpointType: EModelEndpoint.anthropic });
-      openMenu();
-      expect(screen.getByText('Attach Files')).toBeInTheDocument();
-    });
-
-    it('shows "Upload to Provider" when endpointType is google', () => {
-      setupMocks({ provider: Providers.GOOGLE });
-      renderMenu({ endpointType: EModelEndpoint.google });
+      setupMocks({ provider: EModelEndpoint.custom });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       expect(screen.getByText('Attach Files')).toBeInTheDocument();
     });
@@ -196,27 +182,9 @@ describe('AttachFileMenu', () => {
       expect(screen.getByText('Upload Image')).toBeInTheDocument();
     });
 
-    it('shows "Upload to Provider" for azureOpenAI with useResponsesApi', () => {
-      setupMocks({ provider: EModelEndpoint.azureOpenAI });
-      renderMenu({ endpointType: EModelEndpoint.azureOpenAI, useResponsesApi: true });
-      openMenu();
-      expect(screen.getByText('Attach Files')).toBeInTheDocument();
-    });
-
-    it('shows "Upload to Provider" for azureOpenAI endpointType with useResponsesApi', () => {
-      setupMocks();
-      renderMenu({
-        endpoint: EModelEndpoint.agents,
-        endpointType: EModelEndpoint.azureOpenAI,
-        useResponsesApi: true,
-      });
-      openMenu();
-      expect(screen.getByText('Attach Files')).toBeInTheDocument();
-    });
-
-    it('shows "Upload Image" for azureOpenAI without useResponsesApi', () => {
-      setupMocks({ provider: EModelEndpoint.azureOpenAI });
-      renderMenu({ endpointType: EModelEndpoint.azureOpenAI, useResponsesApi: false });
+    it('shows "Upload Image" for azureOpenAI (native Azure OpenAI support removed)', () => {
+      setupMocks({ provider: 'azureOpenAI' });
+      renderMenu({ endpointType: 'azureOpenAI' });
       openMenu();
       expect(screen.getByText('Upload Image')).toBeInTheDocument();
     });
@@ -269,26 +237,8 @@ describe('AttachFileMenu', () => {
     });
 
     it('includes audio/video in the file picker for a generic provider (image_document)', () => {
-      setupMocks({ provider: EModelEndpoint.openAI });
-      renderMenu({ endpointType: EModelEndpoint.openAI });
-      openMenu();
-      fireEvent.click(screen.getByText('Attach Files'));
-      expect(acceptAtClickTime).toContain('audio/*');
-      expect(acceptAtClickTime).toContain('video/*');
-    });
-
-    it('includes audio/video in the file picker for Bedrock (image_document_extended)', () => {
-      setupMocks({ provider: Providers.BEDROCK });
-      renderMenu({ endpointType: EModelEndpoint.bedrock });
-      openMenu();
-      fireEvent.click(screen.getByText('Attach Files'));
-      expect(acceptAtClickTime).toContain('audio/*');
-      expect(acceptAtClickTime).toContain('video/*');
-    });
-
-    it('includes audio/video in the file picker for Google (image_document_video_audio)', () => {
-      setupMocks({ provider: Providers.GOOGLE });
-      renderMenu({ endpointType: EModelEndpoint.google });
+      setupMocks({ provider: EModelEndpoint.custom });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       fireEvent.click(screen.getByText('Attach Files'));
       expect(acceptAtClickTime).toContain('audio/*');
@@ -297,9 +247,9 @@ describe('AttachFileMenu', () => {
 
     it('routes the upload as a plain attachment, not a tool resource', () => {
       const mockHandleFileChange = jest.fn();
-      setupMocks({ provider: EModelEndpoint.openAI });
+      setupMocks({ provider: EModelEndpoint.custom });
       mockUseFileHandlingNoChatContext.mockReturnValue({ handleFileChange: mockHandleFileChange });
-      renderMenu({ endpointType: EModelEndpoint.openAI });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       fireEvent.click(screen.getByText('Attach Files'));
 
@@ -340,7 +290,7 @@ describe('AttachFileMenu', () => {
         fileSearchEnabled: false,
         codeEnabled: false,
       });
-      renderMenu({ endpointType: EModelEndpoint.openAI });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       expect(screen.getByText('Upload as Text')).toBeInTheDocument();
     });
@@ -357,7 +307,7 @@ describe('AttachFileMenu', () => {
         codeAllowedByAgent: false,
         provider: undefined,
       });
-      renderMenu({ endpointType: EModelEndpoint.openAI });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       expect(screen.getByText('Upload for File Search')).toBeInTheDocument();
     });
@@ -369,7 +319,7 @@ describe('AttachFileMenu', () => {
         fileSearchEnabled: true,
         codeEnabled: false,
       });
-      renderMenu({ endpointType: EModelEndpoint.openAI });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       expect(screen.queryByText('Upload for File Search')).not.toBeInTheDocument();
     });
@@ -386,7 +336,7 @@ describe('AttachFileMenu', () => {
         codeAllowedByAgent: true,
         provider: undefined,
       });
-      renderMenu({ endpointType: EModelEndpoint.openAI });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       expect(screen.getByText('Upload to Code Environment')).toBeInTheDocument();
     });
@@ -403,7 +353,7 @@ describe('AttachFileMenu', () => {
         codeAllowedByAgent: true,
         provider: undefined,
       });
-      renderMenu({ endpointType: EModelEndpoint.openAI });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       expect(screen.getByText('Attach Files')).toBeInTheDocument();
       expect(screen.getByText('Upload as Text')).toBeInTheDocument();
@@ -439,7 +389,7 @@ describe('AttachFileMenu', () => {
       };
 
       try {
-        renderMenu({ endpointType: EModelEndpoint.openAI });
+        renderMenu({ endpointType: EModelEndpoint.custom });
         openMenu();
         fireEvent.click(screen.getByText('Attach Files'));
         fireEvent.click(screen.getByText('Upload for File Search'));
@@ -462,14 +412,14 @@ describe('AttachFileMenu', () => {
       mockUseGetStartupConfig.mockReturnValue({
         data: { sharePointFilePickerEnabled: true },
       });
-      renderMenu({ endpointType: EModelEndpoint.openAI });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       expect(screen.getByText('Upload from SharePoint')).toBeInTheDocument();
     });
 
     it('does NOT show SharePoint option when disabled', () => {
       setupMocks();
-      renderMenu({ endpointType: EModelEndpoint.openAI });
+      renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
       expect(screen.queryByText('Upload from SharePoint')).not.toBeInTheDocument();
     });
@@ -493,13 +443,13 @@ describe('AttachFileMenu', () => {
 
     it('handles missing agentId gracefully', () => {
       setupMocks();
-      renderMenu({ agentId: undefined, endpointType: EModelEndpoint.openAI });
+      renderMenu({ agentId: undefined, endpointType: EModelEndpoint.custom });
       expect(screen.getByRole('button', { name: /attach file options/i })).toBeInTheDocument();
     });
 
     it('handles empty string agentId', () => {
       setupMocks();
-      renderMenu({ agentId: '', endpointType: EModelEndpoint.openAI });
+      renderMenu({ agentId: '', endpointType: EModelEndpoint.custom });
       expect(screen.getByRole('button', { name: /attach file options/i })).toBeInTheDocument();
     });
   });

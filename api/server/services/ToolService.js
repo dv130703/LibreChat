@@ -1,7 +1,6 @@
-const { logger, redactMessage } = require('@librechat/data-schemas');
+const { logger } = require('@librechat/data-schemas');
 const { tool: toolFn, DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
 const {
-  sleep,
   createToolSearch,
   createBashExecutionTool,
   Constants: AgentConstants,
@@ -15,7 +14,6 @@ const {
   GenerationJobManager,
   isActionDomainAllowed,
   buildWebSearchContext,
-  buildImageToolContext,
   buildToolClassification,
   getMissingCustomUserVars,
   buildWebSearchDynamicContext,
@@ -36,13 +34,10 @@ const {
   Constants,
   CacheKeys,
   ErrorTypes,
-  ContentTypes,
   imageGenTools,
   EModelEndpoint,
-  EToolResources,
   isActionTool,
   actionDelimiter,
-  ImageVisionTool,
   openapiToFunction,
   AgentCapabilities,
   isEphemeralAgentId,
@@ -58,11 +53,7 @@ const {
   loadActionSets,
   domainParser,
 } = require('./ActionService');
-const {
-  getEndpointsConfig,
-  getMCPServerTools,
-  getCachedTools,
-} = require('~/server/services/Config');
+const { getEndpointsConfig, getMCPServerTools } = require('~/server/services/Config');
 const { processFileURL, uploadImageBuffer } = require('~/server/services/Files/process');
 const { primeFiles: primeSearchFiles } = require('~/app/clients/tools/util/fileSearch');
 const { primeFiles: primeCodeFiles } = require('~/server/services/Files/Code/process');
@@ -71,7 +62,6 @@ const { createOnSearchResults } = require('~/server/services/Tools/search');
 const { reinitMCPServer } = require('~/server/services/Tools/mcp');
 const { createMCPPermissionContext, resolveConfigServers } = require('~/server/services/MCP');
 const { getMCPRequestContext } = require('~/server/services/MCPRequestContext');
-const { recordUsage } = require('~/server/services/Threads');
 const { loadTools } = require('~/app/clients/tools/util');
 const { findPluginAuthsByKeys } = require('~/models');
 const { getFlowStateManager, getMCPServersRegistry } = require('~/config');
@@ -173,321 +163,6 @@ async function resolveAgentCapabilities(req, appConfig, agentId) {
     );
   }
   return capabilities;
-}
-
-/**
- * Processes the required actions by calling the appropriate tools and returning the outputs.
- * @param {OpenAIClient} client - OpenAI or StreamRunManager Client.
- * @param {RequiredAction} requiredActions - The current required action.
- * @returns {Promise<ToolOutput>} The outputs of the tools.
- */
-const processVisionRequest = async (client, currentAction) => {
-  if (!client.visionPromise) {
-    return {
-      tool_call_id: currentAction.toolCallId,
-      output: 'No image details found.',
-    };
-  }
-
-  /** @type {ChatCompletion | undefined} */
-  const completion = await client.visionPromise;
-  if (completion && completion.usage) {
-    recordUsage({
-      user: client.req.user.id,
-      model: client.req.body.model,
-      conversationId: (client.responseMessage ?? client.finalMessage).conversationId,
-      ...completion.usage,
-    });
-  }
-  const output = completion?.choices?.[0]?.message?.content ?? 'No image details found.';
-  return {
-    tool_call_id: currentAction.toolCallId,
-    output,
-  };
-};
-
-/**
- * Processes return required actions from run.
- * @param {OpenAIClient | StreamRunManager} client - OpenAI (legacy) or StreamRunManager Client.
- * @param {RequiredAction[]} requiredActions - The required actions to submit outputs for.
- * @returns {Promise<ToolOutputs>} The outputs of the tools.
- */
-async function processRequiredActions(client, requiredActions) {
-  logger.debug(
-    `[required actions] user: ${client.req.user.id} | thread_id: ${requiredActions[0].thread_id} | run_id: ${requiredActions[0].run_id}`,
-    requiredActions,
-  );
-  const appConfig = client.req.config;
-  const toolDefinitions = (await getCachedTools()) ?? {};
-  const seenToolkits = new Set();
-  const tools = requiredActions
-    .map((action) => {
-      const toolName = action.tool;
-      const toolDef = toolDefinitions[toolName];
-      if (toolDef && !manifestToolMap[toolName]) {
-        for (const toolkit of toolkits) {
-          if (seenToolkits.has(toolkit.pluginKey)) {
-            return;
-          } else if (toolName.startsWith(`${toolkit.pluginKey}_`)) {
-            seenToolkits.add(toolkit.pluginKey);
-            return toolkit.pluginKey;
-          }
-        }
-      }
-      return toolName;
-    })
-    .filter((toolName) => !!toolName);
-
-  const { loadedTools } = await loadTools({
-    user: client.req.user.id,
-    model: client.req.body.model ?? 'gpt-4o-mini',
-    tools,
-    functions: true,
-    endpoint: client.req.body.endpoint,
-    options: {
-      processFileURL,
-      req: client.req,
-      uploadImageBuffer,
-      openAIApiKey: client.apiKey,
-      returnMetadata: true,
-    },
-    webSearch: appConfig.webSearch,
-    fileStrategy: appConfig.fileStrategy,
-    imageOutputType: appConfig.imageOutputType,
-  });
-
-  const ToolMap = loadedTools.reduce((map, tool) => {
-    map[tool.name] = tool;
-    return map;
-  }, {});
-
-  const promises = [];
-
-  let actionSetsData = null;
-  let isActionTool = false;
-  const ActionToolMap = {};
-  const ActionBuildersMap = {};
-
-  for (let i = 0; i < requiredActions.length; i++) {
-    const currentAction = requiredActions[i];
-    if (currentAction.tool === ImageVisionTool.function.name) {
-      promises.push(processVisionRequest(client, currentAction));
-      continue;
-    }
-    let tool = ToolMap[currentAction.tool] ?? ActionToolMap[currentAction.tool];
-
-    const handleToolOutput = async (output) => {
-      requiredActions[i].output = output;
-
-      /** @type {FunctionToolCall & PartMetadata} */
-      const toolCall = {
-        function: {
-          name: currentAction.tool,
-          arguments: JSON.stringify(currentAction.toolInput),
-          output,
-        },
-        id: currentAction.toolCallId,
-        type: 'function',
-        progress: 1,
-        action: isActionTool,
-      };
-
-      const toolCallIndex = client.mappedOrder.get(toolCall.id);
-
-      if (imageGenTools.has(currentAction.tool)) {
-        const imageOutput = output;
-        toolCall.function.output = `${currentAction.tool} displayed an image. All generated images are already plainly visible, so don't repeat the descriptions in detail. Do not list download links as they are available in the UI already. The user may download the images by clicking on them, but do not mention anything about downloading to the user.`;
-
-        // Streams the "Finished" state of the tool call in the UI
-        client.addContentData({
-          [ContentTypes.TOOL_CALL]: toolCall,
-          index: toolCallIndex,
-          type: ContentTypes.TOOL_CALL,
-        });
-
-        await sleep(500);
-
-        /** @type {ImageFile} */
-        const imageDetails = {
-          ...imageOutput,
-          ...currentAction.toolInput,
-        };
-
-        const image_file = {
-          [ContentTypes.IMAGE_FILE]: imageDetails,
-          type: ContentTypes.IMAGE_FILE,
-          // Replace the tool call output with Image file
-          index: toolCallIndex,
-        };
-
-        client.addContentData(image_file);
-
-        // Update the stored tool call
-        client.seenToolCalls && client.seenToolCalls.set(toolCall.id, toolCall);
-
-        return {
-          tool_call_id: currentAction.toolCallId,
-          output: toolCall.function.output,
-        };
-      }
-
-      client.seenToolCalls && client.seenToolCalls.set(toolCall.id, toolCall);
-      client.addContentData({
-        [ContentTypes.TOOL_CALL]: toolCall,
-        index: toolCallIndex,
-        type: ContentTypes.TOOL_CALL,
-        // TODO: to append tool properties to stream, pass metadata rest to addContentData
-        // result: tool.result,
-      });
-
-      return {
-        tool_call_id: currentAction.toolCallId,
-        output,
-      };
-    };
-
-    if (!tool) {
-      // throw new Error(`Tool ${currentAction.tool} not found.`);
-
-      if (!actionSetsData) {
-        /** @type {Action[]} */
-        const actionSets =
-          (await loadActionSets({
-            assistant_id: client.req.body.assistant_id,
-          })) ?? [];
-
-        // See registerActionTools for the key-shape rationale.
-        const toolToAction = new Map();
-
-        for (const action of actionSets) {
-          const domain = await domainParser(action.metadata.domain, true);
-          const normalizedDomain = domain.replace(domainSeparatorRegex, '_');
-          const legacyDomain = legacyDomainEncode(action.metadata.domain);
-          const legacyNormalized = legacyDomain.replace(domainSeparatorRegex, '_');
-
-          const isDomainAllowed = await isActionDomainAllowed(
-            action.metadata.domain,
-            appConfig?.actions?.allowedDomains,
-            appConfig?.actions?.allowedAddresses,
-          );
-          if (!isDomainAllowed) {
-            continue;
-          }
-
-          // Validate and parse OpenAPI spec
-          const validationResult = validateAndParseOpenAPISpec(action.metadata.raw_spec);
-          if (!validationResult.spec || !validationResult.serverUrl) {
-            throw new Error(
-              `Invalid spec: user: ${client.req.user.id} | thread_id: ${requiredActions[0].thread_id} | run_id: ${requiredActions[0].run_id}`,
-            );
-          }
-
-          // SECURITY: Validate the domain from the spec matches the stored domain
-          // This is defense-in-depth to prevent any stored malicious actions
-          const domainValidation = validateActionDomain(
-            action.metadata.domain,
-            validationResult.serverUrl,
-          );
-          if (!domainValidation.isValid) {
-            logger.error(`Domain mismatch in stored action: ${domainValidation.message}`, {
-              userId: client.req.user.id,
-              action_id: action.action_id,
-            });
-            continue; // Skip this action rather than failing the entire request
-          }
-
-          // Process the OpenAPI spec
-          const { requestBuilders, functionSignatures } = openapiToFunction(validationResult.spec);
-
-          // Store encrypted values for OAuth flow
-          const encrypted = {
-            oauth_client_id: action.metadata.oauth_client_id,
-            oauth_client_secret: action.metadata.oauth_client_secret,
-          };
-
-          // Decrypt metadata
-          const decryptedAction = { ...action };
-          decryptedAction.metadata = await decryptMetadata(action.metadata);
-
-          registerActionTools({
-            toolToAction,
-            functionSignatures,
-            normalizedDomain,
-            legacyNormalized,
-            makeEntry: (sig) => ({
-              action: decryptedAction,
-              requestBuilder: requestBuilders[sig.name],
-              encrypted,
-            }),
-          });
-
-          // Store builders for reuse
-          ActionBuildersMap[action.metadata.domain] = requestBuilders;
-        }
-
-        actionSetsData = toolToAction;
-      }
-
-      const entry = actionSetsData.get(normalizeActionToolName(currentAction.tool));
-      if (!entry) {
-        continue;
-      }
-
-      const { action, requestBuilder, encrypted } = entry;
-
-      // We've already decrypted the metadata, so we can pass it directly
-      const _allowedDomains = appConfig?.actions?.allowedDomains;
-      const _allowedAddresses = appConfig?.actions?.allowedAddresses;
-      tool = await createActionTool({
-        userId: client.req.user.id,
-        res: client.res,
-        action,
-        requestBuilder,
-        // Note: intentionally not passing zodSchema, name, and description for assistants API
-        encrypted, // Pass the encrypted values for OAuth flow
-        useSSRFProtection: !Array.isArray(_allowedDomains) || _allowedDomains.length === 0,
-        allowedAddresses: _allowedAddresses,
-      });
-      if (!tool) {
-        logger.warn(
-          `Invalid action: user: ${client.req.user.id} | thread_id: ${requiredActions[0].thread_id} | run_id: ${requiredActions[0].run_id} | toolName: ${currentAction.tool}`,
-        );
-        throw new Error(`{"type":"${ErrorTypes.INVALID_ACTION}"}`);
-      }
-      isActionTool = !!tool;
-      ActionToolMap[currentAction.tool] = tool;
-    }
-
-    if (currentAction.tool === 'calculator') {
-      currentAction.toolInput = currentAction.toolInput.input;
-    }
-
-    const handleToolError = (error) => {
-      logger.error(
-        `tool_call_id: ${currentAction.toolCallId} | Error processing tool ${currentAction.tool}`,
-        error,
-      );
-      return {
-        tool_call_id: currentAction.toolCallId,
-        output: `Error processing tool ${currentAction.tool}: ${redactMessage(error.message, 256)}`,
-      };
-    };
-
-    try {
-      const promise = tool
-        ._call(currentAction.toolInput)
-        .then(handleToolOutput)
-        .catch(handleToolError);
-      promises.push(promise);
-    } catch (error) {
-      const toolOutputError = handleToolError(error);
-      promises.push(Promise.resolve(toolOutputError));
-    }
-  }
-
-  return {
-    tool_outputs: await Promise.all(promises),
-  };
 }
 
 /**
@@ -1019,34 +694,6 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
       }
     } catch (error) {
       logger.error('[loadToolDefinitionsWrapper] Error priming search files:', error);
-    }
-  }
-
-  const imageFiles = tool_resources?.[EToolResources.image_edit]?.files ?? [];
-  if (imageFiles.length > 0) {
-    const hasOaiImageGen = filteredTools.includes('image_gen_oai');
-    const hasGeminiImageGen = filteredTools.includes('gemini_image_gen');
-
-    if (hasOaiImageGen) {
-      const toolContext = buildImageToolContext({
-        imageFiles,
-        toolName: `${EToolResources.image_edit}_oai`,
-        contextDescription: 'image editing',
-      });
-      if (toolContext) {
-        dynamicToolContextMap.image_edit_oai = toolContext;
-      }
-    }
-
-    if (hasGeminiImageGen) {
-      const toolContext = buildImageToolContext({
-        imageFiles,
-        toolName: 'gemini_image_gen',
-        contextDescription: 'image context',
-      });
-      if (toolContext) {
-        dynamicToolContextMap.gemini_image_gen = toolContext;
-      }
     }
   }
 
@@ -1813,6 +1460,5 @@ module.exports = {
   getToolkitKey,
   loadAgentTools,
   loadToolsForExecution,
-  processRequiredActions,
   resolveAgentCapabilities,
 };

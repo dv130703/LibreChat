@@ -959,6 +959,34 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(mockGenerationJobManager.completeJob).toHaveBeenCalledWith(CONVO_ID);
     });
 
+    it('generates a title for a first-turn pause even when the paused message is attachment-only (no caption)', async () => {
+      const job = makeToolApprovalJob({
+        metadata: {
+          userMessage: {
+            messageId: USER_MSG_ID,
+            parentMessageId: Constants.NO_PARENT,
+            text: '',
+            files: [{ filename: 'diagram.png', type: 'image/png' }],
+          },
+        },
+      });
+      mockGenerationJobManager.getJob.mockResolvedValue(job);
+      mockGetConvo.mockResolvedValue({ title: 'New Chat' });
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      expect(mockAddTitle).toHaveBeenCalledTimes(1);
+      expect(mockAddTitle).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          text: '',
+          files: [{ filename: 'diagram.png', type: 'image/png' }],
+        }),
+      );
+    });
+
     it('still finalizes the turn when first-turn title generation throws', async () => {
       const job = makeToolApprovalJob();
       job.metadata.userMessage.parentMessageId = Constants.NO_PARENT;

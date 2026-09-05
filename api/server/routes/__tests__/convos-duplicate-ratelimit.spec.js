@@ -36,8 +36,11 @@ jest.mock('~/server/utils/import/fork', () => require(MOCKS).forkUtils());
 jest.mock('~/server/utils/import', () => require(MOCKS).importUtils());
 jest.mock('~/server/routes/files/multer', () => require(MOCKS).multerSetup());
 jest.mock('multer', () => require(MOCKS).multerLib());
-jest.mock('~/server/services/Endpoints/azureAssistants', () => require(MOCKS).assistantEndpoint());
-jest.mock('~/server/services/Endpoints/assistants', () => require(MOCKS).assistantEndpoint());
+/** Short-circuits the Config barrel (app config service, MCP tool cache, etc.) -
+ *  `Files/process.js` only needs `checkCapability` from it. */
+jest.mock('~/server/services/Config', () => ({
+  checkCapability: jest.fn().mockResolvedValue(false),
+}));
 
 describe('POST /api/convos/duplicate - Rate Limiting', () => {
   let app;

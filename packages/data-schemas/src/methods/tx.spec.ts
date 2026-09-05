@@ -636,7 +636,7 @@ describe('AWS Bedrock Model Tests', () => {
 
   it('should return the correct prompt multipliers for all models', () => {
     const results = awsModels.map((model) => {
-      const valueKey = getValueKey(model, EModelEndpoint.bedrock);
+      const valueKey = getValueKey(model, EModelEndpoint.custom);
       const multiplier = getMultiplier({ valueKey, tokenType: 'prompt' });
       return tokenValues[valueKey!].prompt && multiplier === tokenValues[valueKey!].prompt;
     });
@@ -645,7 +645,7 @@ describe('AWS Bedrock Model Tests', () => {
 
   it('should return the correct completion multipliers for all models', () => {
     const results = awsModels.map((model) => {
-      const valueKey = getValueKey(model, EModelEndpoint.bedrock);
+      const valueKey = getValueKey(model, EModelEndpoint.custom);
       const multiplier = getMultiplier({ valueKey, tokenType: 'completion' });
       return tokenValues[valueKey!].completion && multiplier === tokenValues[valueKey!].completion;
     });
@@ -1550,16 +1550,16 @@ describe('Google Model Tests', () => {
 
   it('should return the correct prompt and completion rates for all models', () => {
     const results = googleModels.map((model) => {
-      const valueKey = getValueKey(model, EModelEndpoint.google);
+      const valueKey = getValueKey(model, EModelEndpoint.custom);
       const promptRate = getMultiplier({
         model,
         tokenType: 'prompt',
-        endpoint: EModelEndpoint.google,
+        endpoint: EModelEndpoint.custom,
       });
       const completionRate = getMultiplier({
         model,
         tokenType: 'completion',
-        endpoint: EModelEndpoint.google,
+        endpoint: EModelEndpoint.custom,
       });
       return { model, valueKey, promptRate, completionRate };
     });
@@ -1599,7 +1599,7 @@ describe('Google Model Tests', () => {
     };
 
     Object.entries(expected).forEach(([model, expectedKey]) => {
-      const valueKey = getValueKey(model, EModelEndpoint.google);
+      const valueKey = getValueKey(model, EModelEndpoint.custom);
       expect(valueKey).toBe(expectedKey);
     });
   });
@@ -1612,13 +1612,13 @@ describe('Google Model Tests', () => {
     ];
 
     testCases.forEach(({ input, expected }) => {
-      const valueKey = getValueKey(input, EModelEndpoint.google);
+      const valueKey = getValueKey(input, EModelEndpoint.custom);
       expect(valueKey).toBe(expected);
       expect(
-        getMultiplier({ model: input, tokenType: 'prompt', endpoint: EModelEndpoint.google }),
+        getMultiplier({ model: input, tokenType: 'prompt', endpoint: EModelEndpoint.custom }),
       ).toBe(tokenValues[expected].prompt);
       expect(
-        getMultiplier({ model: input, tokenType: 'completion', endpoint: EModelEndpoint.google }),
+        getMultiplier({ model: input, tokenType: 'completion', endpoint: EModelEndpoint.custom }),
       ).toBe(tokenValues[expected].completion);
     });
   });
@@ -1628,28 +1628,28 @@ describe('Google Model Tests', () => {
       getMultiplier({
         model: 'gemini-3.1-pro-preview',
         tokenType: 'prompt',
-        endpoint: EModelEndpoint.google,
+        endpoint: EModelEndpoint.custom,
       }),
     ).toBe(tokenValues['gemini-3.1'].prompt);
     expect(
       getMultiplier({
         model: 'gemini-3.1-pro-preview',
         tokenType: 'completion',
-        endpoint: EModelEndpoint.google,
+        endpoint: EModelEndpoint.custom,
       }),
     ).toBe(tokenValues['gemini-3.1'].completion);
     expect(
       getMultiplier({
         model: 'gemini-3.1-pro-preview-customtools',
         tokenType: 'prompt',
-        endpoint: EModelEndpoint.google,
+        endpoint: EModelEndpoint.custom,
       }),
     ).toBe(tokenValues['gemini-3.1'].prompt);
     expect(
       getMultiplier({
         model: 'gemini-3.1-pro-preview-customtools',
         tokenType: 'completion',
-        endpoint: EModelEndpoint.google,
+        endpoint: EModelEndpoint.custom,
       }),
     ).toBe(tokenValues['gemini-3.1'].completion);
   });
@@ -1667,10 +1667,10 @@ describe('Google Model Tests', () => {
 
   it('should return correct rates for Gemini 3.1 Flash-Lite', () => {
     const model = 'gemini-3.1-flash-lite-preview';
-    expect(getMultiplier({ model, tokenType: 'prompt', endpoint: EModelEndpoint.google })).toBe(
+    expect(getMultiplier({ model, tokenType: 'prompt', endpoint: EModelEndpoint.custom })).toBe(
       tokenValues['gemini-3.1-flash-lite'].prompt,
     );
-    expect(getMultiplier({ model, tokenType: 'completion', endpoint: EModelEndpoint.google })).toBe(
+    expect(getMultiplier({ model, tokenType: 'completion', endpoint: EModelEndpoint.custom })).toBe(
       tokenValues['gemini-3.1-flash-lite'].completion,
     );
     expect(getCacheMultiplier({ model, cacheType: 'write' })).toBe(
@@ -1683,10 +1683,10 @@ describe('Google Model Tests', () => {
 
   it('should return correct rates for Gemini 3.5 Flash', () => {
     const model = 'gemini-3.5-flash';
-    expect(getMultiplier({ model, tokenType: 'prompt', endpoint: EModelEndpoint.google })).toBe(
+    expect(getMultiplier({ model, tokenType: 'prompt', endpoint: EModelEndpoint.custom })).toBe(
       tokenValues['gemini-3.5-flash'].prompt,
     );
-    expect(getMultiplier({ model, tokenType: 'completion', endpoint: EModelEndpoint.google })).toBe(
+    expect(getMultiplier({ model, tokenType: 'completion', endpoint: EModelEndpoint.custom })).toBe(
       tokenValues['gemini-3.5-flash'].completion,
     );
     expect(getCacheMultiplier({ model, cacheType: 'write' })).toBe(
@@ -1699,10 +1699,10 @@ describe('Google Model Tests', () => {
 
   it('should return correct rates for Gemini 3.6 Flash', () => {
     const model = 'gemini-3.6-flash';
-    expect(getMultiplier({ model, tokenType: 'prompt', endpoint: EModelEndpoint.google })).toBe(
+    expect(getMultiplier({ model, tokenType: 'prompt', endpoint: EModelEndpoint.custom })).toBe(
       tokenValues['gemini-3.6-flash'].prompt,
     );
-    expect(getMultiplier({ model, tokenType: 'completion', endpoint: EModelEndpoint.google })).toBe(
+    expect(getMultiplier({ model, tokenType: 'completion', endpoint: EModelEndpoint.custom })).toBe(
       tokenValues['gemini-3.6-flash'].completion,
     );
     expect(getCacheMultiplier({ model, cacheType: 'write' })).toBe(
@@ -1715,10 +1715,10 @@ describe('Google Model Tests', () => {
 
   it('should return correct rates for Gemini 3.5 Flash-Lite', () => {
     const model = 'gemini-3.5-flash-lite';
-    expect(getMultiplier({ model, tokenType: 'prompt', endpoint: EModelEndpoint.google })).toBe(
+    expect(getMultiplier({ model, tokenType: 'prompt', endpoint: EModelEndpoint.custom })).toBe(
       tokenValues['gemini-3.5-flash-lite'].prompt,
     );
-    expect(getMultiplier({ model, tokenType: 'completion', endpoint: EModelEndpoint.google })).toBe(
+    expect(getMultiplier({ model, tokenType: 'completion', endpoint: EModelEndpoint.custom })).toBe(
       tokenValues['gemini-3.5-flash-lite'].completion,
     );
     expect(getCacheMultiplier({ model, cacheType: 'write' })).toBe(

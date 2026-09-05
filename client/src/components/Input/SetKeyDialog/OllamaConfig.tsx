@@ -27,7 +27,7 @@ const OllamaConfig = () => {
           <InputWithLabel
             id="apiKey"
             {...field}
-            type="password"
+            secret
             label={localize('com_endpoint_config_ollama_api_key')}
             subLabel={localize('com_endpoint_config_ollama_api_key_sublabel')}
             labelClassName="mb-1"

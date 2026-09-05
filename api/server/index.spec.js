@@ -20,7 +20,6 @@ jest.mock('~/server/services/Config', () => ({
 }));
 
 jest.mock('~/app/clients/tools', () => ({
-  createOpenAIImageTools: jest.fn(() => []),
   createYouTubeTools: jest.fn(() => []),
   manifestToolMap: {},
   toolkits: [],

@@ -1,13 +1,5 @@
 const partialRight = require('lodash/partialRight');
-const {
-  Capabilities,
-  EModelEndpoint,
-  isAgentsEndpoint,
-  isAssistantsEndpoint,
-  defaultRetrievalModels,
-  defaultAssistantsVersion,
-  defaultAgentCapabilities,
-} = require('librechat-data-provider');
+const { isAgentsEndpoint, defaultAgentCapabilities } = require('librechat-data-provider');
 const { sendEvent, isUserProvided } = require('@librechat/api');
 
 const addSpaceIfNeeded = (text) => (text.length > 0 && !text.endsWith(' ') ? text + ' ' : text);
@@ -136,27 +128,9 @@ function generateConfig(key, baseURL, endpoint) {
     config.userProvideURL = isUserProvided(baseURL);
   }
 
-  const assistants = isAssistantsEndpoint(endpoint);
   const agents = isAgentsEndpoint(endpoint);
-  if (assistants) {
-    config.retrievalModels = defaultRetrievalModels;
-    config.capabilities = [
-      Capabilities.code_interpreter,
-      Capabilities.image_vision,
-      Capabilities.retrieval,
-      Capabilities.actions,
-      Capabilities.tools,
-    ];
-  }
-
   if (agents) {
     config.capabilities = defaultAgentCapabilities;
-  }
-
-  if (assistants && endpoint === EModelEndpoint.azureAssistants) {
-    config.version = defaultAssistantsVersion.azureAssistants;
-  } else if (assistants) {
-    config.version = defaultAssistantsVersion.assistants;
   }
 
   return config;

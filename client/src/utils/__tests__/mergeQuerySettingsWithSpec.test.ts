@@ -4,7 +4,7 @@ import { mergeQuerySettingsWithSpec, specDisplayFieldReset } from '../endpoints'
 
 describe('mergeQuerySettingsWithSpec', () => {
   const specPreset: TPreset = {
-    endpoint: EModelEndpoint.openAI,
+    endpoint: EModelEndpoint.custom,
     model: 'gpt-4',
     spec: 'my-spec',
     iconURL: 'https://example.com/icon.png',
@@ -44,13 +44,13 @@ describe('mergeQuerySettingsWithSpec', () => {
     it('clears spec display fields for assistant share links', () => {
       const querySettings: TPreset = {
         assistant_id: 'asst_abc',
-        endpoint: EModelEndpoint.assistants,
+        endpoint: 'assistants',
       };
 
       const result = mergeQuerySettingsWithSpec(specPreset, querySettings);
 
       expect(result.assistant_id).toBe('asst_abc');
-      expect(result.endpoint).toBe(EModelEndpoint.assistants);
+      expect(result.endpoint).toBe('assistants');
       expect(result.spec).toBeNull();
       expect(result.iconURL).toBeNull();
       expect(result.modelLabel).toBeNull();
@@ -60,13 +60,13 @@ describe('mergeQuerySettingsWithSpec', () => {
     it('clears spec display fields for model override links', () => {
       const querySettings: TPreset = {
         model: 'claude-sonnet-4-20250514',
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
       };
 
       const result = mergeQuerySettingsWithSpec(specPreset, querySettings);
 
       expect(result.model).toBe('claude-sonnet-4-20250514');
-      expect(result.endpoint).toBe(EModelEndpoint.anthropic);
+      expect(result.endpoint).toBe('anthropic');
       expect(result.spec).toBeNull();
       expect(result.iconURL).toBeNull();
       expect(result.modelLabel).toBeNull();
@@ -113,7 +113,7 @@ describe('mergeQuerySettingsWithSpec', () => {
       expect(result.iconURL).toBeNull();
       expect(result.modelLabel).toBeNull();
       expect(result.greeting).toBeUndefined();
-      expect(result.endpoint).toBe(EModelEndpoint.openAI);
+      expect(result.endpoint).toBe(EModelEndpoint.custom);
       expect(result.model).toBe('gpt-4');
       expect(result.temperature).toBe(0.7);
     });
@@ -122,13 +122,13 @@ describe('mergeQuerySettingsWithSpec', () => {
   describe('query settings override spec values', () => {
     it('overrides endpoint and model from spec', () => {
       const querySettings: TPreset = {
-        endpoint: EModelEndpoint.anthropic,
+        endpoint: 'anthropic',
         model: 'claude-sonnet-4-20250514',
       };
 
       const result = mergeQuerySettingsWithSpec(specPreset, querySettings);
 
-      expect(result.endpoint).toBe(EModelEndpoint.anthropic);
+      expect(result.endpoint).toBe('anthropic');
       expect(result.model).toBe('claude-sonnet-4-20250514');
       expect(result.temperature).toBe(0.7);
       expect(result.spec).toBeNull();

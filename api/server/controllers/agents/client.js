@@ -69,11 +69,6 @@ const {
   buildAgentScopedContext,
   buildSkillPrimeContentParts,
   buildInitialToolSessions,
-  hasUrlContextTool,
-  hasYouTubeVideoParts,
-  appendYouTubeVideoParts,
-  resolveGoogleVideoError,
-  resolveYouTubeInjectionConfig,
   decrementPendingRequest,
   maybePrewarmCodeSandbox,
 } = require('@librechat/api');
@@ -452,7 +447,6 @@ class AgentClient extends BaseClient {
       this.options.attachments = files;
     }
 
-    /** Note: Bedrock uses legacy RAG API handling */
     if (this.message_file_map && !isAgentsEndpoint(this.options.endpoint)) {
       this.contextHandlers = createContextHandlers(
         this.options.req,
@@ -570,42 +564,6 @@ class AgentClient extends BaseClient {
 
       return formattedMessage;
     });
-
-    /**
-     * Native YouTube -> video understanding: when Google `url_context` is enabled
-     * (resolved to the native `urlContext` provider tool), inject any YouTube URLs
-     * from the latest user turn as Gemini `fileData` video parts. The URL Context
-     * tool cannot read YouTube, so this routes those links through the video path
-     * while other URLs still flow through `urlContext`. Done after token counting
-     * (video tokens are reported by the provider) and only on the LLM payload, so
-     * the memory copy and persisted message are untouched.
-     */
-    const latestOrdered = orderedMessages[orderedMessages.length - 1];
-    const provider = this.options.agent?.provider;
-    if (
-      latestOrdered?.isCreatedByUser === true &&
-      (provider === Providers.GOOGLE || provider === Providers.VERTEXAI) &&
-      hasUrlContextTool(this.options.agent?.tools)
-    ) {
-      const latestFormatted = formattedMessages[formattedMessages.length - 1];
-      /** Use the resolved run model (model_parameters override) rather than the saved base model. */
-      const resolvedModel =
-        this.options.agent?.model_parameters?.model ?? this.options.agent?.model;
-      const { max, mimeType } = resolveYouTubeInjectionConfig({
-        provider,
-        model: resolvedModel,
-      });
-      latestFormatted.content = appendYouTubeVideoParts({
-        enabled: true,
-        text: latestOrdered.text,
-        content: latestFormatted.content,
-        max,
-        mimeType,
-      });
-      /** Google rejects an unusable video with a generic `INVALID_ARGUMENT` that names no cause,
-       *  so `#sendCompletion` can only attribute one by knowing this turn carried a video. */
-      this.injectedYouTubeVideo = hasYouTubeVideoParts(latestFormatted.content);
-    }
 
     payload = formattedMessages;
     if (this.options.resendFiles) {
@@ -1909,16 +1867,9 @@ class AgentClient extends BaseClient {
           '[api/server/controllers/agents/client.js #sendCompletion] Unhandled error type',
           err,
         );
-        const videoError = resolveGoogleVideoError({
-          error: err,
-          provider: this.options.agent?.provider,
-          hasYouTubeVideo: this.injectedYouTubeVideo,
-        });
         this.contentParts.push({
           type: ContentTypes.ERROR,
-          [ContentTypes.ERROR]:
-            videoError ??
-            `An error occurred while processing the request${err?.message ? `: ${err.message}` : ''}`,
+          [ContentTypes.ERROR]: `An error occurred while processing the request${err?.message ? `: ${err.message}` : ''}`,
         });
       }
     } finally {
@@ -2374,7 +2325,14 @@ class AgentClient extends BaseClient {
 
     const options = await titleProviderConfig.getOptions({
       req,
-      endpoint,
+      /**
+       * `getProviderConfig` case-insensitively resolves `endpoint` (e.g. lowercase
+       * `"ollama"`) against `customEndpointConfig`, but doesn't correct the caller's
+       * copy. The provider's own `getOptions` (e.g. `initializeCustom`) re-looks-up
+       * the config by exact name, so pass the resolved name — falling back to
+       * `endpoint` for non-custom providers, where `customEndpointConfig` is undefined.
+       */
+      endpoint: titleProviderConfig.customEndpointConfig?.name ?? endpoint,
       model_parameters: clientOptions,
       db: {
         getUserKey: db.getUserKey,
@@ -2383,18 +2341,6 @@ class AgentClient extends BaseClient {
     });
 
     let provider = options.provider ?? titleProviderConfig.overrideProvider ?? agent.provider;
-    if (
-      endpoint === EModelEndpoint.azureOpenAI &&
-      options.llmConfig?.azureOpenAIApiInstanceName == null
-    ) {
-      provider = Providers.OPENAI;
-    } else if (
-      endpoint === EModelEndpoint.azureOpenAI &&
-      options.llmConfig?.azureOpenAIApiInstanceName != null &&
-      provider !== Providers.AZURE
-    ) {
-      provider = Providers.AZURE;
-    }
 
     /** @type {import('@librechat/agents').ClientOptions} */
     clientOptions = { ...options.llmConfig };
@@ -2429,14 +2375,6 @@ class AgentClient extends BaseClient {
 
     if (anthropicClientOptions?.defaultHeaders != null && clientOptions.clientOptions == null) {
       clientOptions.clientOptions = anthropicClientOptions;
-    }
-
-    if (
-      provider === Providers.GOOGLE &&
-      (endpointConfig?.titleMethod === TitleMethod.FUNCTIONS ||
-        endpointConfig?.titleMethod === TitleMethod.STRUCTURED)
-    ) {
-      clientOptions.json = true;
     }
 
     /** Resolve request-based headers across provider-specific header locations:

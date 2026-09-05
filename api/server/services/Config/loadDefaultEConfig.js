@@ -1,29 +1,16 @@
-const { EModelEndpoint, getEnabledEndpoints } = require('librechat-data-provider');
-const loadAsyncEndpoints = require('./loadAsyncEndpoints');
+const { getEnabledEndpoints } = require('librechat-data-provider');
 const { config } = require('./EndpointService');
 
 /**
- * Load async endpoints and return a configuration object
- * @param {AppConfig} appConfig - The app configuration object
- * @returns {Promise<Object.<string, EndpointWithOrder>>} An object whose keys are endpoint names and values are objects that contain the endpoint configuration and an order.
+ * Return a configuration object for the endpoints this deployment supports
+ * (Agents and custom/Ollama endpoints).
+ * @returns {Object.<string, EndpointWithOrder>} An object whose keys are endpoint names and values are objects that contain the endpoint configuration and an order.
  */
-async function loadDefaultEndpointsConfig(appConfig) {
-  const { assistants, azureAssistants, azureOpenAI } = config;
-
+function loadDefaultEndpointsConfig() {
   const enabledEndpoints = getEnabledEndpoints();
-  const { google } = enabledEndpoints.includes(EModelEndpoint.google)
-    ? await loadAsyncEndpoints(appConfig)
-    : { google: false };
 
   const endpointConfig = {
-    [EModelEndpoint.openAI]: config[EModelEndpoint.openAI],
-    [EModelEndpoint.agents]: config[EModelEndpoint.agents],
-    [EModelEndpoint.assistants]: assistants,
-    [EModelEndpoint.azureAssistants]: azureAssistants,
-    [EModelEndpoint.azureOpenAI]: azureOpenAI,
-    [EModelEndpoint.google]: google,
-    [EModelEndpoint.anthropic]: config[EModelEndpoint.anthropic],
-    [EModelEndpoint.bedrock]: config[EModelEndpoint.bedrock],
+    agents: config.agents,
   };
 
   const orderedAndFilteredEndpoints = enabledEndpoints.reduce((config, key, index) => {

@@ -1,12 +1,6 @@
 import { Terminal, Type, Database } from 'lucide-react';
-import { EModelEndpoint, FileSources } from 'librechat-data-provider';
-import { MinimalIcon } from '~/components/Endpoints';
+import { FileSources } from 'librechat-data-provider';
 import { cn } from '~/utils';
-
-const sourceToEndpoint = {
-  [FileSources.openai]: EModelEndpoint.openAI,
-  [FileSources.azure]: EModelEndpoint.azureOpenAI,
-};
 
 const sourceToClassname = {
   [FileSources.openai]: 'bg-white/75 dark:bg-black/65',
@@ -59,21 +53,5 @@ export default function SourceIcon({
     );
   }
 
-  const endpoint = sourceToEndpoint[source ?? ''];
-
-  if (!endpoint) {
-    return null;
-  }
-  return (
-    <div className={cn(className, sourceToClassname[source ?? ''] ?? '')}>
-      <span className="flex items-center justify-center">
-        <MinimalIcon
-          endpoint={endpoint}
-          size={14}
-          isCreatedByUser={false}
-          iconClassName="h-3 w-3"
-        />
-      </span>
-    </div>
-  );
+  return null;
 }

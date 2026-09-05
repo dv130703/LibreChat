@@ -4,29 +4,18 @@ import { CustomMinimalIcon, XAIcon, MoonshotIcon } from '@librechat/client';
 import { IconContext } from '~/common';
 import { cn } from '~/utils';
 
+/** Gateway/observability proxy names a user might give their custom
+ *  OpenAI-compatible endpoint — decorative only, not native LLM providers. */
 const knownEndpointAssets: Record<string, string> = {
-  [KnownEndpoints.anyscale]: 'assets/anyscale.png',
-  [KnownEndpoints.apipie]: 'assets/apipie.png',
-  [KnownEndpoints.cohere]: 'assets/cohere.png',
-  [KnownEndpoints.deepseek]: 'assets/deepseek.svg',
-  [KnownEndpoints.fireworks]: 'assets/fireworks.png',
-  google: 'assets/google.svg',
-  [KnownEndpoints.groq]: 'assets/groq.png',
-  [KnownEndpoints.helicone]: 'assets/helicone.svg',
-  [KnownEndpoints.huggingface]: 'assets/huggingface.svg',
-  [KnownEndpoints.mistral]: 'assets/mistral.png',
-  [KnownEndpoints.mlx]: 'assets/mlx.png',
   [KnownEndpoints.ollama]: 'assets/ollama.png',
+  google: 'assets/google.svg',
   openai: 'assets/openai.svg',
-  [KnownEndpoints.openrouter]: 'assets/openrouter.png',
-  [KnownEndpoints.perplexity]: 'assets/perplexity.png',
   qwen: 'assets/qwen.svg',
-  [KnownEndpoints.shuttleai]: 'assets/shuttleai.png',
-  [KnownEndpoints['together.ai']]: 'assets/together.png',
-  [KnownEndpoints.unify]: 'assets/unify.webp',
+  [KnownEndpoints.openrouter]: 'assets/openrouter.png',
+  helicone: 'assets/helicone.svg',
 };
 
-const knownEndpointComponents = new Set<string>([KnownEndpoints.moonshot, KnownEndpoints.xai]);
+const knownEndpointComponents = new Set<string>(['moonshot', 'xai']);
 
 export function getKnownEndpointAsset(endpoint?: string | null): string {
   if (!endpoint) {
@@ -47,11 +36,7 @@ export function hasKnownEndpointIcon(endpoint?: string | null): boolean {
   );
 }
 
-const knownEndpointClasses = {
-  [KnownEndpoints.cohere]: {
-    [IconContext.landing]: 'p-2',
-  },
-};
+const knownEndpointClasses: Record<string, Record<string, string>> = {};
 
 const getKnownClass = ({
   currentEndpoint,
@@ -90,11 +75,11 @@ function UnknownIcon({
 
   const currentEndpoint = endpoint.toLowerCase();
 
-  if (currentEndpoint === KnownEndpoints.xai) {
+  if (currentEndpoint === 'xai') {
     return <XAIcon className={cn(className, 'text-black dark:text-white')} />;
   }
 
-  if (currentEndpoint === KnownEndpoints.moonshot) {
+  if (currentEndpoint === 'moonshot') {
     return <MoonshotIcon className={cn(className, 'text-black dark:text-white')} />;
   }
 

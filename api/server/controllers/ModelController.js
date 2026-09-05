@@ -1,12 +1,10 @@
 const { logger } = require('@librechat/data-schemas');
-const { loadDefaultModels, loadConfigModels } = require('~/server/services/Config');
+const { loadConfigModels } = require('~/server/services/Config');
 
 const getModelsConfig = (req) => loadModels(req);
 
 async function loadModels(req) {
-  const defaultModelsConfig = await loadDefaultModels(req);
-  const customModelsConfig = await loadConfigModels(req);
-  return { ...defaultModelsConfig, ...customModelsConfig };
+  return await loadConfigModels(req);
 }
 
 async function modelController(req, res) {

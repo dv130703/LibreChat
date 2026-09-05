@@ -125,7 +125,7 @@ describe('Conversation Operations', () => {
     mockConversationData = {
       conversationId: uuidv4(),
       title: 'Test Conversation',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
     };
   });
 
@@ -136,7 +136,7 @@ describe('Conversation Operations', () => {
       expect(result?.conversationId).toBe(mockConversationData.conversationId);
       expect(result?.user).toBe('user123');
       expect(result?.title).toBe('Test Conversation');
-      expect(result?.endpoint).toBe(EModelEndpoint.openAI);
+      expect(result?.endpoint).toBe(EModelEndpoint.custom);
 
       // Verify the conversation was actually saved to the database
       const savedConvo = await Conversation.findOne<IConversation>({
@@ -186,13 +186,13 @@ describe('Conversation Operations', () => {
       await saveConvo(mockCtx, {
         conversationId: firstConversationId,
         title: 'First',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         chatProjectId,
       });
       await saveConvo(mockCtx, {
         conversationId: secondConversationId,
         title: 'Second',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         chatProjectId,
       });
 
@@ -223,13 +223,13 @@ describe('Conversation Operations', () => {
         {
           conversationId: ownedConvoId,
           user: mockCtx.userId,
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           chatProjectId: ownedId,
         },
         {
           conversationId: orphanConvoId,
           user: mockCtx.userId,
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           chatProjectId: orphanId,
         },
       ]);
@@ -266,13 +266,13 @@ describe('Conversation Operations', () => {
       await saveConvo(mockCtx, {
         conversationId,
         title: 'Moving',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         chatProjectId: projectAId,
       });
       // A stale tab re-submits with the new project id, moving the chat A -> B.
       await saveConvo(mockCtx, {
         conversationId,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         chatProjectId: projectBId,
       });
 
@@ -302,14 +302,14 @@ describe('Conversation Operations', () => {
       await saveConvo(mockCtx, {
         conversationId,
         title: 'Bulk Moving',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         chatProjectId: projectAId,
       });
       await methods.bulkSaveConvos([
         {
           conversationId,
           user: mockCtx.userId,
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           chatProjectId: projectBId,
         },
       ]);
@@ -353,7 +353,7 @@ describe('Conversation Operations', () => {
       const result = await saveConvo(mockCtx, {
         conversationId: newId,
         title: 'New Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       expect(result).not.toBeNull();
@@ -662,7 +662,7 @@ describe('Conversation Operations', () => {
         conversationId: uuidv4(),
         user: 'user123',
         title: 'New Non-temporary Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: false,
         expiredAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         updatedAt: new Date(),
@@ -672,7 +672,7 @@ describe('Conversation Operations', () => {
         conversationId: uuidv4(),
         user: 'user123',
         title: 'Old Non-Temporary Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: undefined,
         expiredAt: null,
         updatedAt: new Date(),
@@ -683,7 +683,7 @@ describe('Conversation Operations', () => {
         conversationId: legacyNullNonTemporaryConvoId,
         user: 'user123',
         title: 'Legacy Null Non-Temporary Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: null,
         expiredAt: null,
         updatedAt: new Date(),
@@ -695,7 +695,7 @@ describe('Conversation Operations', () => {
         conversationId: legacyTemporaryConvoId,
         user: 'user123',
         title: 'Legacy Temporary Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         expiredAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         updatedAt: new Date(),
         createdAt: new Date(),
@@ -705,7 +705,7 @@ describe('Conversation Operations', () => {
         conversationId: uuidv4(),
         user: 'user123',
         title: 'Expired Retained Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: false,
         expiredAt: new Date(Date.now() - 60 * 60 * 1000),
         updatedAt: new Date(),
@@ -715,7 +715,7 @@ describe('Conversation Operations', () => {
         conversationId: uuidv4(),
         user: 'user123',
         title: 'Temporary conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: true,
         expiredAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         updatedAt: new Date(),
@@ -741,7 +741,7 @@ describe('Conversation Operations', () => {
         conversationId: uuidv4(),
         user: 'user123',
         title: 'New Non-temporary Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: false,
         expiredAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         updatedAt: new Date(),
@@ -751,7 +751,7 @@ describe('Conversation Operations', () => {
         conversationId: uuidv4(),
         user: 'user123',
         title: 'Old Non-Temporary Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: undefined,
         expiredAt: null,
         updatedAt: new Date(),
@@ -762,7 +762,7 @@ describe('Conversation Operations', () => {
         conversationId: legacyNullNonTemporaryConvoId,
         user: 'user123',
         title: 'Legacy Null Non-Temporary Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: null,
         expiredAt: null,
         updatedAt: new Date(),
@@ -774,7 +774,7 @@ describe('Conversation Operations', () => {
         conversationId: legacyTemporaryConvoId,
         user: 'user123',
         title: 'Legacy Temporary Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         expiredAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         updatedAt: new Date(),
         createdAt: new Date(),
@@ -784,7 +784,7 @@ describe('Conversation Operations', () => {
         conversationId: uuidv4(),
         user: 'user123',
         title: 'Expired Retained Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: false,
         expiredAt: new Date(Date.now() - 60 * 60 * 1000),
         updatedAt: new Date(),
@@ -794,7 +794,7 @@ describe('Conversation Operations', () => {
         conversationId: uuidv4(),
         user: 'user123',
         title: 'Temporary conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         isTemporary: true,
         expiredAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         updatedAt: new Date(),
@@ -833,7 +833,7 @@ describe('Conversation Operations', () => {
         conversationId: mockConversationData.conversationId,
         user: 'user123',
         title: 'Test',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       const result = await searchConversation(mockConversationData.conversationId);
@@ -856,7 +856,7 @@ describe('Conversation Operations', () => {
         conversationId: mockConversationData.conversationId,
         user: 'user123',
         title: 'Test Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       const result = await getConvo('user123', mockConversationData.conversationId);
@@ -878,7 +878,7 @@ describe('Conversation Operations', () => {
         conversationId: mockConversationData.conversationId,
         user: 'user123',
         title: 'Test Conversation',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         expiredAt: new Date('2030-01-01T00:00:00.000Z'),
       });
 
@@ -896,7 +896,7 @@ describe('Conversation Operations', () => {
         conversationId: mockConversationData.conversationId,
         user: 'user123',
         title: 'Test Title',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       const result = await getConvoTitle('user123', mockConversationData.conversationId);
@@ -908,7 +908,7 @@ describe('Conversation Operations', () => {
         conversationId: mockConversationData.conversationId,
         user: 'user123',
         title: null,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       const result = await getConvoTitle('user123', mockConversationData.conversationId);
@@ -927,7 +927,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: mockConversationData.conversationId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         files,
       });
 
@@ -939,7 +939,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: mockConversationData.conversationId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       const result = await getConvoFiles(mockConversationData.conversationId);
@@ -957,7 +957,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: mockConversationData.conversationId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       await addConvoFile(mockConversationData.conversationId, 'transcript-1');
@@ -970,7 +970,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: mockConversationData.conversationId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         files: ['existing-file'],
       });
 
@@ -984,7 +984,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: mockConversationData.conversationId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         files: ['transcript-1'],
       });
 
@@ -1005,7 +1005,7 @@ describe('Conversation Operations', () => {
         conversationId: mockConversationData.conversationId,
         user: 'user123',
         title: 'To Delete',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       deleteMessages.mockResolvedValue({ deletedCount: 5 });
@@ -1040,7 +1040,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: convoId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         tags: ['work'],
       });
 
@@ -1057,7 +1057,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: convoId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         tags: ['work', 'personal'],
       });
 
@@ -1074,13 +1074,13 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: uuidv4(),
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         tags: ['work'],
       });
       await Conversation.create({
         conversationId: uuidv4(),
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         tags: ['work'],
       });
 
@@ -1096,7 +1096,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: convoId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         tags: ['work', 'work'],
       });
 
@@ -1112,7 +1112,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: convoId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         tags: ['work'],
       });
 
@@ -1128,7 +1128,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: convoId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         tags: ['work'],
       });
 
@@ -1144,7 +1144,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: convoId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         tags: ['work'],
       });
 
@@ -1165,7 +1165,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: convoId,
         user: 'user123',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         tags: ['work'],
       });
 
@@ -1195,7 +1195,7 @@ describe('Conversation Operations', () => {
       await Conversation.create({
         conversationId: mockConversationData.conversationId,
         user: 'user4',
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
       });
 
       deleteMessages.mockResolvedValue({ deletedCount: 0 });
@@ -1238,7 +1238,7 @@ describe('Conversation Operations', () => {
         conversationId,
         user: 'user123',
         title: `Conversation ${index}`,
-        endpoint: EModelEndpoint.openAI,
+        endpoint: EModelEndpoint.custom,
         expiredAt: null,
         isArchived: false,
         createdAt,
@@ -1514,7 +1514,7 @@ describe('Conversation Operations', () => {
           conversationId,
           user: 'user123',
           title: 'Original',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
         });
       });
 
@@ -1525,7 +1525,7 @@ describe('Conversation Operations', () => {
             user: 'user123',
             title: 'Updated',
             tenantId: 'malicious-tenant',
-            endpoint: EModelEndpoint.openAI,
+            endpoint: EModelEndpoint.custom,
           },
         ]);
       });
@@ -1552,7 +1552,7 @@ describe('Conversation Operations', () => {
           conversationId,
           user: 'user123',
           title: 'Cloned Project Chat',
-          endpoint: EModelEndpoint.openAI,
+          endpoint: EModelEndpoint.custom,
           chatProjectId: project._id!.toString(),
           createdAt,
           updatedAt: createdAt,

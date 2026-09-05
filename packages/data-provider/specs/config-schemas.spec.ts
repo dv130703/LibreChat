@@ -136,7 +136,7 @@ describe('tModelSpecPresetSchema', () => {
       expiredAt: '2026-12-31',
       parentMessageId: 'parent1',
       model: 'gpt-4o',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: 'openAI',
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -161,7 +161,7 @@ describe('tModelSpecPresetSchema', () => {
       resendImages: true,
       chatGptLabel: 'old-label',
       model: 'gpt-4o',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: 'openAI',
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -175,7 +175,7 @@ describe('tModelSpecPresetSchema', () => {
       spec: 'some-spec',
       presetOverride: { model: 'other' },
       model: 'gpt-4o',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: 'openAI',
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -189,7 +189,7 @@ describe('tModelSpecPresetSchema', () => {
       greeting: 'Hello!',
       iconURL: 'https://example.com/icon.png',
       model: 'gpt-4o',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: 'openAI',
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -201,7 +201,7 @@ describe('tModelSpecPresetSchema', () => {
   it('preserves valid preset fields', () => {
     const result = tModelSpecPresetSchema.safeParse({
       model: 'gpt-4o',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: 'openAI',
       temperature: 0.7,
       topP: 0.9,
       maxOutputTokens: 4096,
@@ -1171,7 +1171,7 @@ describe('specsConfigSchema', () => {
           label: 'Spec 1',
           hideBadgeRow: true,
           softDefault: true,
-          preset: { endpoint: EModelEndpoint.openAI },
+          preset: { endpoint: 'openAI' },
           subagents: { enabled: true, allowSelf: true, agent_ids: ['agent_researcher'] },
         },
       ],
@@ -1200,7 +1200,7 @@ describe('specsConfigSchema', () => {
         {
           name: 'spec-1',
           label: 'Spec 1',
-          preset: { endpoint: EModelEndpoint.openAI },
+          preset: { endpoint: 'openAI' },
           subagents: { enabled: true, agent_ids: oversized },
         },
       ],

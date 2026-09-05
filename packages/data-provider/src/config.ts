@@ -582,11 +582,6 @@ export enum AgentCapabilities {
   run_in_background = 'run_in_background',
 }
 
-export const defaultAssistantsVersion = {
-  [EModelEndpoint.assistants]: 2,
-  [EModelEndpoint.azureAssistants]: 1,
-};
-
 export const baseEndpointSchema = z.object({
   streamRate: z.number().optional(),
   baseURL: z.string().optional(),
@@ -971,14 +966,6 @@ export const endpointSchema = baseEndpointSchema.merge(
     }),
     iconURL: z.string().optional(),
     modelDisplayLabel: z.string().optional(),
-    /**
-     * Forces the endpoint to use a provider's native client / request format
-     * instead of the default OpenAI-compatible client. Currently supports
-     * `anthropic`, for endpoints that speak the Anthropic `/v1/messages` API
-     * (Anthropic itself or Anthropic-compatible gateways). Omit for
-     * OpenAI-compatible endpoints.
-     */
-    provider: z.literal(EModelEndpoint.anthropic).optional(),
     headers: z.record(z.string()).optional(),
     addParams: addParamsSchema.optional(),
     dropParams: z.array(z.string()).optional(),
@@ -1914,15 +1901,8 @@ export const configSchema = z.object({
     .object({
       allowedAddresses: allowedAddressesSchema,
       all: baseEndpointSchema.omit({ baseURL: true }).optional(),
-      [EModelEndpoint.openAI]: baseEndpointSchema.optional(),
-      [EModelEndpoint.google]: baseEndpointSchema.optional(),
-      [EModelEndpoint.anthropic]: anthropicEndpointSchema.optional(),
-      [EModelEndpoint.azureOpenAI]: azureEndpointSchema.optional(),
-      [EModelEndpoint.azureAssistants]: assistantEndpointSchema.optional(),
-      [EModelEndpoint.assistants]: assistantEndpointSchema.optional(),
       [EModelEndpoint.agents]: agentsEndpointSchema.optional(),
       [EModelEndpoint.custom]: customEndpointsSchema.optional(),
-      [EModelEndpoint.bedrock]: bedrockEndpointSchema.optional(),
     })
     .strict()
     .refine((data) => Object.keys(data).length > 0, {
@@ -1961,228 +1941,54 @@ export type TProviderSchema =
   | undefined;
 
 export enum KnownEndpoints {
-  anyscale = 'anyscale',
-  apipie = 'apipie',
-  cohere = 'cohere',
-  fireworks = 'fireworks',
-  deepseek = 'deepseek',
-  moonshot = 'moonshot',
-  groq = 'groq',
-  helicone = 'helicone',
-  huggingface = 'huggingface',
-  mistral = 'mistral',
-  mlx = 'mlx',
   ollama = 'ollama',
+  /**
+   * Not user-facing providers — these two remain only because generic
+   * OpenAI-compatible gateway-detection logic in `packages/api`'s OpenAI
+   * request pipeline (shared with the `custom`/Ollama code path) keys off
+   * them to format reasoning/verbosity fields for gateways that speak the
+   * OpenAI-compatible protocol with extra conventions. They're inert unless
+   * a custom endpoint's baseURL/name literally matches one of these.
+   */
   openrouter = 'openrouter',
-  perplexity = 'perplexity',
-  shuttleai = 'shuttleai',
-  'together.ai' = 'together.ai',
-  unify = 'unify',
   vercel = 'vercel',
-  xai = 'xai',
 }
 
-export enum FetchTokenConfig {
-  openrouter = KnownEndpoints.openrouter,
-  helicone = KnownEndpoints.helicone,
-}
-
-export const defaultEndpoints: EModelEndpoint[] = [
-  EModelEndpoint.openAI,
-  EModelEndpoint.assistants,
-  EModelEndpoint.azureAssistants,
-  EModelEndpoint.azureOpenAI,
-  EModelEndpoint.agents,
-  EModelEndpoint.google,
-  EModelEndpoint.anthropic,
-  EModelEndpoint.custom,
-  EModelEndpoint.bedrock,
-];
+export const defaultEndpoints: EModelEndpoint[] = [EModelEndpoint.agents, EModelEndpoint.custom];
 
 export const alternateName = {
-  [EModelEndpoint.openAI]: 'OpenAI',
-  [EModelEndpoint.assistants]: 'Assistants',
   [EModelEndpoint.agents]: 'My Agents',
-  [EModelEndpoint.azureAssistants]: 'Azure Assistants',
-  [EModelEndpoint.azureOpenAI]: 'Azure OpenAI',
-  [EModelEndpoint.google]: 'Google',
-  [EModelEndpoint.anthropic]: 'Anthropic',
   [EModelEndpoint.custom]: 'Custom',
-  [EModelEndpoint.bedrock]: 'AWS Bedrock',
   [KnownEndpoints.ollama]: 'Ollama',
-  [KnownEndpoints.deepseek]: 'DeepSeek',
-  [KnownEndpoints.moonshot]: 'Moonshot',
-  [KnownEndpoints.xai]: 'xAI',
-  [KnownEndpoints.vercel]: 'Vercel',
-  [KnownEndpoints.helicone]: 'Helicone',
 };
 
-const sharedOpenAIModels = [
-  'gpt-5.6',
-  'gpt-5.6-terra',
-  'gpt-5.6-luna',
-  'gpt-5.5',
-  'gpt-5.5-pro',
-  'chat-latest',
-  'gpt-5.4',
-  'gpt-5.4-pro',
-  'gpt-5.4-mini',
-  'gpt-5.4-nano',
-  'gpt-5.3-codex',
-  'gpt-5.2',
-  'gpt-5.1',
-  'gpt-5.1-codex',
-  'gpt-5.1-codex-max',
-  'gpt-5.1-codex-mini',
-  'gpt-5',
-  'gpt-5-mini',
-  'gpt-5-nano',
-  'gpt-4.1',
-  'gpt-4.1-mini',
-  'gpt-4.1-nano',
-  'gpt-4o-mini',
-  'gpt-4o',
-];
-
-const sharedAnthropicModels = [
-  'claude-fable-5',
-  'claude-opus-4-8',
-  'claude-opus-4-7',
-  'claude-sonnet-5',
-  'claude-sonnet-4-6',
-  'claude-opus-4-6',
-  'claude-sonnet-4-5',
-  'claude-sonnet-4-5-20250929',
-  'claude-haiku-4-5',
-  'claude-haiku-4-5-20251001',
-  'claude-opus-4-1',
-  'claude-opus-4-1-20250805',
-  'claude-opus-4-5',
-  'claude-sonnet-4-20250514',
-  'claude-sonnet-4-0',
-  'claude-opus-4-20250514',
-  'claude-opus-4-0',
-  'claude-3-7-sonnet-latest',
-  'claude-3-7-sonnet-20250219',
-  'claude-3-5-haiku-20241022',
-  'claude-3-5-sonnet-20241022',
-  'claude-3-5-sonnet-20240620',
-  'claude-3-5-sonnet-latest',
-];
-
-export const bedrockModels = [
-  'anthropic.claude-fable-5',
-  'anthropic.claude-opus-4-8',
-  'anthropic.claude-opus-4-7',
-  'anthropic.claude-sonnet-5',
-  'anthropic.claude-sonnet-4-6',
-  'anthropic.claude-opus-4-6-v1',
-  'anthropic.claude-sonnet-4-5-20250929-v1:0',
-  'anthropic.claude-haiku-4-5-20251001-v1:0',
-  'anthropic.claude-opus-4-1-20250805-v1:0',
-  'anthropic.claude-3-5-sonnet-20241022-v2:0',
-  'anthropic.claude-3-5-sonnet-20240620-v1:0',
-  'anthropic.claude-3-5-haiku-20241022-v1:0',
-  // 'cohere.command-text-v14', // no conversation history
-  // 'cohere.command-light-text-v14', // no conversation history
-  'cohere.command-r-v1:0',
-  'cohere.command-r-plus-v1:0',
-  'meta.llama2-13b-chat-v1',
-  'meta.llama2-70b-chat-v1',
-  'meta.llama3-8b-instruct-v1:0',
-  'meta.llama3-70b-instruct-v1:0',
-  'meta.llama3-1-8b-instruct-v1:0',
-  'meta.llama3-1-70b-instruct-v1:0',
-  'meta.llama3-1-405b-instruct-v1:0',
-  'mistral.mistral-7b-instruct-v0:2',
-  'mistral.mixtral-8x7b-instruct-v0:1',
-  'mistral.mistral-large-2402-v1:0',
-  'mistral.mistral-large-2407-v1:0',
-  'mistral.mistral-small-2402-v1:0',
-  'ai21.jamba-instruct-v1:0',
-  // 'ai21.j2-mid-v1', // no streaming
-  // 'ai21.j2-ultra-v1', no conversation history
-  'amazon.titan-text-lite-v1',
-  'amazon.titan-text-express-v1',
-  'amazon.titan-text-premier-v1:0',
-];
-
+/**
+ * No native provider ships a static default model list anymore — Ollama
+ * (this deployment's only `custom` endpoint) fetches its models dynamically
+ * from the configured server, and the Agents feature reuses whatever models
+ * that server reports.
+ */
 export const defaultModels = {
-  [EModelEndpoint.azureAssistants]: sharedOpenAIModels,
-  [EModelEndpoint.assistants]: [...sharedOpenAIModels, 'chatgpt-4o-latest'],
-  [EModelEndpoint.agents]: sharedOpenAIModels, // TODO: Add agent models (agentsModels)
-  [EModelEndpoint.google]: [
-    // Gemini 3.6 Models
-    'gemini-3.6-flash',
-    // Gemini 3.5 Models
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-    // Gemini 3.1 Models
-    'gemini-3.1-pro-preview',
-    'gemini-3.1-pro-preview-customtools',
-    'gemini-3.1-flash-lite-preview',
-    // Gemini 3 Models
-    'gemini-3-pro-preview',
-    'gemini-3-flash-preview',
-    // Gemini 2.5 Models
-    'gemini-2.5-pro',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
-  ],
-  [EModelEndpoint.anthropic]: sharedAnthropicModels,
-  [EModelEndpoint.openAI]: [
-    ...sharedOpenAIModels,
-    'chatgpt-4o-latest',
-    'gpt-4-vision-preview',
-    'gpt-3.5-turbo-instruct-0914',
-    'gpt-3.5-turbo-instruct',
-  ],
-  [EModelEndpoint.bedrock]: bedrockModels,
+  [EModelEndpoint.agents]: [] as string[],
 };
-
-const fitlerAssistantModels = (str: string) => {
-  return /gpt-4|gpt-3\\.5/i.test(str) && !/vision|instruct/i.test(str);
-};
-
-const openAIModels = defaultModels[EModelEndpoint.openAI];
 
 export const initialModelsConfig: TModelsConfig = {
   initial: [],
-  [EModelEndpoint.openAI]: openAIModels,
-  [EModelEndpoint.assistants]: openAIModels.filter(fitlerAssistantModels),
-  [EModelEndpoint.agents]: openAIModels, // TODO: Add agent models (agentsModels)
-  [EModelEndpoint.azureOpenAI]: openAIModels,
-  [EModelEndpoint.google]: defaultModels[EModelEndpoint.google],
-  [EModelEndpoint.anthropic]: defaultModels[EModelEndpoint.anthropic],
-  [EModelEndpoint.bedrock]: defaultModels[EModelEndpoint.bedrock],
+  [EModelEndpoint.agents]: defaultModels[EModelEndpoint.agents],
 };
 
 export const EndpointURLs = {
-  [EModelEndpoint.assistants]: `${apiBaseUrl()}/api/assistants/v2/chat`,
-  [EModelEndpoint.azureAssistants]: `${apiBaseUrl()}/api/assistants/v1/chat`,
   [EModelEndpoint.agents]: `${apiBaseUrl()}/api/${EModelEndpoint.agents}/chat`,
 } as const;
 
 export const modularEndpoints = new Set<EModelEndpoint | string>([
-  EModelEndpoint.anthropic,
-  EModelEndpoint.google,
-  EModelEndpoint.openAI,
-  EModelEndpoint.azureOpenAI,
   EModelEndpoint.custom,
   EModelEndpoint.agents,
-  EModelEndpoint.bedrock,
 ]);
 
 export const supportsBalanceCheck = {
   [EModelEndpoint.custom]: true,
-  [EModelEndpoint.openAI]: true,
-  [EModelEndpoint.anthropic]: true,
-  [EModelEndpoint.assistants]: true,
   [EModelEndpoint.agents]: true,
-  [EModelEndpoint.azureAssistants]: true,
-  [EModelEndpoint.azureOpenAI]: true,
-  [EModelEndpoint.bedrock]: true,
-  [EModelEndpoint.google]: true,
 };
 
 export const visionModels = [
@@ -2250,13 +2056,7 @@ export function validateVisionModel({
   return visionModels.concat(additionalModels).some((visionModel) => model.includes(visionModel));
 }
 
-export const imageGenTools = new Set([
-  'dalle',
-  'dall-e',
-  'stable-diffusion',
-  'flux',
-  'gemini_image_gen',
-]);
+export const imageGenTools = new Set(['dalle', 'dall-e', 'stable-diffusion', 'flux']);
 
 /**
  * Enum for collections using infinite queries
@@ -2861,12 +2661,13 @@ export enum SystemCategories {
   SHARED_PROMPTS = 'sys__shared__prompts__sys',
 }
 
-export const providerEndpointMap = {
-  [EModelEndpoint.openAI]: EModelEndpoint.openAI,
-  [EModelEndpoint.bedrock]: EModelEndpoint.bedrock,
-  [EModelEndpoint.anthropic]: EModelEndpoint.anthropic,
-  [EModelEndpoint.azureOpenAI]: EModelEndpoint.azureOpenAI,
-};
+/**
+ * Maps an agent's stored `provider` (a `Providers` value) to the matching
+ * `EModelEndpoint`, for the rare case a native provider endpoint shares its
+ * name. Empty now that no native provider endpoints remain — Ollama-backed
+ * agents resolve via the `custom` endpoint instead.
+ */
+export const providerEndpointMap: Partial<Record<string, EModelEndpoint>> = {};
 
 export const specialVariables = {
   current_date: true,

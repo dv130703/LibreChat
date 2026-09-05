@@ -1,4 +1,4 @@
-const { EModelEndpoint, openAISettings, anthropicSettings } = require('librechat-data-provider');
+const { EModelEndpoint } = require('librechat-data-provider');
 
 const mockGetModelsConfig = jest.fn();
 
@@ -19,7 +19,6 @@ const {
   pickFirstConfiguredModel,
   resolveImportDefaultModel,
   resolveImportDefaultEndpoint,
-  FALLBACK_MODEL_BY_ENDPOINT,
 } = require('./defaults');
 
 afterEach(() => {
@@ -29,35 +28,33 @@ afterEach(() => {
 describe('pickFirstConfiguredModel', () => {
   it('returns the first non-empty string for the endpoint', () => {
     const modelsConfig = {
-      [EModelEndpoint.anthropic]: ['claude-opus-4-7', 'claude-3-5-sonnet-latest'],
+      [EModelEndpoint.custom]: ['llama3', 'qwen2.5'],
     };
-    expect(pickFirstConfiguredModel(EModelEndpoint.anthropic, modelsConfig)).toBe(
-      'claude-opus-4-7',
-    );
+    expect(pickFirstConfiguredModel(EModelEndpoint.custom, modelsConfig)).toBe('llama3');
   });
 
   it('skips empty strings', () => {
     const modelsConfig = {
-      [EModelEndpoint.openAI]: ['', 'gpt-4o'],
+      [EModelEndpoint.custom]: ['', 'llama3'],
     };
-    expect(pickFirstConfiguredModel(EModelEndpoint.openAI, modelsConfig)).toBe('gpt-4o');
+    expect(pickFirstConfiguredModel(EModelEndpoint.custom, modelsConfig)).toBe('llama3');
   });
 
   it('returns undefined when modelsConfig is missing', () => {
-    expect(pickFirstConfiguredModel(EModelEndpoint.anthropic, undefined)).toBeUndefined();
+    expect(pickFirstConfiguredModel(EModelEndpoint.custom, undefined)).toBeUndefined();
   });
 
   it('returns undefined when the endpoint has no models', () => {
-    expect(pickFirstConfiguredModel(EModelEndpoint.anthropic, {})).toBeUndefined();
+    expect(pickFirstConfiguredModel(EModelEndpoint.custom, {})).toBeUndefined();
     expect(
-      pickFirstConfiguredModel(EModelEndpoint.anthropic, { [EModelEndpoint.anthropic]: [] }),
+      pickFirstConfiguredModel(EModelEndpoint.custom, { [EModelEndpoint.custom]: [] }),
     ).toBeUndefined();
   });
 
   it('returns undefined when the endpoint value is not an array', () => {
     expect(
-      pickFirstConfiguredModel(EModelEndpoint.anthropic, {
-        [EModelEndpoint.anthropic]: 'claude-opus-4-7',
+      pickFirstConfiguredModel(EModelEndpoint.custom, {
+        [EModelEndpoint.custom]: 'llama3',
       }),
     ).toBeUndefined();
   });
@@ -66,33 +63,33 @@ describe('pickFirstConfiguredModel', () => {
 describe('resolveImportDefaultModel', () => {
   it('returns the first model from modelsConfig when present', async () => {
     mockGetModelsConfig.mockResolvedValueOnce({
-      [EModelEndpoint.anthropic]: ['claude-opus-4-7'],
+      [EModelEndpoint.custom]: ['llama3'],
     });
 
     const result = await resolveImportDefaultModel({
-      endpoint: EModelEndpoint.anthropic,
+      endpoint: EModelEndpoint.custom,
       requestUserId: 'user-1',
       userRole: 'USER',
     });
 
-    expect(result).toBe('claude-opus-4-7');
+    expect(result).toBe('llama3');
     expect(mockGetModelsConfig).toHaveBeenCalledWith({
       user: { id: 'user-1', role: 'USER', tenantId: 'test-tenant' },
     });
   });
 
-  it('falls back to the per-endpoint default when modelsConfig has no models for the endpoint', async () => {
+  it('returns an empty string when modelsConfig has no models for the endpoint', async () => {
     mockGetModelsConfig.mockResolvedValueOnce({});
 
     const result = await resolveImportDefaultModel({
-      endpoint: EModelEndpoint.anthropic,
+      endpoint: EModelEndpoint.custom,
       requestUserId: 'user-1',
     });
 
-    expect(result).toBe(anthropicSettings.model.default);
+    expect(result).toBe('');
   });
 
-  it('falls back to the openAI default for unknown endpoints with no modelsConfig entry', async () => {
+  it('returns an empty string for unknown endpoints with no modelsConfig entry', async () => {
     mockGetModelsConfig.mockResolvedValueOnce({});
 
     const result = await resolveImportDefaultModel({
@@ -100,52 +97,45 @@ describe('resolveImportDefaultModel', () => {
       requestUserId: 'user-1',
     });
 
-    expect(result).toBe(openAISettings.model.default);
+    expect(result).toBe('');
   });
 
-  it('falls back to the per-endpoint default when getModelsConfig rejects', async () => {
+  it('returns an empty string when getModelsConfig rejects', async () => {
     mockGetModelsConfig.mockRejectedValueOnce(new Error('boom'));
 
     const result = await resolveImportDefaultModel({
-      endpoint: EModelEndpoint.anthropic,
+      endpoint: EModelEndpoint.custom,
       requestUserId: 'user-1',
     });
 
-    expect(result).toBe(anthropicSettings.model.default);
-  });
-
-  it('exposes hardcoded fallbacks for openAI and anthropic', () => {
-    expect(FALLBACK_MODEL_BY_ENDPOINT[EModelEndpoint.openAI]).toBe(openAISettings.model.default);
-    expect(FALLBACK_MODEL_BY_ENDPOINT[EModelEndpoint.anthropic]).toBe(
-      anthropicSettings.model.default,
-    );
+    expect(result).toBe('');
   });
 });
 
 describe('resolveImportDefaultEndpoint', () => {
-  it('prefers OpenAI when it exposes models', async () => {
+  it('prefers the custom endpoint when it exposes models', async () => {
     mockGetModelsConfig.mockResolvedValueOnce({
-      [EModelEndpoint.openAI]: ['gpt-4o'],
-      [EModelEndpoint.anthropic]: ['claude-opus-4-7'],
+      [EModelEndpoint.custom]: ['llama3'],
+      [EModelEndpoint.agents]: ['agent-model'],
     });
 
     const result = await resolveImportDefaultEndpoint({ requestUserId: 'user-1' });
 
-    expect(result).toEqual({ endpoint: EModelEndpoint.openAI, model: 'gpt-4o' });
+    expect(result).toEqual({ endpoint: EModelEndpoint.custom, model: 'llama3' });
   });
 
-  it('falls back to another configured endpoint when OpenAI is unavailable', async () => {
+  it('falls back to another configured endpoint when custom is unavailable', async () => {
     mockGetModelsConfig.mockResolvedValueOnce({
-      [EModelEndpoint.openAI]: [],
-      [EModelEndpoint.anthropic]: ['claude-opus-4-7'],
+      [EModelEndpoint.custom]: [],
+      [EModelEndpoint.agents]: ['agent-model'],
     });
 
     const result = await resolveImportDefaultEndpoint({ requestUserId: 'user-1' });
 
-    expect(result).toEqual({ endpoint: EModelEndpoint.anthropic, model: 'claude-opus-4-7' });
+    expect(result).toEqual({ endpoint: EModelEndpoint.agents, model: 'agent-model' });
   });
 
-  it('selects a custom endpoint when no preferred endpoint has models', async () => {
+  it('selects any other configured endpoint when no preferred endpoint has models', async () => {
     mockGetModelsConfig.mockResolvedValueOnce({
       'my-custom': ['custom-model-1'],
     });
@@ -155,51 +145,19 @@ describe('resolveImportDefaultEndpoint', () => {
     expect(result).toEqual({ endpoint: 'my-custom', model: 'custom-model-1' });
   });
 
-  it('skips stateful assistant endpoints and selects a stateless one', async () => {
-    mockGetModelsConfig.mockResolvedValueOnce({
-      [EModelEndpoint.assistants]: ['gpt-4o'],
-      [EModelEndpoint.azureAssistants]: ['gpt-4o'],
-      'my-custom': ['custom-model-1'],
-    });
-
-    const result = await resolveImportDefaultEndpoint({ requestUserId: 'user-1' });
-
-    expect(result).toEqual({ endpoint: 'my-custom', model: 'custom-model-1' });
-  });
-
-  it('falls back to OpenAI defaults when only assistant endpoints expose models', async () => {
-    mockGetModelsConfig.mockResolvedValueOnce({
-      [EModelEndpoint.assistants]: ['gpt-4o'],
-      [EModelEndpoint.azureAssistants]: ['gpt-4o'],
-    });
-
-    const result = await resolveImportDefaultEndpoint({ requestUserId: 'user-1' });
-
-    expect(result).toEqual({
-      endpoint: EModelEndpoint.openAI,
-      model: openAISettings.model.default,
-    });
-  });
-
-  it('falls back to OpenAI defaults when the models config is empty', async () => {
+  it('falls back to custom endpoint defaults when the models config is empty', async () => {
     mockGetModelsConfig.mockResolvedValueOnce({});
 
     const result = await resolveImportDefaultEndpoint({ requestUserId: 'user-1' });
 
-    expect(result).toEqual({
-      endpoint: EModelEndpoint.openAI,
-      model: openAISettings.model.default,
-    });
+    expect(result).toEqual({ endpoint: EModelEndpoint.custom, model: '' });
   });
 
-  it('falls back to OpenAI defaults when getModelsConfig rejects', async () => {
+  it('falls back to custom endpoint defaults when getModelsConfig rejects', async () => {
     mockGetModelsConfig.mockRejectedValueOnce(new Error('boom'));
 
     const result = await resolveImportDefaultEndpoint({ requestUserId: 'user-1' });
 
-    expect(result).toEqual({
-      endpoint: EModelEndpoint.openAI,
-      model: openAISettings.model.default,
-    });
+    expect(result).toEqual({ endpoint: EModelEndpoint.custom, model: '' });
   });
 });

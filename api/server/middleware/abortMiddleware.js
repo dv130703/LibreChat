@@ -1,5 +1,5 @@
 const { logger } = require('@librechat/data-schemas');
-const { isAssistantsEndpoint, ErrorTypes } = require('librechat-data-provider');
+const { ErrorTypes } = require('librechat-data-provider');
 const {
   isEnabled,
   sendEvent,
@@ -12,7 +12,6 @@ const {
 const { truncateText, smartTruncateText } = require('~/app/clients/prompts');
 const clearPendingReq = require('~/cache/clearPendingReq');
 const { sendError } = require('~/server/middleware/error');
-const { abortRun } = require('./abortRun');
 const db = require('~/models');
 
 /**
@@ -100,11 +99,7 @@ async function spendCollectedUsage({
  * Since streamId === conversationId, we can directly abort by conversationId.
  */
 async function abortMessage(req, res) {
-  const { abortKey, endpoint } = req.body;
-
-  if (isAssistantsEndpoint(endpoint)) {
-    return await abortRun(req, res);
-  }
+  const { abortKey } = req.body;
 
   const conversationId = abortKey?.split(':')?.[0] ?? req.user.id;
   const userId = req.user.id;

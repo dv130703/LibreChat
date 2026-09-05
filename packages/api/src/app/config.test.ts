@@ -337,6 +337,33 @@ describe('getCustomEndpointConfig', () => {
       });
     });
 
+    it('should match a lowercase "ollama" lookup against a capitalized "Ollama" config entry', () => {
+      /**
+       * `loadCustomEndpointsConfig`/`loadConfigModels` fold the admin's
+       * `name: 'Ollama'` (commonly capitalized for the built-in icon) down to
+       * lowercase `'ollama'` for anything surfaced to the frontend or
+       * persisted on a conversation/agent id. Every caller re-entering with
+       * that persisted lowercase value must still resolve back to the
+       * original config entry.
+       */
+      const appConfig = createTestAppConfig({
+        endpoints: {
+          [EModelEndpoint.custom]: [
+            {
+              name: 'Ollama',
+              apiKey: 'ollama-key',
+            } as TEndpoint,
+          ],
+        },
+      });
+
+      const result = getCustomEndpointConfig({ endpoint: 'ollama', appConfig });
+      expect(result).toEqual({
+        name: 'Ollama',
+        apiKey: 'ollama-key',
+      });
+    });
+
     it('should handle mixed case endpoint names', () => {
       const appConfig = createTestAppConfig({
         endpoints: {

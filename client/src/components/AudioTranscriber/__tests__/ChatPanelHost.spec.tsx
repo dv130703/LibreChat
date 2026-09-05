@@ -36,13 +36,19 @@ jest.mock('@librechat/client', () => ({
 jest.mock('../TranscriptPanel', () => {
   const { memo: memoize } = jest.requireActual('react');
   const { useChatHeaderSlot: useHeaderSlot } = jest.requireActual('../panelHostContext');
-  function MockTranscriptPanel({ fileId, onResolved, onUnresolvable }: PanelComponentProps) {
+  function MockTranscriptPanel({
+    fileId,
+    onResolved,
+    onUnresolvable,
+    onClose,
+  }: PanelComponentProps) {
     useHeaderSlot(<div data-testid="player-slot-content">player</div>);
     return (
       <div data-testid="stub-panel">
         <span>fileId: {fileId ?? 'none'}</span>
         <button onClick={() => onResolved('resolved-file-id')}>resolve</button>
         <button onClick={onUnresolvable}>make-unresolvable</button>
+        <button onClick={onClose}>panel-dismiss</button>
       </div>
     );
   }
@@ -119,6 +125,23 @@ describe('ChatPanelHost (transcription/ARCHITECTURE.md §6.3, Phase 3)', () => {
 
     expect(mockShowToast).toHaveBeenCalledTimes(1);
     expect(mockShowToast.mock.calls[0][0]).toMatchObject({ severity: 'error' });
+    expect(screen.queryByTestId('stub-panel')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location-search').textContent).not.toContain('panel=');
+    expect(screen.getByTestId('location-search').textContent).not.toContain('file=');
+  });
+
+  // Real bug this guards: the desktop (resizable split-pane) layout never
+  // passed the panel any way to close itself - `closePanel` existed in this
+  // file but was only ever wired to the mobile overlay's own wrapper button,
+  // so a desktop user had no way to close the transcript panel at all short
+  // of editing the URL. `onClose` (new `PanelComponentProps` field) fixes
+  // that by handing `closePanel` to the panel itself, for both layouts, so
+  // it can offer a close affordance from wherever fits its own header.
+  it("gives the panel a way to close itself on the desktop layout, where there's otherwise no other close control", () => {
+    renderHost('/audio-transcriber/convo-1?panel=transcript&file=source-42');
+
+    fireEvent.click(screen.getByText('panel-dismiss'));
+
     expect(screen.queryByTestId('stub-panel')).not.toBeInTheDocument();
     expect(screen.getByTestId('location-search').textContent).not.toContain('panel=');
     expect(screen.getByTestId('location-search').textContent).not.toContain('file=');

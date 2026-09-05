@@ -111,7 +111,7 @@ async function forkConversation({
     }
 
     const importBatchBuilder = builderFactory(requestUserId);
-    importBatchBuilder.startConversation(originalConvo.endpoint ?? EModelEndpoint.openAI);
+    importBatchBuilder.startConversation(originalConvo.endpoint ?? EModelEndpoint.custom);
 
     let messagesToClone = [];
 
@@ -519,7 +519,7 @@ async function duplicateConversation({ userId, conversationId, title }) {
   );
 
   const importBatchBuilder = createImportBatchBuilder(userId);
-  importBatchBuilder.startConversation(originalConvo.endpoint ?? EModelEndpoint.openAI);
+  importBatchBuilder.startConversation(originalConvo.endpoint ?? EModelEndpoint.custom);
 
   cloneMessagesWithTimestamps(messagesToClone, importBatchBuilder);
 

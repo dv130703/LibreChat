@@ -1,6 +1,7 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import { EModelEndpoint } from 'librechat-data-provider';
 import type { TConversation, TMessage } from 'librechat-data-provider';
 import {
   MessagesViewContext,
@@ -105,7 +106,7 @@ function setRect(element: HTMLElement, rect: Partial<DOMRect>): void {
 
 const conversation = {
   conversationId: 'conversation-1',
-  endpoint: 'openAI',
+  endpoint: EModelEndpoint.custom,
   model: 'gpt-4',
 } as TConversation;
 

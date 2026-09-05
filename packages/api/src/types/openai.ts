@@ -1,11 +1,10 @@
 import { z } from 'zod';
-import { openAISchema } from 'librechat-data-provider';
+import { customSchema } from 'librechat-data-provider';
 import type { BindToolsInput } from '@librechat/agents/langchain/language_models/chat_models';
 import type { OpenAIClientOptions, Providers } from '@librechat/agents';
 import type { TConfig } from 'librechat-data-provider';
-import type { AzureOptions } from './azure';
 
-export type OpenAIParameters = z.infer<typeof openAISchema>;
+export type OpenAIParameters = z.infer<typeof customSchema>;
 
 export type OpenAIModelOptions = Partial<OpenAIParameters>;
 
@@ -21,7 +20,6 @@ export interface OpenAIConfigOptions {
   defaultQuery?: Record<string, string | undefined>;
   headers?: Record<string, string>;
   proxy?: string | null;
-  azure?: false | AzureOptions;
   streaming?: boolean;
   addParams?: Record<string, unknown>;
   dropParams?: string[];

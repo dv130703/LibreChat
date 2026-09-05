@@ -1259,12 +1259,6 @@
  */
 
 /**
- * @exports RunManager
- * @typedef {import('./server/services/Runs/RunManager.js').RunManager} RunManager
- * @memberof typedefs
- */
-
-/**
  * @exports TAgentClient
  * @typedef {import('./server/controllers/agents/client')} TAgentClient
  * @memberof typedefs

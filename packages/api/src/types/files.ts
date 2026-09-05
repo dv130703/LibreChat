@@ -1,4 +1,3 @@
-import type { BedrockDocumentFormat } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
 import type { Readable } from 'stream';
 import type { ServerRequest } from './http';
@@ -60,27 +59,6 @@ export interface VideoResult {
   }>;
 }
 
-/** Anthropic document block format */
-export interface AnthropicDocumentBlock {
-  type: 'document';
-  source: {
-    type: string;
-    media_type: string;
-    data: string;
-  };
-  context?: string;
-  title?: string;
-  cache_control?: { type: string };
-  citations?: { enabled: boolean };
-}
-
-/** Google document block format */
-export interface GoogleDocumentBlock {
-  type: 'media';
-  mimeType: string;
-  data: string;
-}
-
 /** OpenAI file block format */
 export interface OpenAIFileBlock {
   type: 'file';
@@ -97,24 +75,7 @@ export interface OpenAIInputFileBlock {
   file_data: string;
 }
 
-/** Bedrock Converse API document block (passthrough via @langchain/aws) */
-export interface BedrockDocumentBlock {
-  type: 'document';
-  document: {
-    name: string;
-    format: BedrockDocumentFormat;
-    source: {
-      bytes: Buffer;
-    };
-  };
-}
-
-export type DocumentBlock =
-  | AnthropicDocumentBlock
-  | GoogleDocumentBlock
-  | OpenAIFileBlock
-  | OpenAIInputFileBlock
-  | BedrockDocumentBlock;
+export type DocumentBlock = OpenAIFileBlock | OpenAIInputFileBlock;
 
 export interface DocumentResult {
   documents: DocumentBlock[];

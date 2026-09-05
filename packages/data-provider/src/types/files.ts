@@ -428,6 +428,20 @@ export type TTranscribeQueuedResponse = {
   queuePosition: number;
 };
 
+/**
+ * Response shape for `GET /:sourceFileId/audio-token` (transcription/
+ * ARCHITECTURE.md §12 #13) - `url` is a relative, ready-to-use path
+ * (`/api/transcribe/:sourceFileId/audio?token=...`) the transcript panel
+ * sets directly as its `<audio src>`, carrying its own short-lived auth
+ * rather than needing an `Authorization` header the element can't send.
+ */
+export type TTranscribeAudioTokenResponse = {
+  url: string;
+  /** Seconds until `url`'s token stops working - long enough to outlast a
+   *  real listening session, not meant for a countdown UI. */
+  expiresIn: number;
+};
+
 /** One source file's current job state, as returned by
  *  `GET /api/transcribe/status` - the batch poll for the cards/panel of an
  *  open conversation. */

@@ -7,7 +7,7 @@ describe('presets utils', () => {
     const basePreset: TPreset = {
       presetId: 'test-id',
       title: 'Test Preset',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       model: 'gpt-4',
     };
 
@@ -260,7 +260,7 @@ describe('presets utils', () => {
     const basePreset: TPreset = {
       presetId: 'test-id',
       title: 'Test Preset',
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       model: 'gpt-4',
     };
 

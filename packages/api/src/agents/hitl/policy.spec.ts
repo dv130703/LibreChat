@@ -358,117 +358,42 @@ describe('sanitizeResumeModelParameters', () => {
     expect(sanitizeResumeModelParameters(['sk-secret'])).toBeUndefined();
   });
 
-  test('normalizes the resolved Anthropic object `thinking` back to the request-body form (#14253)', () => {
-    // Opus/Sonnet 4+ resolve `thinking` to a provider-format object; replaying it
-    // verbatim fails the compact-convo `thinking: z.boolean()` field and its
-    // `.catch(()=>({}))` drops model/spec → missing_model.
-    expect(
-      sanitizeResumeModelParameters({
-        model: 'claude-opus-4-20250514',
-        thinking: { type: 'enabled', budget_tokens: 2048 },
-      }),
-    ).toEqual({ model: 'claude-opus-4-20250514', thinking: true, thinkingBudget: 2048 });
-
-    expect(sanitizeResumeModelParameters({ thinking: { type: 'disabled' } })).toEqual({
-      thinking: false,
-    });
-
-    // Boolean thinking (and an explicit thinkingBudget) are left untouched.
-    expect(sanitizeResumeModelParameters({ thinking: true, thinkingBudget: 4096 })).toEqual({
-      thinking: true,
-      thinkingBudget: 4096,
-    });
-    expect(
-      sanitizeResumeModelParameters({
-        thinking: { type: 'enabled', budget_tokens: 2048 },
-        thinkingBudget: 4096,
-      }),
-    ).toEqual({ thinking: true, thinkingBudget: 4096 });
-  });
-
-  test('preserves an explicit adaptive `display` as thinkingDisplay (#14253)', () => {
-    // Opus 4.7+ adaptive configs carry `display`; dropping it would demote an
-    // explicit 'omitted' choice back to the default ('summarized') on resume.
-    expect(
-      sanitizeResumeModelParameters({ thinking: { type: 'adaptive', display: 'omitted' } }),
-    ).toEqual({ thinking: true, thinkingDisplay: 'omitted' });
-    // An explicit top-level thinkingDisplay wins over the object's display.
-    expect(
-      sanitizeResumeModelParameters({
-        thinking: { type: 'adaptive', display: 'summarized' },
-        thinkingDisplay: 'omitted',
-      }),
-    ).toEqual({ thinking: true, thinkingDisplay: 'omitted' });
-  });
-
-  test('lifts adaptive effort out of invocationKwargs.output_config (#14253)', () => {
-    // configureReasoning stores a non-default effort at
-    // invocationKwargs.output_config.effort; the request-body schema only accepts
-    // the top-level field, so replaying without the lift loses the effort choice.
-    expect(
-      sanitizeResumeModelParameters({
-        thinking: { type: 'adaptive' },
-        invocationKwargs: { metadata: { user_id: 'u1' }, output_config: { effort: 'max' } },
-      }),
-    ).toEqual({ thinking: true, effort: 'max' });
-    // An existing top-level effort wins; invocationKwargs is always dropped.
-    expect(
-      sanitizeResumeModelParameters({
-        effort: 'low',
-        invocationKwargs: { output_config: { effort: 'max' } },
-      }),
-    ).toEqual({ effort: 'low' });
-    expect(
-      sanitizeResumeModelParameters({ invocationKwargs: { metadata: { user_id: 'u1' } } }),
-    ).toEqual({});
-  });
 });
 
 describe('captureResumeModelParameters', () => {
-  test('captures UI-form body params the resolved llmConfig renames or drops (#14253)', () => {
-    // Anthropic resolution renames maxOutputTokens → maxTokens and stop → stopSequences;
-    // replaying only the resolved form would silently reset those on resume.
+  test('captures UI-form body params alongside gaps filled from the resolved llmConfig', () => {
+    // The paused body is UI-form (already round-tripped `parseCompactConvo`), so it's
+    // captured verbatim; the resolved llmConfig only fills keys the body lacks.
     expect(
       captureResumeModelParameters(
         {
           text: 'hi',
-          maxOutputTokens: 8192,
           stop: ['END'],
           temperature: 0.3,
           maxContextTokens: 50000,
         },
-        { model: 'claude-opus-4', temperature: 0.3, maxTokens: 8192, stopSequences: ['END'] },
+        { model: 'llama3', temperature: 0.9, num_ctx: 8192 },
       ),
     ).toEqual({
-      model: 'claude-opus-4',
+      model: 'llama3',
       temperature: 0.3,
-      maxTokens: 8192,
-      stopSequences: ['END'],
-      maxOutputTokens: 8192,
+      num_ctx: 8192,
       stop: ['END'],
       maxContextTokens: 50000,
     });
   });
 
-  test('body values win over the normalized resolved values', () => {
+  test('body values win over the resolved values for the same key', () => {
     expect(
-      captureResumeModelParameters(
-        { thinking: false, effort: 'low' },
-        { thinking: { type: 'adaptive' }, invocationKwargs: { output_config: { effort: 'max' } } },
-      ),
-    ).toEqual({ thinking: false, effort: 'low' });
+      captureResumeModelParameters({ temperature: 0.3 }, { temperature: 0.9, num_ctx: 4096 }),
+    ).toEqual({ temperature: 0.3, num_ctx: 4096 });
   });
 
-  test('resolved params still fill gaps the body lacks (normalized to UI form)', () => {
-    expect(
-      captureResumeModelParameters(
-        {},
-        {
-          thinking: { type: 'adaptive', display: 'omitted' },
-          invocationKwargs: { output_config: { effort: 'max' } },
-        },
-      ),
-    ).toEqual({ thinking: true, thinkingDisplay: 'omitted', effort: 'max' });
+  test('resolved params fill gaps when the body has none', () => {
+    expect(captureResumeModelParameters({}, { model: 'llama3', num_ctx: 4096 })).toEqual({
+      model: 'llama3',
+      num_ctx: 4096,
+    });
     expect(captureResumeModelParameters({ temperature: 0.5 }, undefined)).toEqual({
       temperature: 0.5,
     });
@@ -494,14 +419,6 @@ describe('captureResumeModelParameters', () => {
     expect(captureResumeModelParameters({ text: 'hello' }, undefined)).toBeUndefined();
   });
 
-  test('sanitizes sensitive keys inside captured body values', () => {
-    expect(
-      captureResumeModelParameters(
-        { additionalModelRequestFields: { apiKey: 'sk-live', anthropic_beta: ['x'] } },
-        undefined,
-      ),
-    ).toEqual({ additionalModelRequestFields: { anthropic_beta: ['x'] } });
-  });
 });
 
 describe('computeAgentRequestFingerprint', () => {

@@ -7,7 +7,7 @@ const makeSpec = (name: string, showInMenu?: boolean): TModelSpec => ({
   label: name,
   ...(showInMenu === undefined ? {} : { showInMenu }),
   preset: {
-    endpoint: EModelEndpoint.bedrock,
+    endpoint: EModelEndpoint.custom,
     model: 'claude-sonnet-4-6',
   },
 });

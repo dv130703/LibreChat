@@ -106,11 +106,7 @@ describe('useSteering', () => {
       expect(result.current.canSteer).toBe(false);
     });
 
-    it('is inactive for assistants endpoints, secondary composers, and answer mode', () => {
-      expect(
-        setup({ conversation: { endpoint: EModelEndpoint.assistants } as TConversation }).result
-          .current.duringRunActive,
-      ).toBe(false);
+    it('is inactive for secondary composers and answer mode', () => {
       expect(setup({ index: 1 }).result.current.duringRunActive).toBe(false);
       expect(setup({ answerModeActive: true }).result.current.duringRunActive).toBe(false);
     });

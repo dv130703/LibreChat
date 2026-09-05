@@ -23,33 +23,23 @@ export default function Settings({
     return null;
   }
 
-  const { settings, multiViewSettings } = getSettings();
+  const { settings } = getSettings();
   const { endpoint: _endpoint } = conversation as TConversation;
   const models = modelsQuery.data?.[_endpoint ?? ''] ?? [];
   const OptionComponent = settings[endpoint];
 
-  if (OptionComponent) {
-    return (
-      <div className={cn('h-[500px] overflow-y-auto md:mb-2 md:h-[350px]', className)}>
-        <OptionComponent
-          conversation={conversation}
-          setOption={setOption}
-          models={models}
-          isPreset={isPreset}
-        />
-      </div>
-    );
-  }
-
-  const MultiViewComponent = multiViewSettings[endpoint];
-
-  if (MultiViewComponent == null) {
+  if (!OptionComponent) {
     return null;
   }
 
   return (
-    <div className={cn('hide-scrollbar h-[500px] overflow-y-auto md:mb-2 md:h-[350px]', className)}>
-      <MultiViewComponent conversation={conversation} models={models} isPreset={isPreset} />
+    <div className={cn('h-[500px] overflow-y-auto md:mb-2 md:h-[350px]', className)}>
+      <OptionComponent
+        conversation={conversation}
+        setOption={setOption}
+        models={models}
+        isPreset={isPreset}
+      />
     </div>
   );
 }

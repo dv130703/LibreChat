@@ -16,18 +16,16 @@ export enum AuthType {
 export const authTypeSchema = z.nativeEnum(AuthType);
 
 export enum EModelEndpoint {
-  azureOpenAI = 'azureOpenAI',
-  openAI = 'openAI',
-  google = 'google',
-  anthropic = 'anthropic',
-  assistants = 'assistants',
-  azureAssistants = 'azureAssistants',
   agents = 'agents',
   custom = 'custom',
-  bedrock = 'bedrock',
 }
 
-/** Mirrors `@librechat/agents` providers */
+/**
+ * Mirrors `@librechat/agents` providers. Only `OPENAI` is reachable in this
+ * Ollama-only deployment (Ollama speaks the OpenAI-compatible API), but the
+ * full set is kept since `@librechat/agents` itself still defines and
+ * type-checks against these values.
+ */
 export enum Providers {
   OPENAI = 'openAI',
   ANTHROPIC = 'anthropic',
@@ -44,36 +42,17 @@ export enum Providers {
 }
 
 /**
- * Endpoints that support direct PDF processing in the agent system
+ * Endpoints that support direct PDF processing in the agent system.
+ * Includes both the client-facing endpoint type (`custom`) and the resolved
+ * backend `Providers` value (`Providers.OPENAI`, since Ollama and other
+ * OpenAI-compatible custom endpoints resolve to it at request time).
  */
 export const documentSupportedProviders = new Set<string>([
-  EModelEndpoint.anthropic,
-  EModelEndpoint.openAI,
-  EModelEndpoint.bedrock,
   EModelEndpoint.custom,
-  // handled in AttachFileMenu and DragDropModal since azureOpenAI only supports documents with Use Responses API set to true
-  // EModelEndpoint.azureOpenAI,
-  EModelEndpoint.google,
-  Providers.VERTEXAI,
-  Providers.MISTRALAI,
-  Providers.MISTRAL,
-  Providers.DEEPSEEK,
-  Providers.MOONSHOT,
-  Providers.OPENROUTER,
-  Providers.XAI,
+  Providers.OPENAI,
 ]);
 
-const openAILikeProviders = new Set<string>([
-  Providers.OPENAI,
-  Providers.AZURE,
-  EModelEndpoint.custom,
-  Providers.MISTRALAI,
-  Providers.MISTRAL,
-  Providers.DEEPSEEK,
-  Providers.MOONSHOT,
-  Providers.OPENROUTER,
-  Providers.XAI,
-]);
+const openAILikeProviders = new Set<string>([Providers.OPENAI, EModelEndpoint.custom]);
 
 export const isOpenAILikeProvider = (provider?: string | null): boolean => {
   return openAILikeProviders.has(provider ?? '');
@@ -81,12 +60,16 @@ export const isOpenAILikeProvider = (provider?: string | null): boolean => {
 
 /**
  * Providers whose `usage_metadata.input_tokens` ALREADY INCLUDES cached tokens
- * (`input_token_details.cache_*` is a subset, not an additional charge):
+ * (`input_token_details.cache_*` is a subset, not an additional charge) —
  * Google/Vertex (`promptTokenCount`), OpenAI/Azure (`prompt_tokens`), and the
  * OpenAI-compatible family. `@librechat/agents`' `getAnthropicUsageMetadata`
  * folds `cache_creation` + `cache_read` into `input_tokens`, so Anthropic is a
  * subset provider too; without this the cache portion is billed twice. Bedrock
  * stays additive — its Converse path passes AWS `inputTokens` through unmodified.
+ * This is a factual statement about how each upstream API/library reports usage,
+ * not about which providers LibreChat exposes as native chat endpoints — a
+ * custom/Ollama endpoint proxying to any of these APIs (e.g. via OpenRouter)
+ * still needs correct cache accounting.
  * Single source of truth shared by the backend billing path
  * (`packages/api/src/agents/usage.ts`) and the client usage normalization.
  */
@@ -112,56 +95,23 @@ export const isDocumentSupportedProvider = (provider?: string | null): boolean =
 
 export const paramEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.agents,
-  EModelEndpoint.openAI,
-  EModelEndpoint.bedrock,
-  EModelEndpoint.azureOpenAI,
-  EModelEndpoint.anthropic,
   EModelEndpoint.custom,
-  EModelEndpoint.google,
 ]);
 
-export enum BedrockProviders {
-  AI21 = 'ai21',
-  Amazon = 'amazon',
-  Anthropic = 'anthropic',
-  Cohere = 'cohere',
-  DeepSeek = 'deepseek',
-  Meta = 'meta',
-  MistralAI = 'mistral',
-  Moonshot = 'moonshot',
-  MoonshotAI = 'moonshotai',
-  OpenAI = 'openai',
-  StabilityAI = 'stability',
-  ZAI = 'zai',
-}
-
-export const getModelKey = (endpoint: EModelEndpoint | string, model: string) => {
-  if (endpoint === EModelEndpoint.bedrock) {
-    const parts = model.split('.');
-    const provider = [parts[0], parts[1]].find((part) =>
-      Object.values(BedrockProviders).includes(part as BedrockProviders),
-    );
-    return (provider ?? parts[0]) as BedrockProviders;
-  }
-  return model;
-};
-
 export const getSettingsKeys = (endpoint: EModelEndpoint | string, model: string) => {
-  const endpointKey = endpoint;
-  const modelKey = getModelKey(endpointKey, model);
-  const combinedKey = `${endpointKey}-${modelKey}`;
-  return [combinedKey, endpointKey];
+  const combinedKey = `${endpoint}-${model}`;
+  return [combinedKey, endpoint];
 };
 
-export type AssistantsEndpoint = EModelEndpoint.assistants | EModelEndpoint.azureAssistants;
+/** Assistants API (OpenAI/Azure) support was removed with the other non-Ollama
+ *  providers; kept as an always-false stub so the many call sites that guard
+ *  assistants-only behavior keep working without individually being revisited. */
+export const isAssistantsEndpoint = (_endpoint?: string | null): boolean => false;
 
-export const isAssistantsEndpoint = (_endpoint?: AssistantsEndpoint | null | string): boolean => {
-  const endpoint = _endpoint ?? '';
-  if (!endpoint) {
-    return false;
-  }
-  return endpoint.toLowerCase().endsWith(EModelEndpoint.assistants);
-};
+/** @deprecated Assistants API (OpenAI/Azure) support was removed. Retained as a
+ *  type placeholder until the Assistants-only UI/data-layer that still
+ *  references it is deleted. */
+export type AssistantsEndpoint = string;
 
 export type AgentProvider = Exclude<keyof typeof EModelEndpoint, EModelEndpoint.agents> | string;
 
@@ -382,298 +332,94 @@ export const ImageVisionTool: FunctionTool = {
 export const isImageVisionTool = (tool: FunctionTool | FunctionToolCall) =>
   tool.type === 'function' && tool.function?.name === ImageVisionTool.function?.name;
 
-export const openAISettings = {
+/**
+ * Ollama's real generation options (see the Ollama API's `options` object),
+ * ported from the field list previously encoded in the now-removed, unused
+ * `OllamaClient`'s `ollamaPayloadSchema`. This is the parameter set for the
+ * `custom` endpoint (Ollama is this deployment's only `custom` endpoint).
+ */
+export const ollamaSettings = {
   model: {
-    default: 'gpt-4o-mini' as const,
+    default: undefined,
   },
   temperature: {
     min: 0 as const,
     max: 2 as const,
     step: 0.01 as const,
-    default: 1 as const,
+    default: 0.8 as const,
   },
   top_p: {
     min: 0 as const,
     max: 1 as const,
     step: 0.01 as const,
-    default: 1 as const,
+    default: 0.9 as const,
   },
-  presence_penalty: {
-    min: -2 as const,
-    max: 2 as const,
-    step: 0.01 as const,
-    default: 0 as const,
-  },
-  frequency_penalty: {
-    min: -2 as const,
-    max: 2 as const,
-    step: 0.01 as const,
-    default: 0 as const,
-  },
-  resendFiles: {
-    default: true as const,
-  },
-  maxContextTokens: {
-    default: undefined,
-  },
-  max_tokens: {
-    default: undefined,
-  },
-  imageDetail: {
-    default: ImageDetail.auto as const,
+  top_k: {
     min: 0 as const,
-    max: 2 as const,
-    step: 1 as const,
-  },
-};
-
-/**
- * `65535` (not 65536) is the value valid on both Google AI Studio and Vertex AI:
- * Vertex caps current Gemini text models at 65,535 output tokens, so defaulting to
- * 65,536 would make otherwise-default Vertex requests fail validation.
- */
-const GOOGLE_MAX_OUTPUT = 65535 as const;
-const GOOGLE_IMAGE_MAX_OUTPUT = 32768 as const;
-const GOOGLE_LEGACY_MAX_OUTPUT = 8192 as const;
-
-/**
- * Resolves the documented max output-token limit for a Google/Gemini model.
- * Current Gemini text models (2.5 and 3+) support 64K output tokens; their image
- * variants (e.g. `gemini-2.5-flash-image`) cap at 32K; legacy/deprecated models
- * (2.0 and earlier, including legacy image models) and Gemma retain the 8K limit.
- */
-const getGoogleMaxOutputTokens = (modelName: string): number => {
-  if (/gemini-(?:2\.5|[3-9]|\d{2,})/i.test(modelName)) {
-    if (/image/i.test(modelName)) {
-      return GOOGLE_IMAGE_MAX_OUTPUT;
-    }
-    return GOOGLE_MAX_OUTPUT;
-  }
-  return GOOGLE_LEGACY_MAX_OUTPUT;
-};
-
-export const googleSettings = {
-  model: {
-    default: 'gemini-1.5-flash-latest' as const,
-  },
-  maxOutputTokens: {
-    min: 1 as const,
-    max: GOOGLE_MAX_OUTPUT,
-    step: 1 as const,
-    default: GOOGLE_LEGACY_MAX_OUTPUT,
-    reset: (modelName: string): number => getGoogleMaxOutputTokens(modelName),
-    set: (value: number, modelName: string): number => {
-      const max = getGoogleMaxOutputTokens(modelName);
-      return value > max ? max : value;
-    },
-  },
-  temperature: {
-    min: 0 as const,
-    max: 2 as const,
-    step: 0.01 as const,
-    default: 1 as const,
-  },
-  topP: {
-    min: 0 as const,
-    max: 1 as const,
-    step: 0.01 as const,
-    default: 0.95 as const,
-  },
-  topK: {
-    min: 1 as const,
-    max: 40 as const,
+    max: 100 as const,
     step: 1 as const,
     default: 40 as const,
   },
-  thinking: {
-    default: true as const,
-  },
-  thinkingBudget: {
-    min: -1 as const,
-    max: 32000 as const,
+  num_ctx: {
+    min: 0 as const,
+    max: 131072 as const,
     step: 1 as const,
-    /** `-1` = Dynamic Thinking, meaning the model will adjust
-     * the budget based on the complexity of the request.
-     */
+    default: 2048 as const,
+  },
+  num_predict: {
+    min: -2 as const,
+    max: 131072 as const,
+    step: 1 as const,
+    /** `-1` = generate until the model stops or the context is full. */
     default: -1 as const,
   },
-  thinkingLevel: {
-    default: ThinkingLevel.unset as const,
+  repeat_penalty: {
+    min: 0 as const,
+    max: 2 as const,
+    step: 0.01 as const,
+    default: 1.1 as const,
   },
-};
-
-const ANTHROPIC_MAX_OUTPUT = 128000 as const;
-const CLAUDE_4_64K_MAX_OUTPUT = 64000 as const;
-const CLAUDE_32K_MAX_OUTPUT = 32000 as const;
-const DEFAULT_MAX_OUTPUT = 8192 as const;
-const LEGACY_ANTHROPIC_MAX_OUTPUT = 4096 as const;
-const CLAUDE_SONNET_128K_OUTPUT_PATTERN =
-  /claude-sonnet[-.]?(?:4[-.]?(?:[6-9]|\d{2})|[5-9]|\d{2,})(?=$|[^0-9])/;
-
-/**
- * Claude "Mythos-class" model families — new top-level classes (peers of
- * `opus`/`sonnet`/`haiku`) that ship with the post-Opus-4.7 modern profile:
- * adaptive thinking always on, raw thinking omitted by default (summarized
- * opt-in), sampling parameters rejected, and a 1M context window. The tier
- * word is the class name itself, so the `opus`/`sonnet` version parsers don't
- * cover them.
- *
- * Single source of truth: add a future sibling class name here and every
- * Mythos-class gate (adaptive thinking, sampling omission, prompt caching, 1M
- * context, 128K output) picks it up.
- */
-export const MYTHOS_CLASS_FAMILIES = ['fable', 'mythos'] as const;
-const MYTHOS_CLASS_PATTERN = new RegExp(`claude-(?:${MYTHOS_CLASS_FAMILIES.join('|')})[-.]?\\d`);
-
-/** Whether the model is a Claude Mythos-class model (e.g. `claude-fable-5`). */
-export function isMythosClassModel(model: string): boolean {
-  return MYTHOS_CLASS_PATTERN.test(model);
-}
-
-export const anthropicSettings = {
-  model: {
-    default: 'claude-3-5-sonnet-latest' as const,
+  repeat_last_n: {
+    min: -1 as const,
+    max: 2048 as const,
+    step: 1 as const,
+    default: 64 as const,
   },
-  temperature: {
+  mirostat: {
+    min: 0 as const,
+    max: 2 as const,
+    step: 1 as const,
+    default: 0 as const,
+  },
+  mirostat_eta: {
     min: 0 as const,
     max: 1 as const,
+    step: 0.01 as const,
+    default: 0.1 as const,
+  },
+  mirostat_tau: {
+    min: 0 as const,
+    max: 10 as const,
+    step: 0.1 as const,
+    default: 5 as const,
+  },
+  tfs_z: {
+    min: 0 as const,
+    max: 2 as const,
     step: 0.01 as const,
     default: 1 as const,
   },
-  promptCache: {
-    default: true as const,
-  },
-  promptCacheTtl: {
+  seed: {
     default: undefined,
   },
-  thinking: {
-    default: true as const,
-  },
-  thinkingBudget: {
-    min: 1024 as const,
-    step: 100 as const,
-    max: 200000 as const,
-    default: 2000 as const,
-  },
-  maxOutputTokens: {
-    min: 1 as const,
-    max: ANTHROPIC_MAX_OUTPUT,
-    step: 1 as const,
-    default: DEFAULT_MAX_OUTPUT,
-    reset: (modelName: string) => {
-      if (isMythosClassModel(modelName)) {
-        return ANTHROPIC_MAX_OUTPUT;
-      }
-
-      if (/claude-opus[-.]?(?:4[-.]?(?:[6-9]|\d{2,})|[5-9]|\d{2,})/.test(modelName)) {
-        return ANTHROPIC_MAX_OUTPUT;
-      }
-
-      if (CLAUDE_SONNET_128K_OUTPUT_PATTERN.test(modelName)) {
-        return ANTHROPIC_MAX_OUTPUT;
-      }
-
-      if (/claude-(?:sonnet|haiku)[-.]?[4-9]/.test(modelName)) {
-        return CLAUDE_4_64K_MAX_OUTPUT;
-      }
-
-      if (/claude-opus[-.]?(?:[5-9]|4[-.]?([5-9]|\d{2,}))/.test(modelName)) {
-        return CLAUDE_4_64K_MAX_OUTPUT;
-      }
-
-      if (/claude-opus[-.]?[4-9]/.test(modelName)) {
-        return CLAUDE_32K_MAX_OUTPUT;
-      }
-
-      return DEFAULT_MAX_OUTPUT;
-    },
-    set: (value: number, modelName: string) => {
-      if (isMythosClassModel(modelName)) {
-        if (value > ANTHROPIC_MAX_OUTPUT) {
-          return ANTHROPIC_MAX_OUTPUT;
-        }
-        return value;
-      }
-
-      if (/claude-opus[-.]?(?:4[-.]?(?:[6-9]|\d{2,})|[5-9]|\d{2,})/.test(modelName)) {
-        if (value > ANTHROPIC_MAX_OUTPUT) {
-          return ANTHROPIC_MAX_OUTPUT;
-        }
-        return value;
-      }
-
-      if (CLAUDE_SONNET_128K_OUTPUT_PATTERN.test(modelName)) {
-        if (value > ANTHROPIC_MAX_OUTPUT) {
-          return ANTHROPIC_MAX_OUTPUT;
-        }
-        return value;
-      }
-
-      if (/claude-(?:sonnet|haiku)[-.]?[4-9]/.test(modelName) && value > CLAUDE_4_64K_MAX_OUTPUT) {
-        return CLAUDE_4_64K_MAX_OUTPUT;
-      }
-
-      if (/claude-opus[-.]?(?:[5-9]|4[-.]?([5-9]|\d{2,}))/.test(modelName)) {
-        if (value > CLAUDE_4_64K_MAX_OUTPUT) {
-          return CLAUDE_4_64K_MAX_OUTPUT;
-        }
-        return value;
-      }
-
-      if (/claude-opus[-.]?[4-9]/.test(modelName) && value > CLAUDE_32K_MAX_OUTPUT) {
-        return CLAUDE_32K_MAX_OUTPUT;
-      }
-
-      if (value > ANTHROPIC_MAX_OUTPUT) {
-        return ANTHROPIC_MAX_OUTPUT;
-      }
-
-      return value;
-    },
-  },
-  topP: {
-    min: 0 as const,
-    max: 1 as const,
-    step: 0.01 as const,
-    default: 0.7 as const,
-  },
-  topK: {
-    min: 1 as const,
-    max: 40 as const,
-    step: 1 as const,
-    default: 5 as const,
+  stop: {
+    default: undefined,
   },
   resendFiles: {
     default: true as const,
   },
   maxContextTokens: {
     default: undefined,
-  },
-  legacy: {
-    maxOutputTokens: {
-      min: 1 as const,
-      max: LEGACY_ANTHROPIC_MAX_OUTPUT,
-      step: 1 as const,
-      default: LEGACY_ANTHROPIC_MAX_OUTPUT,
-    },
-  },
-  effort: {
-    default: AnthropicEffort.unset,
-    options: [
-      AnthropicEffort.unset,
-      AnthropicEffort.low,
-      AnthropicEffort.medium,
-      AnthropicEffort.high,
-      AnthropicEffort.xhigh,
-      AnthropicEffort.max,
-    ],
-  },
-  thinkingDisplay: {
-    default: ThinkingDisplay.auto,
-    options: [ThinkingDisplay.auto, ThinkingDisplay.summarized, ThinkingDisplay.omitted],
-  },
-  web_search: {
-    default: false as const,
   },
 };
 
@@ -720,14 +466,9 @@ export const agentsSettings = {
 };
 
 export const endpointSettings = {
-  [EModelEndpoint.openAI]: openAISettings,
-  [EModelEndpoint.google]: googleSettings,
-  [EModelEndpoint.anthropic]: anthropicSettings,
   [EModelEndpoint.agents]: agentsSettings,
-  [EModelEndpoint.bedrock]: agentsSettings,
+  [EModelEndpoint.custom]: ollamaSettings,
 };
-
-const google = endpointSettings[EModelEndpoint.google];
 
 export const eModelEndpointSchema = z.nativeEnum(EModelEndpoint);
 
@@ -1047,6 +788,17 @@ export const tConversationSchema = z.object({
   /** Used to overwrite active conversation settings when saving a Preset */
   presetOverride: z.record(z.unknown()).optional(),
   stop: z.array(z.string()).optional(),
+  /* Ollama */
+  top_k: z.number().optional(),
+  num_ctx: coerceNumber.optional(),
+  num_predict: coerceNumber.optional(),
+  repeat_penalty: z.number().optional(),
+  repeat_last_n: coerceNumber.optional(),
+  mirostat: coerceNumber.optional(),
+  mirostat_eta: z.number().optional(),
+  mirostat_tau: z.number().optional(),
+  tfs_z: z.number().optional(),
+  seed: coerceNumber.nullable().optional(),
   /* frontend components */
   greeting: z.string().optional(),
   spec: z.string().nullable().optional(),
@@ -1252,61 +1004,6 @@ export const tConversationTagSchema = z.object({
 });
 export type TConversationTag = z.infer<typeof tConversationTagSchema>;
 
-export const googleBaseSchema = tConversationSchema.pick({
-  chatProjectId: true,
-  model: true,
-  modelLabel: true,
-  promptPrefix: true,
-  examples: true,
-  temperature: true,
-  maxOutputTokens: true,
-  artifacts: true,
-  topP: true,
-  topK: true,
-  thinking: true,
-  thinkingBudget: true,
-  thinkingLevel: true,
-  web_search: true,
-  url_context: true,
-  fileTokenLimit: true,
-  iconURL: true,
-  greeting: true,
-  spec: true,
-  maxContextTokens: true,
-});
-
-export const googleSchema = googleBaseSchema
-  .transform((obj: Partial<TConversation>) => removeNullishValues(obj, true))
-  .catch(() => ({}));
-
-/**
-   * TODO: Map the following fields:
-  - presence_penalty -> presencePenalty
-  - frequency_penalty -> frequencyPenalty
-  - stop -> stopSequences
-   */
-export const googleGenConfigSchema = z
-  .object({
-    maxOutputTokens: coerceNumber.optional(),
-    temperature: coerceNumber.optional(),
-    topP: coerceNumber.optional(),
-    topK: coerceNumber.optional(),
-    presencePenalty: coerceNumber.optional(),
-    frequencyPenalty: coerceNumber.optional(),
-    stopSequences: z.array(z.string()).optional(),
-    thinkingConfig: z
-      .object({
-        includeThoughts: z.boolean().optional(),
-        thinkingBudget: coerceNumber.optional(),
-        thinkingLevel: z.string().optional(),
-      })
-      .optional(),
-    web_search: z.boolean().optional(),
-    url_context: z.boolean().optional(),
-  })
-  .strip()
-  .optional();
-
 export function removeNullishValues<T extends Record<string, unknown>>(
   obj: T,
   removeEmptyStrings?: boolean,
@@ -1325,58 +1022,6 @@ export function removeNullishValues<T extends Record<string, unknown>>(
 
   return newObj;
 }
-
-const assistantBaseSchema = tConversationSchema.pick({
-  chatProjectId: true,
-  model: true,
-  assistant_id: true,
-  instructions: true,
-  artifacts: true,
-  promptPrefix: true,
-  iconURL: true,
-  greeting: true,
-  spec: true,
-  append_current_datetime: true,
-});
-
-export const assistantSchema = assistantBaseSchema
-  .transform((obj) => ({
-    ...obj,
-    model: obj.model ?? openAISettings.model.default,
-    assistant_id: obj.assistant_id ?? undefined,
-    instructions: obj.instructions ?? undefined,
-    promptPrefix: obj.promptPrefix ?? null,
-    iconURL: obj.iconURL ?? undefined,
-    greeting: obj.greeting ?? undefined,
-    spec: obj.spec ?? undefined,
-    append_current_datetime: obj.append_current_datetime ?? false,
-  }))
-  .catch(() => ({
-    model: openAISettings.model.default,
-    assistant_id: undefined,
-    instructions: undefined,
-    promptPrefix: null,
-    iconURL: undefined,
-    greeting: undefined,
-    spec: undefined,
-    append_current_datetime: false,
-  }));
-
-const compactAssistantBaseSchema = tConversationSchema.pick({
-  chatProjectId: true,
-  model: true,
-  assistant_id: true,
-  instructions: true,
-  promptPrefix: true,
-  artifacts: true,
-  iconURL: true,
-  greeting: true,
-  spec: true,
-});
-
-export const compactAssistantSchema = compactAssistantBaseSchema
-  .transform((obj) => removeNullishValues(obj))
-  .catch(() => ({}));
 
 export const agentsBaseSchema = tConversationSchema.pick({
   chatProjectId: true,
@@ -1432,16 +1077,25 @@ export const agentsSchema = agentsBaseSchema
     maxContextTokens: undefined,
   }));
 
-export const openAIBaseSchema = tConversationSchema.pick({
+export const customBaseSchema = tConversationSchema.pick({
   chatProjectId: true,
   model: true,
   modelLabel: true,
-  chatGptLabel: true,
   promptPrefix: true,
   temperature: true,
   top_p: true,
+  top_k: true,
   presence_penalty: true,
   frequency_penalty: true,
+  num_ctx: true,
+  num_predict: true,
+  repeat_penalty: true,
+  repeat_last_n: true,
+  mirostat: true,
+  mirostat_eta: true,
+  mirostat_tau: true,
+  tfs_z: true,
+  seed: true,
   resendFiles: true,
   artifacts: true,
   imageDetail: true,
@@ -1451,6 +1105,14 @@ export const openAIBaseSchema = tConversationSchema.pick({
   spec: true,
   maxContextTokens: true,
   max_tokens: true,
+  disableStreaming: true,
+  fileTokenLimit: true,
+  /**
+   * OpenAI-Harmony-style reasoning/response fields — still processed by
+   * `getOpenAILLMConfig` regardless of endpoint, so reasoning-capable
+   * self-hosted or proxied models served through a custom endpoint (e.g.
+   * gpt-oss, DeepSeek-R1 via Ollama or a LiteLLM gateway) can use them.
+   */
   reasoning_effort: true,
   reasoning_summary: true,
   reasoning_mode: true,
@@ -1458,68 +1120,10 @@ export const openAIBaseSchema = tConversationSchema.pick({
   verbosity: true,
   useResponsesApi: true,
   web_search: true,
-  disableStreaming: true,
-  fileTokenLimit: true,
 });
 
-export const openAISchema = openAIBaseSchema
+export const customSchema = customBaseSchema
   .transform((obj: Partial<TConversation>) => removeNullishValues(obj, true))
-  .catch(() => ({}));
-
-export const openRouterSchema = openAIBaseSchema
-  .merge(tConversationSchema.pick({ promptCache: true, promptCacheTtl: true }))
-  .transform((obj: Partial<TConversation>) => removeNullishValues(obj, true))
-  .catch(() => ({}));
-
-export const compactGoogleSchema = googleBaseSchema
-  .transform((obj) => {
-    const newObj: Partial<TConversation> = { ...obj };
-    if (newObj.temperature === google.temperature.default) {
-      delete newObj.temperature;
-    }
-    if (newObj.maxOutputTokens === google.maxOutputTokens.reset(newObj.model ?? '')) {
-      delete newObj.maxOutputTokens;
-    }
-    if (newObj.topP === google.topP.default) {
-      delete newObj.topP;
-    }
-    if (newObj.topK === google.topK.default) {
-      delete newObj.topK;
-    }
-
-    return removeNullishValues(newObj, true);
-  })
-  .catch(() => ({}));
-
-export const anthropicBaseSchema = tConversationSchema.pick({
-  chatProjectId: true,
-  model: true,
-  modelLabel: true,
-  promptPrefix: true,
-  temperature: true,
-  maxOutputTokens: true,
-  topP: true,
-  topK: true,
-  resendFiles: true,
-  promptCache: true,
-  promptCacheTtl: true,
-  thinking: true,
-  thinkingBudget: true,
-  effort: true,
-  thinkingDisplay: true,
-  artifacts: true,
-  iconURL: true,
-  greeting: true,
-  spec: true,
-  maxContextTokens: true,
-  web_search: true,
-  fileTokenLimit: true,
-  stop: true,
-  stream: true,
-});
-
-export const anthropicSchema = anthropicBaseSchema
-  .transform((obj) => removeNullishValues(obj))
   .catch(() => ({}));
 
 export const tBannerSchema = z.object({

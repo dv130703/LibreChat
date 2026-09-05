@@ -74,18 +74,29 @@ describe('TranscriptCard (transcription/ARCHITECTURE.md §6.1/§6.4, Phase 4)', 
     mockRetryIsLoading = false;
   });
 
-  it('shows a queued spinner and is not clickable while queued', () => {
+  it('shows a queued spinner and still opens the transcript panel when clicked', () => {
     renderCard(baseFile, { ...baseJobStatus, status: 'queued' });
 
     expect(screen.getByText('com_ui_transcript_card_queued')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('file-container'));
-    expect(screen.getByTestId('search-params').textContent).toBe('');
+
+    // `TranscriptPanel` renders its own "queued"/"transcribing" state (audio
+    // player + spinner) when opened before the job finishes - no reason to
+    // make the user wait for `ready` before they can even see that.
+    const params = screen.getByTestId('search-params').textContent;
+    expect(params).toContain('panel=transcript');
+    expect(params).toContain('file=source-file-1');
   });
 
-  it('shows a transcribing spinner', () => {
+  it('shows a transcribing spinner and still opens the transcript panel when clicked', () => {
     renderCard(baseFile, { ...baseJobStatus, status: 'transcribing' });
 
     expect(screen.getByText('com_ui_transcript_card_transcribing')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('file-container'));
+
+    const params = screen.getByTestId('search-params').textContent;
+    expect(params).toContain('panel=transcript');
+    expect(params).toContain('file=source-file-1');
   });
 
   it('shows the failure state with a working retry button, without opening the transcript', () => {

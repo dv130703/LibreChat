@@ -1,0 +1,88 @@
+{
+  "trialId": "edit-existing-r0",
+  "scenarioId": "edit-existing",
+  "runIndex": 0,
+  "seed": 100,
+  "workspaceResetConfirmed": true,
+  "officeFilesInWorkspace": [
+    "report.docx"
+  ],
+  "deliveredFile": "report.docx",
+  "taskCompletion": "delivered",
+  "callValidity": {
+    "total": 4,
+    "valid": 4,
+    "rate": 1
+  },
+  "artifactCorrectness": {
+    "applicable": true,
+    "allPass": true,
+    "results": {
+      "markdownLeak": {
+        "pass": true,
+        "violations": []
+      },
+      "placeholderResidue": {
+        "pass": true,
+        "violations": []
+      },
+      "timelineUnchanged": {
+        "pass": true,
+        "violations": []
+      }
+    }
+  },
+  "hitContextLimit": false,
+  "promptTokensPerCall": [
+    3093,
+    3569,
+    4074,
+    5277,
+    5812
+  ],
+  "turns": 5,
+  "toolCallLog": [
+    {
+      "name": "query_elements",
+      "arguments": {
+        "file_path": "report.docx",
+        "selector": "p, heading"
+      },
+      "isError": false,
+      "resultText": "No elements matched selector \"p, heading\"."
+    },
+    {
+      "name": "read_document",
+      "arguments": {
+        "file_path": "report.docx",
+        "mode": "outline"
+      },
+      "isError": false,
+      "resultText": "File: report.docx | 4 paragraphs | 0 tables | 0 images\n\n├── [1] \"Budget\" (heading 1)\n├── [3] \"Timeline\" (heading 1)"
+    },
+    {
+      "name": "get_element",
+      "arguments": {
+        "file_path": "report.docx",
+        "path": "/body/p[1]"
+      },
+      "isError": false,
+      "resultText": "{\n  \"path\": \"/body/p[@paraId=00100000]\",\n  \"type\": \"paragraph\",\n  \"text\": \"Budget\",\n  \"preview\": \"Budget\",\n  \"style\": \"heading 1\",\n  \"childCount\": 1,\n  \"format\": {\n    \"paraId\": \"00100000\",\n    \"style\": \"Heading1\",\n    \"styleId\": \"Heading1\",\n    \"styleName\": \"heading 1\",\n    \"effective.size\": \"16pt\""
+    },
+    {
+      "name": "edit_text",
+      "arguments": {
+        "path": "/body/p[1]",
+        "old_str": "Budget",
+        "new_str": "Budget increased by 10% for Q4 due to new hiring",
+        "replace_all": false,
+        "file_path": "report.docx"
+      },
+      "isError": false,
+      "resultText": "Edited \"/body/p[1]\". Surrounding text now reads: …Budget increased by 10% for Q4 due to new hiring…"
+    }
+  ],
+  "finalContent": "",
+  "timedOut": false,
+  "error": null
+}

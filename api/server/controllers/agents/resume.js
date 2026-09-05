@@ -304,16 +304,18 @@ async function finalizeResumedTurn({ req, client, job, streamId, conversationId,
   // completing the stream so the `title` event still reaches the live client (emitChunk
   // no-ops once completeJob tears down the runtime) and the final event carries the real
   // title instead of "New Chat". Best-effort — a failure must not fail the resumed turn.
+  const hasUserMessageFiles = Array.isArray(userMessage?.files) && userMessage.files.length > 0;
   if (
     addTitle &&
     isFirstTurn &&
     !isTemporary &&
-    userMessage?.text &&
+    (userMessage?.text || hasUserMessageFiles) &&
     (!convo || !convo.title || convo.title === 'New Chat')
   ) {
     try {
       await addTitle(req, {
         text: userMessage.text,
+        files: userMessage.files,
         conversationId,
         client,
         onTitleGenerated: ({ conversationId: titleConvoId, title }) => {

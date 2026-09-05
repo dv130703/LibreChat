@@ -72,9 +72,6 @@ jest.mock('../ActionService', () => ({
   domainParser: (...args) => mockDomainParser(...args),
   legacyDomainEncode: (...args) => mockLegacyDomainEncode(...args),
 }));
-jest.mock('~/server/services/Threads', () => ({
-  recordUsage: jest.fn(),
-}));
 jest.mock('~/models', () => ({
   findPluginAuthsByKeys: jest.fn(),
 }));
@@ -98,7 +95,6 @@ jest.mock('~/cache', () => ({
 const {
   loadAgentTools,
   loadToolsForExecution,
-  processRequiredActions,
   resolveAgentCapabilities,
 } = require('../ToolService');
 const { reinitMCPServer } = require('~/server/services/Tools/mcp');
@@ -1531,58 +1527,6 @@ describe('ToolService - Action Capability Gating', () => {
 
       expect(mockCreateActionTool).toHaveBeenCalledTimes(2);
       expectBothActionsResolved(mockCreateActionTool.mock.calls);
-    });
-
-    it('processRequiredActions resolves both actions when they share a hostname', async () => {
-      // The assistants/threads path received the same structural rewrite
-      // as the agent paths. Cover it directly so future regressions in the
-      // `toolToAction` map shape or the lookup normalization don't slip
-      // through just because the agent-path tests still pass.
-      mockLoadActionSets.mockResolvedValue([actionA, actionB]);
-      const client = {
-        req: {
-          user: { id: 'user_123' },
-          body: {
-            assistant_id: 'assistant_collision',
-            model: 'gpt-4o-mini',
-            endpoint: 'openAI',
-          },
-          config: {},
-        },
-        res: {},
-        apiKey: 'sk-test',
-        mappedOrder: new Map(),
-        seenToolCalls: new Map(),
-        addContentData: jest.fn(),
-      };
-
-      await processRequiredActions(client, [
-        {
-          tool: toolNameA,
-          toolInput: {},
-          toolCallId: 'call_a',
-          thread_id: 'thread_1',
-          run_id: 'run_1',
-        },
-        {
-          tool: toolNameB,
-          toolInput: {},
-          toolCallId: 'call_b',
-          thread_id: 'thread_1',
-          run_id: 'run_1',
-        },
-      ]);
-
-      // The assistants path intentionally doesn't forward `name` to
-      // createActionTool (see ToolService.js — "intentionally not passing
-      // zodSchema, name, and description for assistants API"), so key
-      // resolution assertions off the request builder path instead.
-      expect(mockCreateActionTool).toHaveBeenCalledTimes(2);
-      const builderPaths = mockCreateActionTool.mock.calls.map((c) => c[0].requestBuilder?.path);
-      expect(builderPaths).toEqual(expect.arrayContaining(['/echo', '/items']));
-      // Each call must carry a distinct builder — guards against the bug
-      // where the surviving action's builders got routed to every tool.
-      expect(builderPaths[0]).not.toBe(builderPaths[1]);
     });
 
     it('loadAgentTools resolves legacy-format tool names via the legacy encoding branch', async () => {

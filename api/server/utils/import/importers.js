@@ -1,6 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const { logger, getTenantId } = require('@librechat/data-schemas');
-const { EModelEndpoint, Constants, openAISettings } = require('librechat-data-provider');
+const { EModelEndpoint, Constants } = require('librechat-data-provider');
 const { getEndpointsConfig } = require('~/server/services/Config');
 const { createImportBatchBuilder } = require('./importBatchBuilder');
 const { resolveImportDefaultModel } = require('./defaults');
@@ -64,13 +64,13 @@ async function importChatBotUiConvo(
     /** @type {ImportBatchBuilder} */
     const importBatchBuilder = builderFactory(requestUserId);
     const defaultModel = await resolveImportDefaultModel({
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       requestUserId,
       userRole,
     });
 
     for (const historyItem of jsonData.history) {
-      importBatchBuilder.startConversation(EModelEndpoint.openAI);
+      importBatchBuilder.startConversation(EModelEndpoint.custom);
       for (const message of historyItem.messages) {
         if (message.role === 'assistant') {
           importBatchBuilder.addGptMessage(message.content, historyItem.model.id);
@@ -131,13 +131,13 @@ async function importClaudeConvo(
   try {
     const importBatchBuilder = builderFactory(requestUserId);
     const defaultModel = await resolveImportDefaultModel({
-      endpoint: EModelEndpoint.anthropic,
+      endpoint: EModelEndpoint.custom,
       requestUserId,
       userRole,
     });
 
     for (const conv of jsonData) {
-      importBatchBuilder.startConversation(EModelEndpoint.anthropic);
+      importBatchBuilder.startConversation(EModelEndpoint.custom);
 
       let lastMessageId = Constants.NO_PARENT;
       let lastTimestamp = null;
@@ -172,7 +172,7 @@ async function importClaudeConvo(
           sender: isCreatedByUser ? 'user' : 'Claude',
           isCreatedByUser,
           user: requestUserId,
-          endpoint: EModelEndpoint.anthropic,
+          endpoint: EModelEndpoint.custom,
           createdAt,
         };
 
@@ -225,7 +225,7 @@ async function importLibreChatConvo(
     const options = jsonData.options || {};
 
     /* Endpoint configuration */
-    let endpoint = jsonData.endpoint ?? options.endpoint ?? EModelEndpoint.openAI;
+    let endpoint = jsonData.endpoint ?? options.endpoint ?? EModelEndpoint.custom;
     const endpointsConfig = await getEndpointsConfig({
       user: { id: requestUserId, role: userRole, tenantId: getTenantId() },
     });
@@ -233,7 +233,7 @@ async function importLibreChatConvo(
     if (!endpointConfig && endpointsConfig) {
       endpoint = Object.keys(endpointsConfig)[0];
     } else if (!endpointConfig) {
-      endpoint = EModelEndpoint.openAI;
+      endpoint = EModelEndpoint.custom;
     }
 
     importBatchBuilder.startConversation(endpoint);
@@ -332,7 +332,7 @@ async function importChatGptConvo(
   try {
     const importBatchBuilder = builderFactory(requestUserId);
     const defaultModel = await resolveImportDefaultModel({
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       requestUserId,
       userRole,
     });
@@ -357,7 +357,7 @@ async function importChatGptConvo(
  * @returns {void}
  */
 function processConversation(conv, importBatchBuilder, requestUserId, defaultModel) {
-  importBatchBuilder.startConversation(EModelEndpoint.openAI);
+  importBatchBuilder.startConversation(EModelEndpoint.custom);
 
   // Map all message IDs to new UUIDs
   const messageMap = new Map();
@@ -483,8 +483,7 @@ function processConversation(conv, importBatchBuilder, requestUserId, defaultMod
 
     const isCreatedByUser = role === 'user';
     let sender = isCreatedByUser ? 'user' : 'assistant';
-    const model =
-      mapping.message.metadata?.model_slug || defaultModel || openAISettings.model.default;
+    const model = mapping.message.metadata?.model_slug || defaultModel || '';
 
     if (!isCreatedByUser) {
       /** Extracted model name from model slug */
@@ -509,7 +508,7 @@ function processConversation(conv, importBatchBuilder, requestUserId, defaultMod
       isCreatedByUser,
       model,
       user: requestUserId,
-      endpoint: EModelEndpoint.openAI,
+      endpoint: EModelEndpoint.custom,
       createdAt,
     };
 

@@ -46,7 +46,6 @@ describe('isBackgroundEligibleToolName', () => {
       'dall-e',
       'stable-diffusion',
       'flux',
-      'gemini_image_gen',
       'image_gen_oai',
       'image_edit_oai',
       CHECK_BACKGROUND_TASK_NAME,

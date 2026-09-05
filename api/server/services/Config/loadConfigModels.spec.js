@@ -129,17 +129,6 @@ describe('loadConfigModels', () => {
     expect(result.LocalOnly).toEqual(['local-model']);
   });
 
-  it('handles azure models and endpoint correctly', async () => {
-    getAppConfig.mockResolvedValue({
-      endpoints: {
-        azureOpenAI: { modelNames: ['model1', 'model2'] },
-      },
-    });
-
-    const result = await loadConfigModels(mockRequest);
-    expect(result.azureOpenAI).toEqual(['model1', 'model2']);
-  });
-
   it('fetches custom models based on the unique key', async () => {
     process.env.BASE_URL = 'http://example.com';
     process.env.API_KEY = 'some-api-key';

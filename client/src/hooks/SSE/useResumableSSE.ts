@@ -68,6 +68,20 @@ const MAX_RETRIES = 5;
 const START_GENERATION_NETWORK_RETRIES = 3;
 const START_GENERATION_READINESS_TIMEOUT_MS = 120000;
 const SERVER_NOT_READY_CODE = 'SERVER_NOT_READY';
+/**
+ * A killed/restarted server (e.g. nodemon picking up a file change) can drop
+ * the underlying TCP connection without ever surfacing an `error` event to
+ * `sse.js` — the browser's fetch/XHR layer just leaves the request pending.
+ * With no `error` event, the reconnect-with-backoff logic below never runs,
+ * so the UI is stuck on the loading indicator indefinitely (composer shows
+ * the stop button forever) until the user manually reloads the page. This
+ * watchdog resets on every inbound stream event and, if none arrive for this
+ * long, synthesizes an `error` event on the same `sse` instance — routing
+ * through the exact reconnect/backoff/max-retries path a real network error
+ * already takes (see the dev-only `__killNetwork` debug hook below, which
+ * uses the same synthetic-dispatch technique to test that path).
+ */
+const STREAM_STALL_TIMEOUT_MS = 30000;
 
 type StartGenerationError = {
   code?: string;
@@ -535,6 +549,9 @@ export default function useResumableSSE(
   const sseRef = useRef<SSE | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  /** See `STREAM_STALL_TIMEOUT_MS` — detects a stream that went silent
+   *  without ever firing an `error` event. */
+  const stallTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const submissionRef = useRef<TSubmission | null>(null);
   const optimisticStreamIdsRef = useRef(new Set<string>());
   const createdStreamIdsRef = useRef(new Set<string>());
@@ -784,6 +801,27 @@ export default function useResumableSSE(
       });
       sseRef.current = sse;
 
+      const clearStallWatchdog = () => {
+        if (stallTimeoutRef.current) {
+          clearTimeout(stallTimeoutRef.current);
+          stallTimeoutRef.current = null;
+        }
+      };
+
+      /** Call on every inbound stream activity (open + each message) to push
+       *  the stall deadline out. See `STREAM_STALL_TIMEOUT_MS`. */
+      const resetStallWatchdog = () => {
+        clearStallWatchdog();
+        stallTimeoutRef.current = setTimeout(() => {
+          logger.log(
+            'ResumableSSE',
+            `No stream activity for ${STREAM_STALL_TIMEOUT_MS}ms - treating connection as dropped`,
+          );
+          // @ts-ignore - sse.js types are incorrect, dispatchEvent actually takes Event
+          sse.dispatchEvent(new Event('error'));
+        }, STREAM_STALL_TIMEOUT_MS);
+      };
+
       sse.addEventListener('open', () => {
         logger.log('ResumableSSE', 'Stream connected');
         setAbortScroll(false);
@@ -791,9 +829,11 @@ export default function useResumableSSE(
         setIsSubmitting(true);
         setShowStopButton(true);
         reconnectAttemptRef.current = 0;
+        resetStallWatchdog();
       });
 
       sse.addEventListener('message', (e: MessageEvent) => {
+        resetStallWatchdog();
         try {
           const data = JSON.parse(e.data);
 
@@ -1224,6 +1264,11 @@ export default function useResumableSSE(
           return;
         }
 
+        // Any error - terminal or about to reconnect - ends the current
+        // watchdog cycle; a successful reconnect's `open` handler starts a
+        // fresh one.
+        clearStallWatchdog();
+
         (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
 
         // 404 → job completed & was cleaned up; messages are persisted in DB.
@@ -1467,6 +1512,7 @@ export default function useResumableSSE(
         }
 
         logger.log('ResumableSSE', 'Stream aborted (intentional close) - no reconnect');
+        clearStallWatchdog();
         // Clear any pending reconnect attempts
         if (reconnectTimeoutRef.current) {
           clearTimeout(reconnectTimeoutRef.current);
@@ -1658,6 +1704,10 @@ export default function useResumableSSE(
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
+      }
+      if (stallTimeoutRef.current) {
+        clearTimeout(stallTimeoutRef.current);
+        stallTimeoutRef.current = null;
       }
       // Close SSE but do NOT dispatch cancel - navigation should not abort
       if (sseRef.current) {

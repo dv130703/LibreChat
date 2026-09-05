@@ -1,9 +1,3 @@
-import {
-  FileSources,
-  EModelEndpoint,
-  checkOpenAIStorage,
-  defaultAssistantsVersion,
-} from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 
 const DEFAULT_FILE_RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -16,18 +10,7 @@ type ExpiredFile = {
 };
 
 type SweepRequest = {
-  baseUrl: string;
-  originalUrl: string;
-  path: string;
-  method: string;
-  headers: Record<string, unknown>;
-  query: Record<string, unknown>;
-  params: Record<string, unknown>;
   config?: AppConfig;
-  body: {
-    endpoint: string;
-    version: string;
-  };
   user: {
     id: string;
     tenantId?: string;
@@ -38,11 +21,6 @@ type SweepLogger = {
   info: (message: string) => void;
   warn: (message: string) => void;
   error: (message: string, error?: unknown) => void;
-};
-
-type VersionedEndpointConfig = {
-  version?: unknown;
-  assistants?: { version?: unknown } | boolean;
 };
 
 type SweepDependencies = {
@@ -86,68 +64,6 @@ export function getFileRetentionSweepInterval(
   return value;
 }
 
-export function getExpiredFileEndpoint(source?: string): string {
-  return source === FileSources.azure ? EModelEndpoint.azureAssistants : EModelEndpoint.assistants;
-}
-
-export function hasExpiredFileEndpointConfig(
-  appConfig: AppConfig | undefined,
-  source?: string,
-): boolean {
-  if (source === FileSources.azure) {
-    return Boolean(appConfig?.endpoints?.[EModelEndpoint.azureOpenAI]?.assistants);
-  }
-
-  return Boolean(appConfig?.endpoints?.[EModelEndpoint.assistants]);
-}
-
-export function getConfiguredExpiredFileAssistantVersion({
-  appConfig,
-  source,
-  endpoint,
-}: {
-  appConfig?: AppConfig;
-  source?: string;
-  endpoint: string;
-}): unknown {
-  const endpoints = appConfig?.endpoints as
-    | Record<string, VersionedEndpointConfig | undefined>
-    | undefined;
-  const endpointVersion = endpoints?.[endpoint]?.version;
-  if (endpointVersion != null) {
-    return endpointVersion;
-  }
-
-  if (source === FileSources.azure) {
-    const azureAssistantsConfig = endpoints?.[EModelEndpoint.azureOpenAI]?.assistants;
-    if (typeof azureAssistantsConfig === 'object' && azureAssistantsConfig?.version != null) {
-      return azureAssistantsConfig.version;
-    }
-  }
-
-  return undefined;
-}
-
-export function getExpiredFileAssistantVersion({
-  appConfig,
-  source,
-  endpoint,
-}: {
-  appConfig?: AppConfig;
-  source?: string;
-  endpoint: string;
-}): string {
-  const configuredVersion = getConfiguredExpiredFileAssistantVersion({
-    appConfig,
-    source,
-    endpoint,
-  });
-  const assistantVersions = defaultAssistantsVersion as Record<string, number | undefined>;
-  const fallbackVersion = assistantVersions[endpoint] ?? defaultAssistantsVersion.assistants ?? 2;
-
-  return String(configuredVersion ?? fallbackVersion).replace(/^v/, '');
-}
-
 export function createExpiredFileSweepRequest({
   appConfig,
   file,
@@ -157,24 +73,8 @@ export function createExpiredFileSweepRequest({
   file: ExpiredFile;
   userId: string;
 }): SweepRequest {
-  const source = file.source ?? FileSources.local;
-  const endpoint = getExpiredFileEndpoint(source);
-  const version = getExpiredFileAssistantVersion({ appConfig, source, endpoint });
-  const baseUrl = `/api/assistants/v${version}`;
-
   return {
-    baseUrl,
-    originalUrl: `${baseUrl}/files`,
-    path: '/files',
-    method: 'DELETE',
-    headers: {},
-    query: {},
-    params: {},
     config: appConfig,
-    body: {
-      endpoint,
-      version,
-    },
     user: {
       id: userId,
       tenantId: file.tenantId,
@@ -182,33 +82,11 @@ export function createExpiredFileSweepRequest({
   };
 }
 
-export async function resolveExpiredFileSweepConfig({
-  appConfig,
-  file,
-  loadAppConfig,
-}: {
-  appConfig?: AppConfig;
-  file: ExpiredFile;
-  loadAppConfig?: () => Promise<AppConfig | undefined>;
-}): Promise<AppConfig | undefined> {
-  const source = file.source ?? FileSources.local;
-  if (
-    !checkOpenAIStorage(source) ||
-    hasExpiredFileEndpointConfig(appConfig, source) ||
-    typeof loadAppConfig !== 'function'
-  ) {
-    return appConfig;
-  }
-
-  return (await loadAppConfig()) ?? appConfig;
-}
-
 export async function sweepExpiredFiles(
-  { appConfig, limit = 100, loadAppConfig }: ExpiredFileSweepOptions | undefined = {},
+  { appConfig, limit = 100 }: ExpiredFileSweepOptions | undefined = {},
   { getExpiredFiles, processDeleteRequest, logger }: SweepDependencies,
 ): Promise<ExpiredFileSweepResult> {
   const files = (await getExpiredFiles(limit)) ?? [];
-  let resolvedAppConfig = appConfig;
   let deleted = 0;
   let failed = 0;
 
@@ -221,12 +99,7 @@ export async function sweepExpiredFiles(
     }
 
     try {
-      resolvedAppConfig = await resolveExpiredFileSweepConfig({
-        appConfig: resolvedAppConfig,
-        file,
-        loadAppConfig,
-      });
-      const req = createExpiredFileSweepRequest({ appConfig: resolvedAppConfig, file, userId });
+      const req = createExpiredFileSweepRequest({ appConfig, file, userId });
       const { deletedFileIds, failedFileIds } = await processDeleteRequest({ req, files: [file] });
       if (failedFileIds.includes(file.file_id)) {
         failed++;

@@ -1,5 +1,5 @@
 import { useMemo, useCallback } from 'react';
-import { EModelEndpoint, Constants } from 'librechat-data-provider';
+import { Constants } from 'librechat-data-provider';
 import {
   useGetAssistantDocsQuery,
   useGetEndpointsQuery,
@@ -17,10 +17,7 @@ const ConversationStarters = () => {
   const { data: startupConfig } = useGetStartupConfig();
 
   const endpointType = useMemo(() => {
-    let ep = conversation?.endpoint ?? '';
-    if (ep === EModelEndpoint.azureOpenAI) {
-      ep = EModelEndpoint.openAI;
-    }
+    const ep = conversation?.endpoint ?? '';
     return getIconEndpoint({
       endpointsConfig,
       iconURL: conversation?.iconURL,

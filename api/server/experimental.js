@@ -446,7 +446,6 @@ if (cluster.isMaster) {
     app.use('/api/balance', routes.balance);
     app.use('/api/models', routes.models);
     app.use('/api/config', preAuthTenantMiddleware, optionalJwtAuth, routes.config);
-    app.use('/api/assistants', routes.assistants);
     app.use('/api/files', await routes.files.initialize());
     app.use('/images/', createValidateImageRequest(appConfig.secureImageLinks), routes.staticRoute);
     app.use('/api/share', routes.share);

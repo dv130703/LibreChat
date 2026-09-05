@@ -1,18 +1,11 @@
 import { z } from 'zod';
 import type { EndpointFileConfig, FileConfig } from './types/files';
-import { EModelEndpoint, isAgentsEndpoint, isDocumentSupportedProvider } from './schemas';
+import { Providers, EModelEndpoint, isAgentsEndpoint, isDocumentSupportedProvider } from './schemas';
 import { normalizeEndpointName } from './utils';
 
 export const supportsFiles = {
-  [EModelEndpoint.openAI]: true,
-  [EModelEndpoint.google]: true,
-  [EModelEndpoint.assistants]: true,
-  [EModelEndpoint.azureAssistants]: true,
   [EModelEndpoint.agents]: true,
-  [EModelEndpoint.azureOpenAI]: true,
-  [EModelEndpoint.anthropic]: true,
   [EModelEndpoint.custom]: true,
-  [EModelEndpoint.bedrock]: true,
 };
 
 export const excelFileTypes = [
@@ -147,42 +140,6 @@ export const retrievalMimeTypesList = [
 ];
 
 export const imageExtRegex = /\.(jpg|jpeg|png|gif|webp|heic|heif)$/i;
-
-/** @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html */
-export type BedrockDocumentFormat =
-  | 'pdf'
-  | 'csv'
-  | 'doc'
-  | 'docx'
-  | 'xls'
-  | 'xlsx'
-  | 'html'
-  | 'txt'
-  | 'md';
-
-/** Maps MIME types to Bedrock Converse API document format values */
-export const bedrockDocumentFormats: Record<string, BedrockDocumentFormat> = {
-  'application/pdf': 'pdf',
-  'text/csv': 'csv',
-  'application/csv': 'csv',
-  'application/msword': 'doc',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-  'application/vnd.ms-excel': 'xls',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-  'text/html': 'html',
-  'text/plain': 'txt',
-  'text/markdown': 'md',
-};
-
-export const isBedrockDocumentType = (mimeType?: string): boolean =>
-  mimeType != null && mimeType in bedrockDocumentFormats;
-
-/** MIME types Bedrock's Converse document path can send to the model (mirrors `bedrockDocumentFormats`). */
-export const bedrockDocumentMimeTypes: readonly string[] = Object.keys(bedrockDocumentFormats);
-
-/** File extensions accepted by Bedrock document uploads (for input accept attributes) */
-export const bedrockDocumentExtensions =
-  '.pdf,.csv,.doc,.docx,.xls,.xlsx,.html,.htm,.txt,.md,application/pdf,text/csv,application/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/html,text/plain,text/markdown';
 
 export const excelMimeTypes =
   /^application\/(vnd\.ms-excel|msexcel|x-msexcel|x-ms-excel|x-excel|x-dos_ms_excel|xls|x-xls|vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet)$/;
@@ -415,7 +372,7 @@ export const mbToBytes = (mb: number): number => mb * megabyte;
 const defaultSizeLimit = mbToBytes(512);
 const defaultSkillImportSizeLimit = mbToBytes(50);
 const defaultTokenLimit = 100000;
-const assistantsFileConfig = {
+const defaultEndpointFileConfig = {
   fileLimit: 10,
   fileSizeLimit: defaultSizeLimit,
   totalSizeLimit: defaultSizeLimit,
@@ -425,23 +382,8 @@ const assistantsFileConfig = {
 
 export const fileConfig = {
   endpoints: {
-    [EModelEndpoint.assistants]: assistantsFileConfig,
-    [EModelEndpoint.azureAssistants]: assistantsFileConfig,
-    [EModelEndpoint.agents]: assistantsFileConfig,
-    [EModelEndpoint.anthropic]: {
-      fileLimit: 10,
-      fileSizeLimit: defaultSizeLimit,
-      totalSizeLimit: defaultSizeLimit,
-      supportedMimeTypes,
-      disabled: false,
-    },
-    default: {
-      fileLimit: 10,
-      fileSizeLimit: defaultSizeLimit,
-      totalSizeLimit: defaultSizeLimit,
-      supportedMimeTypes,
-      disabled: false,
-    },
+    [EModelEndpoint.agents]: defaultEndpointFileConfig,
+    default: defaultEndpointFileConfig,
   },
   skills: {
     fileSizeLimit: defaultSkillImportSizeLimit,
@@ -830,16 +772,18 @@ export function getEndpointFileConfig(params: {
     : baseDefaultConfig;
 
   const normalizedEndpoint = normalizeEndpointName(endpoint ?? '');
-  const standardEndpoints = new Set([
+  /**
+   * Identifiers that are never a custom endpoint's own configured NAME, so a
+   * lookup miss on one of these should fall through to the generic
+   * default/agents resolution below instead of being treated as "no matching
+   * custom endpoint found" (step 4/5 of the `isCustomEndpoint` branch).
+   * Includes the resolved `Providers` values (e.g. Ollama resolves to
+   * `Providers.OPENAI` internally), not just LibreChat's own endpoint types.
+   */
+  const standardEndpoints = new Set<string>([
     'default',
     EModelEndpoint.agents,
-    EModelEndpoint.assistants,
-    EModelEndpoint.azureAssistants,
-    EModelEndpoint.openAI,
-    EModelEndpoint.azureOpenAI,
-    EModelEndpoint.anthropic,
-    EModelEndpoint.google,
-    EModelEndpoint.bedrock,
+    ...Object.values(Providers),
   ]);
 
   const normalizedEndpointType = normalizeEndpointName(endpointType ?? '');

@@ -286,8 +286,13 @@ const startServer = async () => {
   app.use('/api/balance', routes.balance);
   app.use('/api/models', routes.models);
   app.use('/api/config', preAuthTenantMiddleware, optionalJwtAuth, routes.config);
-  app.use('/api/assistants', routes.assistants);
   app.use('/api/files', await routes.files.initialize());
+  // Registered before `routes.transcribe` (same prefix): its one route
+  // (`GET /:sourceFileId/audio`) must be matched before that router's
+  // `router.use(requireJwtAuth)` ever runs - see transcribeStream.js's own
+  // comment for why a plain `<audio src>` request can't carry the header
+  // that middleware needs.
+  app.use('/api/transcribe', routes.transcribeStream);
   app.use('/api/transcribe', routes.transcribe);
   app.use('/api/transcript-corrections', routes.transcriptCorrections);
   app.use('/api/blackbox', routes.blackBox);

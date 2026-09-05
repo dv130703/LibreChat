@@ -2,7 +2,7 @@ import { EModelEndpoint } from 'librechat-data-provider';
 import { filterMentionEndpoints } from './mentions';
 
 describe('filterMentionEndpoints', () => {
-  const endpoints = [EModelEndpoint.anthropic, EModelEndpoint.bedrock, EModelEndpoint.agents];
+  const endpoints = ['anthropic', 'bedrock', EModelEndpoint.agents];
 
   it('limits mention endpoints to model spec addedEndpoints', () => {
     const result = filterMentionEndpoints({
@@ -37,14 +37,14 @@ describe('filterMentionEndpoints', () => {
     expect(result).toEqual([]);
   });
 
-  it('excludes assistants when they are not included for the mention menu', () => {
+  it('keeps non-agent endpoints regardless of includeAssistants', () => {
     const result = filterMentionEndpoints({
-      endpoints: [EModelEndpoint.assistants, EModelEndpoint.azureAssistants, EModelEndpoint.openAI],
+      endpoints: ['custom'],
       includedEndpoints: new Set(),
       includeAssistants: false,
       hasAgentAccess: true,
     });
 
-    expect(result).toEqual([EModelEndpoint.openAI]);
+    expect(result).toEqual(['custom']);
   });
 });

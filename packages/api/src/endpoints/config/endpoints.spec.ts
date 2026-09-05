@@ -44,7 +44,7 @@ function createMockDeps(overrides: Partial<EndpointsConfigDeps> = {}): Endpoints
   return {
     getAppConfig: jest.fn().mockResolvedValue(appConfig({ endpoints: {} })),
     loadDefaultEndpointsConfig: jest.fn().mockResolvedValue({
-      [EModelEndpoint.openAI]: { userProvide: false, order: 0 },
+      [EModelEndpoint.agents]: { userProvide: false, order: 0 },
     }),
     loadCustomEndpointsConfig: jest.fn().mockReturnValue(undefined),
     ...overrides,
@@ -66,7 +66,7 @@ describe('createEndpointsConfigService', () => {
     it('merges default and custom endpoints', async () => {
       const deps = createMockDeps({
         loadDefaultEndpointsConfig: jest.fn().mockResolvedValue({
-          [EModelEndpoint.openAI]: { userProvide: false, order: 0 },
+          [EModelEndpoint.agents]: { userProvide: false, order: 0 },
         }),
         loadCustomEndpointsConfig: jest.fn().mockReturnValue({
           myCustom: { userProvide: true },
@@ -75,82 +75,8 @@ describe('createEndpointsConfigService', () => {
       const { getEndpointsConfig } = createEndpointsConfigService(deps);
       const result = await getEndpointsConfig(fakeReq());
 
-      expect(result?.[EModelEndpoint.openAI]).toBeDefined();
+      expect(result?.[EModelEndpoint.agents]).toBeDefined();
       expect(result?.myCustom).toBeDefined();
-    });
-
-    it('adds azureOpenAI when configured', async () => {
-      const deps = createMockDeps({
-        getAppConfig: jest.fn().mockResolvedValue(
-          appConfig({
-            endpoints: { [EModelEndpoint.azureOpenAI]: { modelNames: ['gpt-4'] } },
-          }),
-        ),
-      });
-      const { getEndpointsConfig } = createEndpointsConfigService(deps);
-      const result = await getEndpointsConfig(fakeReq());
-
-      expect(result?.[EModelEndpoint.azureOpenAI]).toEqual(
-        expect.objectContaining({ userProvide: false }),
-      );
-    });
-
-    it('adds azureAssistants when azure has assistants config', async () => {
-      const deps = createMockDeps({
-        getAppConfig: jest.fn().mockResolvedValue(
-          appConfig({
-            endpoints: { [EModelEndpoint.azureOpenAI]: { assistants: true } },
-          }),
-        ),
-      });
-      const { getEndpointsConfig } = createEndpointsConfigService(deps);
-      const result = await getEndpointsConfig(fakeReq());
-
-      expect(result?.[EModelEndpoint.azureAssistants]).toEqual(
-        expect.objectContaining({ userProvide: false }),
-      );
-    });
-
-    it('enables anthropic when vertex AI is configured', async () => {
-      const deps = createMockDeps({
-        getAppConfig: jest.fn().mockResolvedValue(
-          appConfig({
-            endpoints: { [EModelEndpoint.anthropic]: { vertexConfig: { enabled: true } } },
-          }),
-        ),
-      });
-      const { getEndpointsConfig } = createEndpointsConfigService(deps);
-      const result = await getEndpointsConfig(fakeReq());
-
-      expect(result?.[EModelEndpoint.anthropic]).toEqual(
-        expect.objectContaining({ userProvide: false }),
-      );
-    });
-
-    it('merges assistants config with version coercion', async () => {
-      const deps = createMockDeps({
-        loadDefaultEndpointsConfig: jest.fn().mockResolvedValue({
-          [EModelEndpoint.assistants]: { userProvide: false, order: 0 },
-        }),
-        getAppConfig: jest.fn().mockResolvedValue(
-          appConfig({
-            endpoints: {
-              [EModelEndpoint.assistants]: {
-                disableBuilder: true,
-                capabilities: [AgentCapabilities.execute_code],
-                version: 2,
-              },
-            },
-          }),
-        ),
-      });
-      const { getEndpointsConfig } = createEndpointsConfigService(deps);
-      const result = await getEndpointsConfig(fakeReq());
-      const assistants = result?.[EModelEndpoint.assistants];
-
-      expect(assistants?.version).toBe('2');
-      expect(assistants?.disableBuilder).toBe(true);
-      expect(assistants?.capabilities).toEqual([AgentCapabilities.execute_code]);
     });
 
     it('merges agents config with allowedProviders', async () => {
@@ -175,68 +101,6 @@ describe('createEndpointsConfigService', () => {
       expect(result?.[EModelEndpoint.agents]?.allowedProviders).toEqual(['openAI', 'anthropic']);
     });
 
-    it('merges bedrock availableRegions', async () => {
-      const deps = createMockDeps({
-        loadDefaultEndpointsConfig: jest.fn().mockResolvedValue({
-          [EModelEndpoint.bedrock]: { userProvide: false, order: 0 },
-        }),
-        getAppConfig: jest.fn().mockResolvedValue(
-          appConfig({
-            endpoints: {
-              [EModelEndpoint.bedrock]: { availableRegions: ['us-east-1', 'eu-west-1'] },
-            },
-          }),
-        ),
-      });
-      const { getEndpointsConfig } = createEndpointsConfigService(deps);
-      const result = await getEndpointsConfig(fakeReq());
-
-      expect(result?.[EModelEndpoint.bedrock]?.availableRegions).toEqual([
-        'us-east-1',
-        'eu-west-1',
-      ]);
-    });
-
-    it('exposes Bedrock user-provided credential options', async () => {
-      const previousEnv = {
-        BEDROCK_AWS_ACCESS_KEY_ID: process.env.BEDROCK_AWS_ACCESS_KEY_ID,
-        BEDROCK_AWS_SECRET_ACCESS_KEY: process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
-        BEDROCK_AWS_SESSION_TOKEN: process.env.BEDROCK_AWS_SESSION_TOKEN,
-        BEDROCK_AWS_BEARER_TOKEN: process.env.BEDROCK_AWS_BEARER_TOKEN,
-      };
-
-      process.env.BEDROCK_AWS_ACCESS_KEY_ID = AuthType.USER_PROVIDED;
-      process.env.BEDROCK_AWS_SECRET_ACCESS_KEY = AuthType.USER_PROVIDED;
-      process.env.BEDROCK_AWS_SESSION_TOKEN = AuthType.USER_PROVIDED;
-      process.env.BEDROCK_AWS_BEARER_TOKEN = AuthType.USER_PROVIDED;
-
-      try {
-        const deps = createMockDeps({
-          loadDefaultEndpointsConfig: jest.fn().mockResolvedValue({
-            [EModelEndpoint.bedrock]: { userProvide: false, order: 0 },
-          }),
-        });
-        const { getEndpointsConfig } = createEndpointsConfigService(deps);
-        const result = await getEndpointsConfig(fakeReq());
-
-        expect(result?.[EModelEndpoint.bedrock]).toEqual(
-          expect.objectContaining({
-            userProvideAccessKeyId: true,
-            userProvideSecretAccessKey: true,
-            userProvideSessionToken: true,
-            userProvideBearerToken: true,
-          }),
-        );
-      } finally {
-        Object.entries(previousEnv).forEach(([key, value]) => {
-          if (value == null) {
-            delete process.env[key];
-          } else {
-            process.env[key] = value;
-          }
-        });
-      }
-    });
 
     it('uses req.config when available instead of calling getAppConfig', async () => {
       const mockGetAppConfig = jest.fn();
@@ -384,7 +248,7 @@ describe('createEndpointsConfigService', () => {
       const { checkCapability } = createEndpointsConfigService(deps);
 
       const result = await checkCapability(
-        fakeReq({ body: { endpoint: EModelEndpoint.openAI } }),
+        fakeReq({ body: { endpoint: EModelEndpoint.custom } }),
         defaultAgentCapabilities[0],
       );
 

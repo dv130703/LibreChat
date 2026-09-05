@@ -141,6 +141,7 @@ export default function ChatPanelHost({
       fileId={fileParam}
       onResolved={handleResolved}
       onUnresolvable={handleUnresolvable}
+      onClose={closePanel}
     />
   );
 

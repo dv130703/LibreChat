@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useSetRecoilState, useRecoilValue } from 'recoil';
-import { PermissionTypes, Permissions, isAssistantsEndpoint } from 'librechat-data-provider';
+import { PermissionTypes, Permissions } from 'librechat-data-provider';
 import { useGetLatestMessage } from '~/hooks/Messages/useLatestMessage';
 import useAgentCapabilities from '~/hooks/Agents/useAgentCapabilities';
 import useGetAgentsConfig from '~/hooks/Agents/useGetAgentsConfig';
@@ -71,7 +71,6 @@ const useHandleKeyUp = ({
   const { agentsConfig } = useGetAgentsConfig();
   const { skillsEnabled } = useAgentCapabilities(agentsConfig?.capabilities);
   const getLatestMessage = useGetLatestMessage(index);
-  const endpoint = useRecoilValue(store.effectiveEndpointByIndex(index));
   const setShowMentionPopover = useSetRecoilState(store.showMentionPopoverFamily(index));
   const setShowPlusPopover = useSetRecoilState(store.showPlusPopoverFamily(index));
   const setShowPromptsPopover = useSetRecoilState(store.showPromptsPopoverFamily(index));
@@ -82,13 +81,6 @@ const useHandleKeyUp = ({
   const slashCommandEnabled = useRecoilValue(store.slashCommand);
   const dollarCommandEnabled = useRecoilValue(store.dollarCommand);
 
-  useEffect(() => {
-    if (isAssistantsEndpoint(endpoint)) {
-      setShowPlusPopover(false);
-      setShowSkillsPopover(false);
-    }
-  }, [endpoint, setShowPlusPopover, setShowSkillsPopover]);
-
   const handleAtCommand = useCallback(() => {
     if (atCommandEnabled && shouldTriggerCommand(textAreaRef, '@')) {
       setShowMentionPopover(true);
@@ -96,13 +88,13 @@ const useHandleKeyUp = ({
   }, [textAreaRef, setShowMentionPopover, atCommandEnabled]);
 
   const handlePlusCommand = useCallback(() => {
-    if (!hasMultiConvoAccess || !plusCommandEnabled || isAssistantsEndpoint(endpoint)) {
+    if (!hasMultiConvoAccess || !plusCommandEnabled) {
       return;
     }
     if (shouldTriggerCommand(textAreaRef, '+')) {
       setShowPlusPopover(true);
     }
-  }, [textAreaRef, setShowPlusPopover, plusCommandEnabled, hasMultiConvoAccess, endpoint]);
+  }, [textAreaRef, setShowPlusPopover, plusCommandEnabled, hasMultiConvoAccess]);
 
   const handlePromptsCommand = useCallback(() => {
     if (!hasPromptsAccess || !slashCommandEnabled) {
@@ -114,25 +106,13 @@ const useHandleKeyUp = ({
   }, [textAreaRef, hasPromptsAccess, setShowPromptsPopover, slashCommandEnabled]);
 
   const handleSkillsCommand = useCallback(() => {
-    if (
-      !hasSkillsAccess ||
-      !skillsEnabled ||
-      !dollarCommandEnabled ||
-      isAssistantsEndpoint(endpoint)
-    ) {
+    if (!hasSkillsAccess || !skillsEnabled || !dollarCommandEnabled) {
       return;
     }
     if (shouldTriggerCommand(textAreaRef, '$')) {
       setShowSkillsPopover(true);
     }
-  }, [
-    textAreaRef,
-    hasSkillsAccess,
-    skillsEnabled,
-    setShowSkillsPopover,
-    dollarCommandEnabled,
-    endpoint,
-  ]);
+  }, [textAreaRef, hasSkillsAccess, skillsEnabled, setShowSkillsPopover, dollarCommandEnabled]);
 
   const commandHandlers = useMemo(
     () => ({

@@ -47,7 +47,6 @@ import {
   createAskUserQuestionTool,
 } from '~/agents/hitl/askUserQuestionTool';
 import { resolveToolApprovalPolicy, exemptAskUserQuestionFromApproval } from '~/agents/hitl/policy';
-import { getLLMConfig as getAnthropicLLMConfig } from '~/endpoints/anthropic/llm';
 import { CREATE_FILE_TOOL_NAME, EDIT_FILE_TOOL_NAME } from '~/agents/tools';
 import { getProviderConfig } from '~/endpoints/config/providers';
 import { isSteeringSupported } from '~/agents/steering/runtime';
@@ -513,37 +512,6 @@ function resolveSummarizationProvider(
           })
         : undefined;
     /**
-     * Native Anthropic custom endpoints must build their config with the
-     * Anthropic client (`/v1/messages`), not `getOpenAIConfig` (which would emit
-     * OpenAI-shaped requests). The self-summarize case is handled earlier by
-     * `isSameEndpointAsAgent`; this covers summarizing against a *different*
-     * Anthropic-native custom endpoint.
-     */
-    if (customEndpointConfig.provider === EModelEndpoint.anthropic) {
-      const { llmConfig } = getAnthropicLLMConfig(apiKey, {
-        modelOptions: {},
-        proxy: process.env.PROXY ?? undefined,
-        reverseProxyUrl: baseURL,
-        headers: resolvedHeaders,
-        addParams: customEndpointConfig.addParams,
-        dropParams: customEndpointConfig.dropParams,
-        defaultParams: extractDefaultParams(customEndpointConfig.customParams?.paramDefinitions),
-      });
-      const { apiKey: resolvedApiKey, ...llmConfigOverrides } = llmConfig as Record<
-        string,
-        unknown
-      >;
-      const clientOverrides: SummarizationClientOverrides = { ...llmConfigOverrides };
-      if (typeof resolvedApiKey === 'string') {
-        clientOverrides.apiKey = resolvedApiKey;
-      }
-      /** Strip the default model so the user-supplied `summarization.model` wins. */
-      delete clientOverrides.model;
-      delete clientOverrides.modelName;
-      return { provider: Providers.ANTHROPIC, clientOverrides };
-    }
-
-    /**
      * Run the endpoint config through `getOpenAIConfig` so summarization
      * inherits the same `headers`, `defaultQuery`, `addParams`/`dropParams`,
      * and `customParams` transforms that `initializeCustom` applies for the
@@ -602,22 +570,30 @@ function shapeSummarizationConfig(
   agentEndpoint: string | undefined,
   headerContext: { user?: IUser; requestBody?: t.RequestBody },
 ) {
-  const rawProvider = config?.provider ?? fallbackProvider;
+  const explicitProvider = config?.provider;
   /**
    * When the summarization provider resolves to the same custom endpoint as
    * the main agent, skip client-option overrides. The SDK's self-summarize
    * path will reuse `agentContext.clientOptions` as-is, preserving any
    * request-resolved dynamic headers, fetch/proxy options, and other state
    * that `getOpenAIConfig` produced from raw yaml config does not capture.
+   *
+   * `fallbackProvider` is `agent.provider` AFTER `getProviderConfig`'s
+   * override (e.g. `Providers.OPENAI` for any custom/Ollama endpoint), not
+   * the original endpoint identity — comparing it against `agentEndpoint`
+   * (the pre-override name, e.g. `"Ollama"`) would never match. No explicit
+   * `config.provider` means "use the agent's own endpoint," which is exactly
+   * this shortcut, so take it directly instead of re-deriving and comparing.
    */
   const isSameEndpointAsAgent =
-    agentEndpoint != null &&
-    isNonEmptyString(rawProvider) &&
-    normalizeEndpointName(rawProvider) === normalizeEndpointName(agentEndpoint);
+    explicitProvider == null ||
+    (isNonEmptyString(explicitProvider) &&
+      agentEndpoint != null &&
+      normalizeEndpointName(explicitProvider) === normalizeEndpointName(agentEndpoint));
 
   const { provider, clientOverrides } = isSameEndpointAsAgent
     ? { provider: fallbackProvider, clientOverrides: undefined }
-    : resolveSummarizationProvider(rawProvider, appConfig, headerContext);
+    : resolveSummarizationProvider(explicitProvider as string, appConfig, headerContext);
 
   const model = config?.model ?? fallbackModel;
   const trigger =

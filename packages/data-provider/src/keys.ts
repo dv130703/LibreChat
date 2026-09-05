@@ -40,6 +40,7 @@ export enum QueryKeys {
   transcriptCorrections = 'transcriptCorrections',
   transcribeConfig = 'transcribeConfig',
   transcribeStatus = 'transcribeStatus',
+  transcribeAudioToken = 'transcribeAudioToken',
   voices = 'voices',
   customConfigSpeech = 'customConfigSpeech',
   prompts = 'prompts',
