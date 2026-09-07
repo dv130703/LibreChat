@@ -24,6 +24,7 @@ jest.mock('~/models', () => ({
   getConvoTitle: jest.fn(),
   getConvo: jest.fn(),
   saveConvo: jest.fn(),
+  addConvoFile: jest.fn().mockResolvedValue(undefined),
   deleteConvos: jest.fn(),
   getPreset: jest.fn(),
   getPresets: jest.fn(),
@@ -38,7 +39,14 @@ jest.mock('~/models', () => ({
   updateFileUsage: jest.fn(),
 }));
 
-const { getConvo, getFiles, getMessages, saveConvo, saveMessage } = require('~/models');
+const {
+  getConvo,
+  getFiles,
+  getMessages,
+  saveConvo,
+  saveMessage,
+  addConvoFile,
+} = require('~/models');
 
 jest.mock('@librechat/agents', () => {
   const actual = jest.requireActual('@librechat/agents');
@@ -1315,6 +1323,28 @@ describe('BaseClient', () => {
       expect(userSave[0].files).toHaveLength(1);
       expect(userSave[0].files[0].file_id).toBe('file-abc');
     });
+
+    test(
+      "adds this turn's attachments onto the conversation's files via $addToSet, rather than " +
+        "replacing the conversation's whole file list via saveOptions - regression: the old " +
+        "`saveOptions.files = attachments.map(...)` assignment flowed into saveConvo's blanket " +
+        '$set, silently erasing every file from EARLIER turns (a previously transcribed ' +
+        "recording) the moment a turn's own attachments didn't happen to include them",
+      async () => {
+        TestClient.saveMessageToDatabase = jest.fn().mockResolvedValue({ message: {} });
+
+        await TestClient.sendMessage('Hello');
+
+        const responseSave = TestClient.saveMessageToDatabase.mock.calls.find(
+          ([msg]) => !msg.isCreatedByUser,
+        );
+        expect(responseSave).toBeDefined();
+        const [, saveOptionsArg] = responseSave;
+        expect(saveOptionsArg.files).toBeUndefined();
+
+        expect(addConvoFile).toHaveBeenCalledWith(responseSave[0].conversationId, 'file-abc');
+      },
+    );
   });
 
   describe('addPreviousAttachments authorization', () => {

@@ -90,7 +90,7 @@ export function TranscribeIntentProvider({ children }: { children: ReactNode }) 
   const runChannelCheck = useCallback(
     async (file: File) => {
       const channelCount = await probeChannelCount(file);
-      if (channelCount != null && channelCount > 1) {
+      if (channelCount != null && channelCount > 2) {
         openStage({ name: 'multiChannel', file, channelCount });
         return;
       }

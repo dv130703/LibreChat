@@ -25,8 +25,8 @@ jest.mock('@librechat/client', () => ({
 // out-of-scope `StubPanel` declared below would throw at collection time.
 // Stands in for `TranscriptPanel` (or any future panel type): calls
 // `useChatHeaderSlot` for real, so the D6 slot mechanism itself is
-// exercised, and exposes buttons so a test can trigger `onResolved`/
-// `onUnresolvable` deliberately instead of needing a real data fetch.
+// exercised, and exposes buttons so a test can trigger `onResolved`
+// `onResolved` deliberately instead of needing a real data fetch.
 // Memoized for the same reason the real `TranscriptPanel` is (see its own
 // comment): without it, `ChatPanelHost`'s `setHeaderSlot` re-render recreates
 // this component's header JSX node every time, whose changed identity
@@ -36,18 +36,12 @@ jest.mock('@librechat/client', () => ({
 jest.mock('../TranscriptPanel', () => {
   const { memo: memoize } = jest.requireActual('react');
   const { useChatHeaderSlot: useHeaderSlot } = jest.requireActual('../panelHostContext');
-  function MockTranscriptPanel({
-    fileId,
-    onResolved,
-    onUnresolvable,
-    onClose,
-  }: PanelComponentProps) {
+  function MockTranscriptPanel({ fileId, onResolved, onClose }: PanelComponentProps) {
     useHeaderSlot(<div data-testid="player-slot-content">player</div>);
     return (
       <div data-testid="stub-panel">
         <span>fileId: {fileId ?? 'none'}</span>
         <button onClick={() => onResolved('resolved-file-id')}>resolve</button>
-        <button onClick={onUnresolvable}>make-unresolvable</button>
         <button onClick={onClose}>panel-dismiss</button>
       </div>
     );
@@ -118,16 +112,17 @@ describe('ChatPanelHost (transcription/ARCHITECTURE.md §6.3, Phase 3)', () => {
     expect(screen.getByTestId('location-search').textContent).toContain('file=resolved-file-id');
   });
 
-  it('closes the panel and shows a toast when the panel reports itself unresolvable', () => {
+  // Defect 2: the panel used to be able to close itself when it couldn't
+  // resolve `?file=`, which fired for a `file` param that simply hadn't
+  // caught up yet (a pending upload's client-only id) and took the pane away
+  // mid-job. Whether the panel is open now depends on `?panel=` and nothing
+  // else, so a `file` param naming something unresolvable must leave it up.
+  it('keeps the panel open for a file param that resolves to nothing', () => {
     renderHost('/audio-transcriber/convo-1?panel=transcript&file=stale-id');
 
-    fireEvent.click(screen.getByText('make-unresolvable'));
-
-    expect(mockShowToast).toHaveBeenCalledTimes(1);
-    expect(mockShowToast.mock.calls[0][0]).toMatchObject({ severity: 'error' });
-    expect(screen.queryByTestId('stub-panel')).not.toBeInTheDocument();
-    expect(screen.getByTestId('location-search').textContent).not.toContain('panel=');
-    expect(screen.getByTestId('location-search').textContent).not.toContain('file=');
+    expect(screen.getByTestId('stub-panel')).toBeInTheDocument();
+    expect(screen.getByText('fileId: stale-id')).toBeInTheDocument();
+    expect(screen.getByTestId('location-search').textContent).toContain('panel=transcript');
   });
 
   // Real bug this guards: the desktop (resizable split-pane) layout never

@@ -59,7 +59,7 @@ describe('TranscribeIntentProvider with real dialogs (stage-swap regression cove
   });
 
   it('multi-channel accept -> real options dialog -> confirm actually resolves "transcribe"', async () => {
-    mockProbeChannelCount.mockResolvedValue(2);
+    mockProbeChannelCount.mockResolvedValue(3);
     const onResult = jest.fn();
     renderHarness(onResult);
 
@@ -77,7 +77,7 @@ describe('TranscribeIntentProvider with real dialogs (stage-swap regression cove
   });
 
   it('multi-channel decline -> real options dialog -> confirm resolves "transcribe" without channel split', async () => {
-    mockProbeChannelCount.mockResolvedValue(2);
+    mockProbeChannelCount.mockResolvedValue(3);
     const onResult = jest.fn();
     renderHarness(onResult);
 

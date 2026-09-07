@@ -426,6 +426,28 @@ export type TTranscribeQueuedResponse = {
   /** Jobs ahead of this one (including one already in flight), at the
    *  moment this was enqueued - a one-time estimate, not a live counter. */
   queuePosition: number;
+  /** The new user message's id - only set by `POST /api/transcribe` (which
+   *  creates one), not `/retry`/`/retranscribe` (which re-run an existing
+   *  job with no new message). Callers use this as the `parentMessageId` for
+   *  whatever gets attached to this same conversation next, so two
+   *  recordings queued back-to-back chain as parent/child instead of landing
+   *  as siblings under the same parent (which would leave only one visible
+   *  in the message list, per LibreChat's default single-branch rendering). */
+  messageId?: string;
+};
+
+/**
+ * Response shape for `POST /:sourceFileId/cancel` - a best-effort cancel of
+ * a `queued`/`transcribing` job. `status` is always `'failed'`: cancellation
+ * reuses that terminal value (with `error: 'Cancelled by user'` and its own
+ * `cancelledAt` timestamp on the underlying record) rather than a dedicated
+ * status, so the existing `POST /:sourceFileId/retry` and every other
+ * "is this terminal?" check need no changes to also handle a cancelled job.
+ */
+export type TTranscribeCancelResponse = {
+  sourceFile: { file_id: string; filename: string };
+  status: 'failed';
+  cancelled: true;
 };
 
 /**
@@ -450,6 +472,11 @@ export type TTranscribeStatusEntry = {
   status: TTranscribeJobStatus;
   /** Server diagnosis text - set only when `status === 'failed'`. */
   error: string | null;
+  /** `status === 'failed'` because the user cancelled it (`POST
+   *  /:sourceFileId/cancel`), not because it genuinely failed - lets the UI
+   *  show "Cancelled" instead of a generic failure message without having
+   *  to string-match `error`. */
+  cancelled: boolean;
   transcriptFileId: string | null;
   /** The forensic/audit record described by `TTranscriptionDiarizationDetail` -
    *  fetch and parse its `text` field (via the regular files API) to read it;
@@ -462,6 +489,76 @@ export type TTranscribeStatusResponse = {
    *  (not found, not owned, or not a source file) is silently omitted
    *  rather than erroring the whole poll. */
   files: TTranscribeStatusEntry[];
+};
+
+/**
+ * One recording attached to a conversation, as the single read model every
+ * consumer - retrieval, the transcript panel, the in-chat card - answers
+ * "does this conversation have a queryable transcript?" from.
+ *
+ * Derived entirely from the `File` collection, which already carries
+ * `conversationId` on both the source audio and its transcript. Nothing here
+ * is read from `Conversation.files[]`: that array is a denormalized pointer
+ * list maintained for general agent file resolution, and deriving transcript
+ * state from it is what let a client cache that had never been refetched
+ * since job completion decide the conversation had no transcript at all.
+ */
+export type TConversationTranscript = {
+  /** The source audio File's id - the stable identity for this recording
+   *  from upload through to answer. Its derived files are always
+   *  `${sourceFileId}-transcript` and `${sourceFileId}-diarization-detail`. */
+  sourceFileId: string;
+  /** What to show the user for this recording. The original upload's name
+   *  when it was preserved, else the stored (ffmpeg-extracted) filename. */
+  displayName: string;
+  /** Absent until the job produces segments - a recording that is `queued`
+   *  or `transcribing` legitimately has no transcript file yet, and callers
+   *  must render that as in-progress rather than as absence. */
+  transcriptFileId: string | null;
+  diarizationDetailFileId: string | null;
+  /** Absent only for a source file whose transcription job record is
+   *  missing entirely (pre-migration records). */
+  jobStatus: TTranscribeJobStatus | null;
+  /** Server diagnosis text - set only when `jobStatus === 'failed'`. */
+  jobError: string | null;
+  /** `jobStatus === 'failed'` because the user cancelled, not a real
+   *  failure - mirrors `TTranscribeStatusEntry.cancelled`. */
+  cancelled: boolean;
+  /** This transcript's RAG index state. `null` when there is no transcript
+   *  file yet, or for legacy records written before the field existed. */
+  indexStatus: TTranscriptIndexStatus | null;
+  /** THE authoritative answer, and the only field retrieval is allowed to
+   *  gate on. True iff a transcript file exists and its RAG index reflects
+   *  the current transcript text - not merely that some embed once
+   *  succeeded. See `isTranscriptQueryable`. */
+  isQueryable: boolean;
+  /** Why `isQueryable` is false, so a caller can tell the user something
+   *  true instead of "no files found" - `null` when it is true. */
+  unqueryableReason: TTranscriptUnqueryableReason | null;
+};
+
+/** Why a recording cannot currently be searched. Distinguishes "not yet"
+ *  from "tried and failed" from "the text moved on since it was indexed",
+ *  because those are three different things to tell a user and only the
+ *  middle one is a fault. */
+export type TTranscriptUnqueryableReason =
+  /** The job has not produced a transcript yet (`queued`/`transcribing`). */
+  | 'in_progress'
+  /** The job failed or was cancelled; no transcript will exist for it. */
+  | 'job_failed'
+  /** A transcript exists but was never submitted for embedding. */
+  | 'not_indexed'
+  /** Embedding was attempted and failed - the recoverable fault case. */
+  | 'index_failed'
+  /** The transcript has been edited since it was last indexed, so the index
+   *  would answer from superseded text. */
+  | 'stale_index';
+
+export type TConversationTranscriptsResponse = {
+  /** Every recording on the conversation, oldest first. Empty for a
+   *  conversation that has never had one - which is the common case, and is
+   *  not an error. */
+  transcripts: TConversationTranscript[];
 };
 
 /** One append-only correction event against an Audio Transcriber transcript -

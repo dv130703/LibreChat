@@ -425,6 +425,47 @@ describe('AttachFileMenu', () => {
     });
   });
 
+  describe(
+    'forwards setConversation/latestMessageId to useFileHandlingNoChatContext - regression: ' +
+      "this component (the real composer's own attach entry point for every non-assistants " +
+      'endpoint) built its `fileState` with only `{files, setFiles, setFilesLoading, ' +
+      'conversation}`, silently dropping `setConversation`/`latestMessageId` even though ' +
+      "`useFileHandling.ts`'s transcribe flow depends on both: `setConversation` to update the " +
+      'shared conversation atom once a transcribe-created conversation is confirmed server-side, ' +
+      "and `latestMessageId` to correctly parent a new attach onto the conversation's current " +
+      'branch. Silently `undefined` for both meant the atom never left its "brand-new, unsent ' +
+      'draft" shape, so every subsequent attach to the SAME conversation still read it as ' +
+      '`Constants.NEW_CONVO` and minted an entirely new, separate conversation instead of adding ' +
+      'a second recording to the existing one - the first recording did not actually disappear, ' +
+      'the app just left the conversation containing it entirely.',
+    () => {
+      it('passes setConversation and latestMessageId straight through', () => {
+        setupMocks();
+        const setConversation = jest.fn();
+        renderMenu({
+          endpointType: EModelEndpoint.custom,
+          setConversation,
+          latestMessageId: 'leaf-message-id',
+        });
+
+        expect(mockUseFileHandlingNoChatContext).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({ setConversation, latestMessageId: 'leaf-message-id' }),
+        );
+      });
+
+      it('still works (as undefined) when the caller omits them', () => {
+        setupMocks();
+        renderMenu({ endpointType: EModelEndpoint.custom });
+
+        expect(mockUseFileHandlingNoChatContext).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({ setConversation: undefined, latestMessageId: undefined }),
+        );
+      });
+    },
+  );
+
   describe('Edge Cases', () => {
     it('handles undefined endpoint and provider gracefully', () => {
       setupMocks();

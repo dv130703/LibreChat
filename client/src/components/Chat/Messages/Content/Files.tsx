@@ -1,7 +1,7 @@
 import { useMemo, useState, useCallback, memo } from 'react';
 import type { TFile, TMessage } from 'librechat-data-provider';
 import FileContainer from '~/components/Chat/Input/Files/FileContainer';
-import { useTranscribeStatusQuery } from '~/data-provider';
+import { useConversationTranscriptsQuery } from '~/data-provider';
 import { isAudioOrVideoMimeType } from '~/utils';
 import TranscriptCard from './Parts/TranscriptCard';
 import FilePreviewDialog from './FilePreviewDialog';
@@ -16,41 +16,40 @@ const Files = ({ message }: { message?: TMessage }) => {
     return message?.files?.filter((file) => isAudioOrVideoMimeType(file.type)) || [];
   }, [message?.files]);
 
-  const audioVideoFileIds = useMemo(
-    () => audioVideoFiles.map((file) => file.file_id ?? '').filter(Boolean),
-    [audioVideoFiles],
+  /** One query for the whole conversation, shared with the transcript panel
+   *  and the composer's stop affordance - the single read model that answers
+   *  which recordings exist and what state each is in. This used to be a
+   *  second, message-scoped status poll, which meant a recording's chip and
+   *  its panel could disagree, and which returned nothing for the first
+   *  round trip so an audio/video file rendered briefly as a plain chip
+   *  before becoming a `TranscriptCard`. That flash was half of defect 1. */
+  const { data: transcriptsData } = useConversationTranscriptsQuery(
+    message?.conversationId ?? undefined,
   );
-  /** One batched poll for every audio/video file this message has, rather
-   *  than one per `TranscriptCard` - `useTranscribeStatusQuery`'s cache key
-   *  includes the full id list, so per-card queries wouldn't dedupe against
-   *  this one anyway. A source file with no entry here was attached as a
-   *  plain file (declined transcription, or the endpoint accepted it
-   *  natively) - see transcription/ARCHITECTURE.md §6.1/§6.4. */
-  const { data: transcribeStatusData } = useTranscribeStatusQuery(audioVideoFileIds);
 
-  /** Audio/video attached via composer transcription - rendered as a
-   *  status-polling `TranscriptCard` instead of the plain `FileContainer`
-   *  every other non-image file gets. Until the status poll above resolves,
-   *  treated as "not a transcription job" (falls through to `FileContainer`)
-   *  rather than flashing a spinner for files that never were one - it
-   *  self-corrects to `TranscriptCard` within one round trip for files that
-   *  actually are. */
-  const transcribableFiles = useMemo(() => {
-    if (!transcribeStatusData) {
-      return [];
-    }
-    const jobFileIds = new Set(transcribeStatusData.files.map((entry) => entry.file_id));
-    return audioVideoFiles.filter((file) => jobFileIds.has(file.file_id ?? ''));
-  }, [audioVideoFiles, transcribeStatusData]);
+  /** Keyed by source file id so a message carrying several recordings pairs
+   *  each with its own record in one pass. */
+  const recordsBySourceId = useMemo(
+    () => new Map((transcriptsData?.transcripts ?? []).map((entry) => [entry.sourceFileId, entry])),
+    [transcriptsData],
+  );
+
+  /** Audio/video attached via composer transcription. Anything else - a
+   *  recording attached as a plain file because the user declined
+   *  transcription, or because the endpoint reads audio natively - has no
+   *  record here and falls through to the ordinary chip. */
+  const transcribableFiles = useMemo(
+    () => audioVideoFiles.filter((file) => recordsBySourceId.has(file.file_id ?? '')),
+    [audioVideoFiles, recordsBySourceId],
+  );
 
   const otherFiles = useMemo(() => {
-    const transcribableIds = new Set(transcribableFiles.map((file) => file.file_id));
     return (
       message?.files?.filter(
-        (file) => !file.type?.startsWith('image/') && !transcribableIds.has(file.file_id),
+        (file) => !file.type?.startsWith('image/') && !recordsBySourceId.has(file.file_id ?? ''),
       ) || []
     );
-  }, [message?.files, transcribableFiles]);
+  }, [message?.files, recordsBySourceId]);
 
   const [selectedFile, setSelectedFile] = useState<Partial<TFile> | null>(null);
 
@@ -64,11 +63,7 @@ const Files = ({ message }: { message?: TMessage }) => {
     <>
       {transcribableFiles.length > 0 &&
         transcribableFiles.map((file) => (
-          <TranscriptCard
-            key={file.file_id}
-            file={file}
-            jobStatus={transcribeStatusData?.files.find((entry) => entry.file_id === file.file_id)}
-          />
+          <TranscriptCard key={file.file_id} record={recordsBySourceId.get(file.file_id ?? '')!} />
         ))}
       {otherFiles.length > 0 &&
         otherFiles.map((file) => (

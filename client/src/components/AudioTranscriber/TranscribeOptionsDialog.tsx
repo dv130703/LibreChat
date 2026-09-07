@@ -147,7 +147,7 @@ function DropdownField({
             aria-label={ariaLabel}
             className={cn(
               'flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-border-medium px-3 text-xs font-semibold text-text-secondary transition-colors hover:border-border-heavy hover:text-text-primary',
-              open && 'border-blue-500 ring-2 ring-blue-500/20 dark:border-blue-400',
+              open && 'border-green-500 ring-2 ring-green-500/20 dark:border-green-400',
             )}
           >
             <span className="truncate">{selected?.label}</span>
@@ -189,7 +189,7 @@ function DropdownField({
                 className={cn(
                   'flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors duration-150 ease-out animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both',
                   option.value === value
-                    ? 'bg-blue-500/10 font-bold text-blue-600 dark:text-blue-300'
+                    ? 'bg-green-500/10 font-bold text-green-600 dark:text-green-300'
                     : 'text-text-primary hover:bg-surface-hover',
                 )}
               >
@@ -249,21 +249,25 @@ function TermChipList({
   emptyLabel: string;
 }) {
   if (tags.length === 0) {
-    return <p className="text-xs italic text-text-tertiary">{emptyLabel}</p>;
+    return (
+      <div className="min-h-32 flex-1 overflow-y-auto">
+        <p className="text-xs italic text-text-tertiary">{emptyLabel}</p>
+      </div>
+    );
   }
   return (
-    <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto pr-1">
+    <div className="flex min-h-32 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto pr-1">
       {tags.map((tag, index) => (
         <span
           key={`${tag}-${index}`}
-          className="flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 py-1 pl-3 pr-1.5 text-xs font-medium text-blue-600 dark:border-blue-400/20 dark:text-blue-300"
+          className="flex items-center gap-1.5 rounded-full border border-green-500/20 bg-green-500/10 py-1 pl-3 pr-1.5 text-xs font-medium text-green-600 dark:border-green-400/20 dark:text-green-300"
         >
           {tag}
           <button
             type="button"
             onClick={() => onRemove(index)}
             aria-label={removeLabel(tag)}
-            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-blue-600/70 transition-colors hover:bg-blue-500/20 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 dark:text-blue-300/70 dark:hover:text-blue-200"
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-green-600/70 transition-colors hover:bg-green-500/20 hover:text-green-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40 dark:text-green-300/70 dark:hover:text-green-200"
           >
             <X className="h-3 w-3" aria-hidden="true" />
           </button>
@@ -466,16 +470,20 @@ export default function TranscribeOptionsDialog({
     <OGDialog open={isOpen} onOpenChange={handleOpenChange}>
       <OGDialogTemplate
         title={localize('com_ui_transcribe_options_title')}
-        description={step === 1 ? localize('com_ui_transcribe_options_description') : ''}
-        className="w-11/12 sm:w-[28rem]"
-        mainClassName="min-w-0"
+        description={localize(
+          step === 1
+            ? 'com_ui_transcribe_options_description'
+            : 'com_ui_transcribe_options_terms_description',
+        )}
+        className="w-11/12 border border-solid border-border-medium bg-surface-tertiary sm:w-[28rem]"
+        mainClassName="min-w-0 min-h-[36rem]"
         showCloseButton
         showCancelButton={false}
         main={
-          <div className="flex w-full min-w-0 flex-col gap-5">
+          <div className="flex h-full w-full min-w-0 flex-col gap-5">
             {step === 1 ? (
               <>
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-5">
                   <DropdownField
                     id="transcribe-option-model"
                     label={localize('com_ui_transcribe_options_model_label')}
@@ -522,14 +530,14 @@ export default function TranscribeOptionsDialog({
                 </div>
 
                 {channelSplitEnabled ? (
-                  <div className="flex items-center gap-2.5 rounded-lg border border-border-light bg-surface-secondary p-3 text-xs text-text-secondary">
+                  <div className="flex items-center gap-2.5 rounded-lg border border-border-light bg-surface-tertiary p-3 text-xs text-text-secondary">
                     <Users className="h-4 w-4 shrink-0" aria-hidden="true" />
                     <span>{localize('com_ui_transcribe_options_channel_split_note')}</span>
                   </div>
                 ) : (
                   diarize && (
-                    <div className="flex flex-col gap-3 rounded-lg border border-border-light bg-surface-secondary p-3">
-                      <div className="flex min-w-0 flex-col gap-1.5">
+                    <div className="flex flex-col gap-6 rounded-lg border border-border-light bg-surface-tertiary p-4">
+                      <div className="flex min-w-0 flex-col gap-2">
                         <Label
                           htmlFor="transcribe-option-speaker-count"
                           className="text-sm font-medium text-text-primary"
@@ -545,7 +553,7 @@ export default function TranscribeOptionsDialog({
                           onChange={(event) => handleSpeakerCountChange(event.target.value)}
                           placeholder={localize('com_ui_transcribe_options_speaker_count_auto')}
                           aria-label={localize('com_ui_transcribe_options_speaker_count_label')}
-                          className="h-10 w-full min-w-0 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary outline-none placeholder:text-text-secondary focus-visible:border-blue-500 focus-visible:ring-2 focus-visible:ring-blue-500/20"
+                          className="h-10 w-full min-w-0 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary outline-none placeholder:text-text-secondary focus-visible:border-green-500 focus-visible:ring-2 focus-visible:ring-green-500/20"
                         />
                         <p className="text-xs text-text-secondary">
                           {localize('com_ui_transcribe_options_speakers_hint', {
@@ -567,7 +575,7 @@ export default function TranscribeOptionsDialog({
               </>
             ) : (
               <>
-                <div className="flex min-w-0 flex-col gap-2">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
                   <Label htmlFor="transcribe-option-terms" className="text-sm font-medium">
                     {localize('com_ui_transcribe_options_terms_label')}
                   </Label>
@@ -590,7 +598,7 @@ export default function TranscribeOptionsDialog({
                       onKeyDown={handleTermKeyDown}
                       placeholder={localize('com_ui_transcribe_options_terms_placeholder')}
                       aria-label={localize('com_ui_transcribe_options_terms_label')}
-                      className="h-10 min-w-0 flex-1 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary transition-colors placeholder:text-text-secondary focus-visible:border-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20"
+                      className="h-10 min-w-0 flex-1 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary transition-colors placeholder:text-text-secondary focus-visible:border-green-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/20"
                     />
                     <Button
                       type="button"
@@ -617,7 +625,7 @@ export default function TranscribeOptionsDialog({
                           aria-label={localize('com_ui_transcribe_options_add_suggestion', {
                             0: term,
                           })}
-                          className="flex items-center gap-1 rounded-full border border-dashed border-border-medium px-2.5 py-1 text-xs text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                          className="flex items-center gap-1 rounded-full border border-dashed border-border-medium px-2.5 py-1 text-xs text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
                         >
                           <Plus className="h-3 w-3 shrink-0" aria-hidden="true" />
                           {term}
@@ -631,7 +639,7 @@ export default function TranscribeOptionsDialog({
                   <button
                     type="button"
                     onClick={() => setTermTags([])}
-                    className="self-start text-xs font-medium text-text-tertiary transition-colors hover:text-text-secondary hover:underline"
+                    className="self-end text-xs font-medium text-red-600 transition-colors hover:text-red-700 hover:underline dark:text-red-400 dark:hover:text-red-300"
                   >
                     {localize('com_ui_transcribe_options_clear_terms')}
                   </button>
@@ -655,12 +663,11 @@ export default function TranscribeOptionsDialog({
           ) : undefined
         }
         selection={
-          step === 2
-            ? {
-                selectHandler: handleConfirm,
-                selectText: localize('com_ui_transcribe_options_confirm'),
-              }
-            : undefined
+          step === 2 ? (
+            <Button variant="submit" onClick={handleConfirm}>
+              {localize('com_ui_transcribe_options_confirm')}
+            </Button>
+          ) : undefined
         }
       />
     </OGDialog>

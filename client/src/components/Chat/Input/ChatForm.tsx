@@ -1,4 +1,5 @@
 import { memo, useRef, useMemo, useEffect, useState, useCallback } from 'react';
+import type { ReactNode } from 'react';
 import { useWatch } from 'react-hook-form';
 import { TextareaAutosize } from '@librechat/client';
 import { useRecoilState, useRecoilValue, useRecoilCallback } from 'recoil';
@@ -27,7 +28,8 @@ import useAskAnswerMode from '~/hooks/Input/useAskAnswerMode';
 import AskUserQuestionPopover from './AskUserQuestionPopover';
 import { cn, getModelSpec, removeFocusRings } from '~/utils';
 import DuringRunSendButton from './DuringRunSendButton';
-import { useGetStartupConfig } from '~/data-provider';
+import { useGetStartupConfig, useCancelTranscriptionMutation } from '~/data-provider';
+import { useConversationTranscriptionStatus } from '~/hooks/AudioTranscriber/useConversationTranscriptionStatus';
 import { mainTextareaId, BadgeItem } from '~/common';
 import PendingSteerChips from './PendingSteerChips';
 import PendingQuoteChips from './PendingQuoteChips';
@@ -58,6 +60,8 @@ interface ChatFormProps {
   files: Map<string, ExtendedFile>;
   setFiles: FileSetter;
   conversation: TConversation | null;
+  setConversation?: (conversation: TConversation) => void;
+  latestMessageId?: string;
   isSubmitting: boolean;
   filesLoading: boolean;
   setFilesLoading: React.Dispatch<React.SetStateAction<boolean>>;
@@ -72,6 +76,8 @@ const ChatForm = memo(function ChatForm({
   files,
   setFiles,
   conversation,
+  setConversation,
+  latestMessageId,
   isSubmitting,
   filesLoading,
   setFilesLoading,
@@ -145,9 +151,18 @@ const ChatForm = memo(function ChatForm({
         !assistantMap?.[endpoint ?? '']?.[conversation?.assistant_id ?? '']),
     [conversation?.assistant_id, endpoint, assistantMap],
   );
+  /** A recording still uploading (before `POST /api/transcribe` has even
+   *  resolved into a real, cancellable job) - `useConversationTranscriptionStatus`
+   *  below only knows about a job that already exists server-side, so on its
+   *  own this window left the composer fully usable: free to type and send a
+   *  new message while a recording was still going up, instead of showing
+   *  the same busy/locked state a real transcription or LLM run gets. */
+  const hasPendingTranscriptionUpload = useRecoilValue(
+    store.pendingTranscriptionUploadsByConvoId(conversationId),
+  ).some((upload) => upload.status === 'uploading');
   const disableInputs = useMemo(
-    () => requiresKey || invalidAssistant,
-    [requiresKey, invalidAssistant],
+    () => requiresKey || invalidAssistant || hasPendingTranscriptionUpload,
+    [requiresKey, invalidAssistant, hasPendingTranscriptionUpload],
   );
 
   const handleContainerClick = useCallback(() => {
@@ -174,6 +189,17 @@ const ChatForm = memo(function ChatForm({
   }, []);
 
   const answerMode = useAskAnswerMode(conversationId);
+  const { isTranscribing, nonTerminalSourceFileIds } =
+    useConversationTranscriptionStatus(conversationId);
+  const cancelTranscription = useCancelTranscriptionMutation();
+  const handleCancelTranscription = useCallback(() => {
+    // Never more than one in practice (the job queue only ever runs one at a
+    // time), but a conversation can carry more than one recording - cancel
+    // every non-terminal one this button is currently standing in for.
+    nonTerminalSourceFileIds.forEach((sourceFileId) => {
+      cancelTranscription.mutate({ sourceFileId });
+    });
+  }, [nonTerminalSourceFileIds, cancelTranscription]);
 
   useAutoSave({
     files,
@@ -379,6 +405,12 @@ const ChatForm = memo(function ChatForm({
     submitButtonRef,
     setIsScrollable,
     disabled: disableInputs,
+    // Disabled for a reason that has nothing to do with a missing key -
+    // the generic fallback copy `disabled` alone would show is actively
+    // misleading here.
+    disabledPlaceholder: hasPendingTranscriptionUpload
+      ? localize('com_ui_transcript_panel_awaiting_upload')
+      : undefined,
     // The composer IS the free-form answer box while a question pause is live.
     placeholder: answerMode.active
       ? (answerMode.otherLabel ?? localize('com_ui_something_else'))
@@ -448,6 +480,41 @@ const ChatForm = memo(function ChatForm({
     ) : (
       <StopButton stop={handleStopGenerating} setShowStopButton={setShowStopButton} />
     );
+
+  /** The composer's primary action slot outside an active LLM run - a
+   *  transcription job in flight for this conversation reuses the same
+   *  stop-square affordance `duringRunSlot` uses for LLM streaming (the
+   *  composer is still "busy" from the user's point of view either way),
+   *  otherwise the ordinary send button. Computed as its own variable,
+   *  not a nested ternary in the JSX below, purely for lint-rule
+   *  readability - three mutually exclusive states read better as early
+   *  returns than as chained `? :`. */
+  let composerActionSlot: ReactNode = null;
+  if (isSubmitting && showStopButton && !answerMode.active) {
+    composerActionSlot = duringRunSlot;
+  } else if (isTranscribing || hasPendingTranscriptionUpload) {
+    composerActionSlot = (
+      <StopButton
+        stop={handleCancelTranscription}
+        setShowStopButton={() => {}}
+        label={localize('com_ui_transcribe_stop_cancel')}
+        // Nothing to cancel yet while the recording is still uploading - no
+        // real job exists server-side until that resolves.
+        disabled={!isTranscribing}
+      />
+    );
+  } else if (endpoint) {
+    composerActionSlot = (
+      <SendButton
+        ref={submitButtonRef}
+        control={methods.control}
+        hasFiles={files.size > 0}
+        disabled={
+          filesLoading || disableInputs || isNotAppendable || (isSubmitting && !answerMode.active)
+        }
+      />
+    );
+  }
 
   const baseClasses = useMemo(
     () =>
@@ -635,6 +702,8 @@ const ChatForm = memo(function ChatForm({
                 <div className="ml-2">
                   <AttachFileChat
                     conversation={conversation}
+                    setConversation={setConversation}
+                    latestMessageId={latestMessageId}
                     disableInputs={disableInputs}
                     files={files}
                     setFiles={setFiles}
@@ -672,23 +741,7 @@ const ChatForm = memo(function ChatForm({
                     isSubmitting={isSubmitting}
                   />
                 )}
-                <div className="mr-2">
-                  {isSubmitting && showStopButton && !answerMode.active
-                    ? duringRunSlot
-                    : endpoint && (
-                        <SendButton
-                          ref={submitButtonRef}
-                          control={methods.control}
-                          hasFiles={files.size > 0}
-                          disabled={
-                            filesLoading ||
-                            disableInputs ||
-                            isNotAppendable ||
-                            (isSubmitting && !answerMode.active)
-                          }
-                        />
-                      )}
-                </div>
+                <div className="mr-2">{composerActionSlot}</div>
               </div>
               {TextToSpeech && automaticPlayback && <StreamAudio index={index} />}
             </div>
@@ -710,6 +763,8 @@ function ChatFormWrapper({ index = 0, placeholder }: { index?: number; placehold
     files,
     setFiles,
     conversation,
+    setConversation,
+    latestMessageId,
     isSubmitting,
     filesLoading,
     setFilesLoading,
@@ -769,6 +824,8 @@ function ChatFormWrapper({ index = 0, placeholder }: { index?: number; placehold
       files={files}
       setFiles={setFiles}
       conversation={stableConversation}
+      setConversation={setConversation}
+      latestMessageId={latestMessageId}
       isSubmitting={isSubmitting}
       filesLoading={filesLoading}
       setFilesLoading={setFilesLoading}

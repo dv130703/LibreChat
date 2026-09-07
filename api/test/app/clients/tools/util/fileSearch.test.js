@@ -53,6 +53,36 @@ describe('fileSearch.js - tuple return validation', () => {
       expect(result[1]).toBeUndefined();
     });
 
+    it('reports unsearchable recordings instead of "no files" when there are none to query', async () => {
+      // A conversation whose only document is a recording that failed to
+      // index must not answer identically to one with nothing attached -
+      // that is what reads to the model as an error worth retrying.
+      const tool = await createFileSearchTool({
+        userId: 'user-1',
+        files: [],
+        unavailableNotice: '- Note: standup.m4a could not be indexed. do not retry file_search.',
+      });
+      const [result] = await tool.func({ query: 'what did they decide' });
+
+      expect(result).toContain('standup.m4a');
+      expect(result).toContain('do not retry');
+      expect(result).not.toContain('Instruct the user to add files');
+    });
+
+    it('still reports unsearchable recordings alongside a genuine empty result', async () => {
+      generateShortLivedToken.mockReturnValue('mock-jwt-token');
+      axios.post.mockResolvedValue({ data: [] });
+      const tool = await createFileSearchTool({
+        userId: 'user-1',
+        files: [{ file_id: 'file-1', filename: 'notes.pdf' }],
+        unavailableNotice: '- Note: standup.m4a could not be indexed.',
+      });
+      const [result] = await tool.func({ query: 'anything' });
+
+      expect(result).toContain('No content found in the files');
+      expect(result).toContain('standup.m4a');
+    });
+
     it('should return tuple when JWT token generation fails', async () => {
       generateShortLivedToken.mockReturnValue(null);
 
@@ -169,7 +199,11 @@ describe('fileSearch.js - tuple return validation', () => {
             {
               page_content:
                 '[00:42.0-00:46.5] Speaker 1: We agreed on the payment terms.\n[00:46.5-00:50.0] Speaker 2: Yes, that sounds right.',
-              metadata: { source: '/path/to/transcript.md', file_id: 'transcript-1', chunk_index: 3 },
+              metadata: {
+                source: '/path/to/transcript.md',
+                file_id: 'transcript-1',
+                chunk_index: 3,
+              },
             },
             0.1,
           ],

@@ -38,6 +38,7 @@ export default function useTextarea({
   submitButtonRef,
   setIsScrollable,
   disabled = false,
+  disabledPlaceholder,
   placeholder,
   allowSubmitWhileGenerating = false,
   onDuringRunModifier,
@@ -46,6 +47,11 @@ export default function useTextarea({
   submitButtonRef: React.RefObject<HTMLButtonElement>;
   setIsScrollable: React.Dispatch<React.SetStateAction<boolean>>;
   disabled?: boolean;
+  /** Overrides the generic "requires key" copy `disabled` normally falls
+   *  back to - the composer is also disabled for reasons that have nothing
+   *  to do with a missing key (a recording still uploading), where that
+   *  copy would be actively misleading. */
+  disabledPlaceholder?: string;
   placeholder?: string;
   /** Lets Enter submit during a run (during-run steering/queuing routes it). */
   allowSubmitWhileGenerating?: boolean;
@@ -115,7 +121,7 @@ export default function useTextarea({
 
     const getPlaceholderText = () => {
       if (disabled) {
-        return localize('com_endpoint_config_placeholder');
+        return disabledPlaceholder ?? localize('com_endpoint_config_placeholder');
       }
       const currentEndpoint = conversation?.endpoint ?? '';
       const currentAgentId = conversation?.agent_id ?? '';
@@ -170,6 +176,7 @@ export default function useTextarea({
     isAgent,
     localize,
     disabled,
+    disabledPlaceholder,
     getSender,
     agentsMap,
     entityName,

@@ -354,6 +354,320 @@ describe('File Methods', () => {
     });
   });
 
+  describe('getConversationTranscripts', () => {
+    const conversationId = 'conv-transcripts';
+
+    /** Writes the real three-file shape `POST /api/transcribe` and the job
+     *  produce, so these exercise the actual id scheme and field layout
+     *  rather than a convenient stand-in. */
+    const seedRecording = async (
+      userId: mongoose.Types.ObjectId,
+      sourceFileId: string,
+      {
+        jobStatus = 'ready',
+        jobError,
+        cancelledAt,
+        transcript,
+        diarizationDetail = false,
+        convoId = conversationId,
+      }: {
+        jobStatus?: string;
+        jobError?: string;
+        cancelledAt?: Date;
+        transcript?: {
+          embedded?: boolean;
+          indexStatus?: string;
+          indexVersion?: number | null;
+          transcriptVersion?: number;
+        };
+        diarizationDetail?: boolean;
+        convoId?: string;
+      } = {},
+    ) => {
+      await fileMethods.createFile({
+        file_id: sourceFileId,
+        user: userId,
+        conversationId: convoId,
+        context: FileContext.transcript_rag,
+        filename: 'getvid.m4a',
+        filepath: `/uploads/${sourceFileId}`,
+        type: 'audio/mp4',
+        bytes: 1000,
+        transcription: {
+          status: jobStatus,
+          jobId: uuidv4(),
+          instanceId: 'test',
+          heartbeatAt: new Date(),
+          ...(jobError ? { error: jobError } : {}),
+          ...(cancelledAt ? { cancelledAt } : {}),
+        },
+      } as never);
+
+      if (transcript) {
+        await fileMethods.createFile({
+          file_id: `${sourceFileId}-transcript`,
+          user: userId,
+          conversationId: convoId,
+          context: FileContext.transcript_rag,
+          sourceFileId,
+          filename: 'getvid.mp4-transcript.md',
+          filepath: `transcript://${sourceFileId}-transcript`,
+          type: 'text/markdown',
+          bytes: 500,
+          ...transcript,
+        } as never);
+      }
+
+      if (diarizationDetail) {
+        await fileMethods.createFile({
+          file_id: `${sourceFileId}-diarization-detail`,
+          user: userId,
+          conversationId: convoId,
+          context: FileContext.transcript_diarization_detail,
+          filename: 'getvid.mp4-diarization-detail.json',
+          filepath: `transcript-diarization-detail://${sourceFileId}`,
+          type: 'application/json',
+          bytes: 2000,
+          text: '{"big":"blob"}',
+          embedded: false,
+        } as never);
+      }
+    };
+
+    it('pairs all three files of a recording and reports it queryable', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const sourceFileId = uuidv4();
+      await seedRecording(userId, sourceFileId, {
+        transcript: {
+          embedded: true,
+          indexStatus: 'indexed',
+          indexVersion: 1,
+          transcriptVersion: 1,
+        },
+        diarizationDetail: true,
+      });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        sourceFileId,
+        displayName: 'getvid.m4a',
+        transcriptFileId: `${sourceFileId}-transcript`,
+        diarizationDetailFileId: `${sourceFileId}-diarization-detail`,
+        jobStatus: 'ready',
+        indexStatus: 'indexed',
+        isQueryable: true,
+        unqueryableReason: null,
+      });
+    });
+
+    it('never reads the diarization-detail blob into memory', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const sourceFileId = uuidv4();
+      await seedRecording(userId, sourceFileId, {
+        transcript: {
+          embedded: true,
+          indexStatus: 'indexed',
+          indexVersion: 1,
+          transcriptVersion: 1,
+        },
+        diarizationDetail: true,
+      });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      // The detail record inlines up to 14MB in `text`; the read model must
+      // project it away rather than pull it per conversation load.
+      expect(JSON.stringify(result)).not.toContain('big');
+    });
+
+    it('returns a partial record while the job is still running', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const sourceFileId = uuidv4();
+      await seedRecording(userId, sourceFileId, { jobStatus: 'transcribing' });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        transcriptFileId: null,
+        jobStatus: 'transcribing',
+        isQueryable: false,
+        unqueryableReason: 'in_progress',
+      });
+    });
+
+    it('distinguishes a failed job from an unindexed transcript', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const failedId = uuidv4();
+      await seedRecording(userId, failedId, { jobStatus: 'failed', jobError: 'ffmpeg exploded' });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result[0]).toMatchObject({
+        jobStatus: 'failed',
+        jobError: 'ffmpeg exploded',
+        cancelled: false,
+        unqueryableReason: 'job_failed',
+      });
+    });
+
+    it('reports a cancelled job as cancelled, not as a failure', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const sourceFileId = uuidv4();
+      await seedRecording(userId, sourceFileId, {
+        jobStatus: 'failed',
+        jobError: 'Cancelled by user',
+        cancelledAt: new Date(),
+      });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result[0].cancelled).toBe(true);
+    });
+
+    it('reports a transcript revised since indexing as stale, not queryable', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const sourceFileId = uuidv4();
+      // The exact shape the old `embedded: true` gate got wrong.
+      await seedRecording(userId, sourceFileId, {
+        transcript: {
+          embedded: true,
+          indexStatus: 'stale',
+          indexVersion: 1,
+          transcriptVersion: 2,
+        },
+      });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result[0]).toMatchObject({
+        isQueryable: false,
+        unqueryableReason: 'stale_index',
+      });
+    });
+
+    it('reports a failed embed as index_failed', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const sourceFileId = uuidv4();
+      await seedRecording(userId, sourceFileId, {
+        transcript: {
+          embedded: false,
+          indexStatus: 'index_failed',
+          indexVersion: null,
+          transcriptVersion: 1,
+        },
+      });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result[0]).toMatchObject({
+        isQueryable: false,
+        unqueryableReason: 'index_failed',
+      });
+    });
+
+    it('keeps legacy transcripts with no indexStatus queryable', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const sourceFileId = uuidv4();
+      await seedRecording(userId, sourceFileId, { transcript: { embedded: true } });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result[0].isQueryable).toBe(true);
+    });
+
+    it('returns every recording in a conversation, not just the first', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const first = uuidv4();
+      const second = uuidv4();
+      await seedRecording(userId, first, {
+        transcript: {
+          embedded: true,
+          indexStatus: 'indexed',
+          indexVersion: 1,
+          transcriptVersion: 1,
+        },
+      });
+      await seedRecording(userId, second, { jobStatus: 'queued' });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result).toHaveLength(2);
+      expect(result.map((entry) => entry.sourceFileId).sort()).toEqual([first, second].sort());
+    });
+
+    it('returns an empty list for a conversation that never had one', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const result = await fileMethods.getConversationTranscripts('no-such-convo', {
+        userId: userId.toString(),
+      });
+      expect(result).toEqual([]);
+    });
+
+    it("does not leak another user's recordings from the same conversation", async () => {
+      const ownerId = new mongoose.Types.ObjectId();
+      const victimId = new mongoose.Types.ObjectId();
+      const ownerFileId = uuidv4();
+      const victimFileId = uuidv4();
+      await runAsSystem(() =>
+        seedRecording(ownerId, ownerFileId, { transcript: { embedded: true } }),
+      );
+      await runAsSystem(() =>
+        seedRecording(victimId, victimFileId, { transcript: { embedded: true } }),
+      );
+
+      const result = await runAsSystem(() =>
+        fileMethods.getConversationTranscripts(conversationId, { userId: ownerId.toString() }),
+      );
+
+      expect(result).toHaveLength(1);
+      expect(result[0].sourceFileId).toBe(ownerFileId);
+    });
+
+    it('ignores non-transcript files attached to the same conversation', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const sourceFileId = uuidv4();
+      await seedRecording(userId, sourceFileId, { transcript: { embedded: true } });
+      await fileMethods.createFile({
+        file_id: uuidv4(),
+        user: userId,
+        conversationId,
+        filename: 'notes.pdf',
+        filepath: '/uploads/notes.pdf',
+        type: 'application/pdf',
+        bytes: 100,
+        embedded: true,
+      });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0].sourceFileId).toBe(sourceFileId);
+    });
+  });
+
   describe('getToolFilesByIds', () => {
     it('should retrieve files for file_search tool (embedded files)', async () => {
       const userId = new mongoose.Types.ObjectId();
@@ -384,6 +698,95 @@ describe('File Methods', () => {
 
       expect(files).toHaveLength(1);
       expect(files[0].file_id).toBe(embeddedFileId);
+    });
+
+    it('excludes a transcript whose index no longer reflects its text', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const currentId = uuidv4();
+      const staleId = uuidv4();
+
+      // Both were embedded once, so the old `embedded: true` gate returned
+      // both. Only the one whose index is current may be searched.
+      await fileMethods.createFile({
+        file_id: `${currentId}-transcript`,
+        user: userId,
+        sourceFileId: currentId,
+        context: FileContext.transcript_rag,
+        filename: 'current-transcript.md',
+        filepath: `transcript://${currentId}`,
+        type: 'text/markdown',
+        bytes: 10,
+        embedded: true,
+        indexStatus: 'indexed',
+        indexVersion: 1,
+        transcriptVersion: 1,
+      } as never);
+      await fileMethods.createFile({
+        file_id: `${staleId}-transcript`,
+        user: userId,
+        sourceFileId: staleId,
+        context: FileContext.transcript_rag,
+        filename: 'stale-transcript.md',
+        filepath: `transcript://${staleId}`,
+        type: 'text/markdown',
+        bytes: 10,
+        embedded: true,
+        indexStatus: 'stale',
+        indexVersion: 1,
+        transcriptVersion: 2,
+      } as never);
+
+      const files = await fileMethods.getToolFilesByIds(
+        [`${currentId}-transcript`, `${staleId}-transcript`],
+        new Set([EToolResources.file_search]),
+      );
+
+      expect(files).toHaveLength(1);
+      expect(files[0].file_id).toBe(`${currentId}-transcript`);
+    });
+
+    it('keeps legacy transcripts with no indexStatus searchable', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const legacyId = uuidv4();
+      await fileMethods.createFile({
+        file_id: `${legacyId}-transcript`,
+        user: userId,
+        sourceFileId: legacyId,
+        context: FileContext.transcript_rag,
+        filename: 'legacy-transcript.md',
+        filepath: `transcript://${legacyId}`,
+        type: 'text/markdown',
+        bytes: 10,
+        embedded: true,
+      } as never);
+
+      const files = await fileMethods.getToolFilesByIds(
+        [`${legacyId}-transcript`],
+        new Set([EToolResources.file_search]),
+      );
+
+      expect(files).toHaveLength(1);
+    });
+
+    it('leaves non-transcript embedded files on their existing gate', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const docId = uuidv4();
+      await fileMethods.createFile({
+        file_id: docId,
+        user: userId,
+        filename: 'report.pdf',
+        filepath: '/uploads/report.pdf',
+        type: 'application/pdf',
+        bytes: 10,
+        embedded: true,
+      });
+
+      const files = await fileMethods.getToolFilesByIds(
+        [docId],
+        new Set([EToolResources.file_search]),
+      );
+
+      expect(files).toHaveLength(1);
     });
 
     it('should retrieve files for context tool', async () => {

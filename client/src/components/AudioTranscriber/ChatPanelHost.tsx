@@ -7,9 +7,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
   useMediaQuery,
-  useToastContext,
 } from '@librechat/client';
-import { NotificationSeverity } from '~/common';
 import { useLocalize } from '~/hooks';
 import { ChatPanelHostContext } from './panelHostContext';
 import type { PanelComponentProps } from './panelHostContext';
@@ -56,7 +54,6 @@ export default function ChatPanelHost({
   children: ReactNode;
 }) {
   const localize = useLocalize();
-  const { showToast } = useToastContext();
   const isSmallScreen = useMediaQuery(MOBILE_BREAKPOINT);
   const [searchParams, setSearchParams] = useSearchParams();
   const [headerSlot, setHeaderSlot] = useState<ReactNode>(null);
@@ -66,7 +63,7 @@ export default function ChatPanelHost({
   const PanelComponent = isPanelType(panelParam) ? PANELS[panelParam] : null;
 
   /**
-   * `closePanel`/`handleResolved`/`handleUnresolvable` are handed to
+   * `closePanel`/`handleResolved` are handed to
    * `PanelComponent` as props, and that component is memoized (see
    * `TranscriptPanel`'s own comment) specifically so this host's re-renders
    * don't cascade into re-rendering it unnecessarily - but memoization only
@@ -80,12 +77,12 @@ export default function ChatPanelHost({
    * repeat (this is exactly what happened before this fix - "Maximum update
    * depth exceeded" in `ChatPanelHost.spec.tsx`). Reading everything through
    * a ref updated on every render, instead of through the closure `useCallback`
-   * would otherwise capture, keeps these three callbacks referentially
+   * would otherwise capture, keeps both callbacks referentially
    * identical for the component's entire lifetime regardless of what
    * upstream hooks decide to do with their own return values.
    */
-  const latest = useRef({ setSearchParams, showToast, localize, fileParam });
-  latest.current = { setSearchParams, showToast, localize, fileParam };
+  const latest = useRef({ setSearchParams, fileParam });
+  latest.current = { setSearchParams, fileParam };
 
   const closePanel = useCallback(() => {
     latest.current.setSearchParams(
@@ -116,15 +113,6 @@ export default function ChatPanelHost({
     );
   }, []);
 
-  const handleUnresolvable = useCallback(() => {
-    latest.current.showToast({
-      message: latest.current.localize('com_ui_transcript_panel_unavailable'),
-      severity: NotificationSeverity.ERROR,
-      showIcon: true,
-    });
-    closePanel();
-  }, [closePanel]);
-
   const contextValue = useMemo(() => ({ setHeaderSlot }), []);
   const isPanelOpen = PanelComponent != null;
 
@@ -140,7 +128,6 @@ export default function ChatPanelHost({
       conversationId={conversationId}
       fileId={fileParam}
       onResolved={handleResolved}
-      onUnresolvable={handleUnresolvable}
       onClose={closePanel}
     />
   );

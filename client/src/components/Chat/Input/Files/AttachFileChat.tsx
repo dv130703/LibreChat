@@ -18,12 +18,16 @@ import AttachFile from './AttachFile';
 function AttachFileChat({
   disableInputs,
   conversation,
+  setConversation,
+  latestMessageId,
   files,
   setFiles,
   setFilesLoading,
 }: {
   disableInputs: boolean;
   conversation: TConversation | null;
+  setConversation?: (conversation: TConversation) => void;
+  latestMessageId?: string;
   files: Map<string, ExtendedFile>;
   setFiles: FileSetter;
   setFilesLoading: React.Dispatch<React.SetStateAction<boolean>>;
@@ -95,6 +99,8 @@ function AttachFileChat({
         setFiles={setFiles}
         setFilesLoading={setFilesLoading}
         conversation={conversation}
+        setConversation={setConversation}
+        latestMessageId={latestMessageId}
       />
     );
   } else if ((isAgents || endpointSupportsFiles) && !isUploadDisabled) {
@@ -110,6 +116,8 @@ function AttachFileChat({
         setFiles={setFiles}
         setFilesLoading={setFilesLoading}
         conversation={conversation}
+        setConversation={setConversation}
+        latestMessageId={latestMessageId}
       />
     );
   }

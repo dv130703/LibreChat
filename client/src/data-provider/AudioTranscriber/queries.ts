@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { QueryKeys, dataService } from 'librechat-data-provider';
+import { Constants, QueryKeys, dataService } from 'librechat-data-provider';
 import type { QueryObserverResult, UseQueryOptions } from '@tanstack/react-query';
 import type {
   TTranscribeConfig,
   TTranscriptCorrection,
   TTranscribeStatusResponse,
   TTranscribeAudioTokenResponse,
+  TConversationTranscriptsResponse,
 } from 'librechat-data-provider';
 
 /** Every correction event recorded against a transcript, chronological - the
@@ -22,6 +23,38 @@ export const useTranscriptCorrectionsQuery = (
     {
       ...config,
       enabled: !!transcriptFileId && !!conversationId && (config?.enabled ?? true),
+    },
+  );
+};
+
+/**
+ * Every recording on a conversation plus, per recording, whether its
+ * transcript is searchable right now - the one read model the UI derives
+ * transcript state from.
+ *
+ * Polls on the same cadence as the status query while any recording is
+ * still mid-job, because `isQueryable` only becomes true after BOTH the job
+ * and its RAG embed have finished, which is strictly later than the job
+ * status reaching `ready`. Stops once every recording has settled one way
+ * or the other, so a conversation with nothing in flight costs one request.
+ */
+export const useConversationTranscriptsQuery = (
+  conversationId: string | undefined,
+  config?: UseQueryOptions<TConversationTranscriptsResponse>,
+): QueryObserverResult<TConversationTranscriptsResponse> => {
+  return useQuery<TConversationTranscriptsResponse>(
+    [QueryKeys.conversationTranscripts, conversationId],
+    () => dataService.getConversationTranscripts(conversationId ?? ''),
+    {
+      refetchOnWindowFocus: false,
+      refetchInterval: (data) =>
+        data?.transcripts.some((entry) => entry.unqueryableReason === 'in_progress') ? 3000 : false,
+      ...config,
+      enabled:
+        conversationId != null &&
+        conversationId !== '' &&
+        conversationId !== Constants.NEW_CONVO &&
+        (config?.enabled ?? true),
     },
   );
 };

@@ -820,9 +820,24 @@ class BaseClient {
 
     if (this.options.attachments) {
       try {
-        saveOptions.files = this.options.attachments.map((attachments) => attachments.file_id);
+        const attachmentFileIds = this.options.attachments.map(
+          (attachments) => attachments.file_id,
+        );
+        // Adds each attachment's file id onto the conversation's own `files`
+        // list ($addToSet - same primitive `addConvoFile` already uses for a
+        // file discovered too late for this snapshot) rather than replacing
+        // the list outright. `saveOptions.files` used to be `$set` wholesale
+        // via `saveConvo`'s blanket update, which silently erased every file
+        // from EARLIER turns - a previously transcribed recording, its
+        // transcript - the instant a turn's own attachment list didn't
+        // happen to include them (asking the agent to summarize, or any
+        // turn that activates a tool with no, or different, attachments of
+        // its own left `this.options.attachments` empty or unrelated).
+        await Promise.all(
+          attachmentFileIds.map((file_id) => db.addConvoFile(conversationId, file_id)),
+        );
       } catch (error) {
-        logger.error('[BaseClient] Error mapping attachments for conversation', error);
+        logger.error('[BaseClient] Error adding attachments to conversation', error);
       }
     }
 

@@ -12,12 +12,16 @@ const AttachFile = ({
   setFiles,
   setFilesLoading,
   conversation,
+  setConversation,
+  latestMessageId,
 }: {
   disabled?: boolean | null;
   files: Map<string, ExtendedFile>;
   setFiles: FileSetter;
   setFilesLoading: React.Dispatch<React.SetStateAction<boolean>>;
   conversation: TConversation | null;
+  setConversation?: (conversation: TConversation) => void;
+  latestMessageId?: string;
 }) => {
   const localize = useLocalize();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -30,6 +34,8 @@ const AttachFile = ({
     setFiles,
     setFilesLoading,
     conversation,
+    setConversation,
+    latestMessageId,
   });
 
   return (

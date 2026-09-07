@@ -35,6 +35,14 @@ const file: Schema<IMongoFile> = new Schema(
       type: String,
       required: true,
     },
+    /** Audio Transcriber: the name of the file the user actually chose.
+     *  `filename` holds the stored artifact's name, which for a recording is
+     *  the ffmpeg-extracted audio track (`clip.m4a`) and not the upload
+     *  (`clip.mp4`) - so without this the chip's label visibly changed the
+     *  instant the real message replaced the upload placeholder. */
+    originalFilename: {
+      type: String,
+    },
     filepath: {
       type: String,
       required: true,
@@ -80,6 +88,12 @@ const file: Schema<IMongoFile> = new Schema(
           heartbeatAt: { type: Date, required: true },
           startedAt: { type: Date },
           completedAt: { type: Date },
+          // Set only when `status: 'failed'` was reached via a user-initiated
+          // `POST /:sourceFileId/cancel`, not a genuine failure - the one
+          // thing distinguishing the two once they share the same status
+          // value (see the route's own comment on why it reuses `'failed'`
+          // instead of adding a new enum value).
+          cancelledAt: { type: Date },
           error: { type: String },
           // Not `required` despite IFileTranscriptionJob's comment on why:
           // an empty `{}` (every option left at default, or a migrated

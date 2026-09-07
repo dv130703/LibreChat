@@ -86,6 +86,8 @@ export * from './transcription/evidence';
 export * from './transcription/interviewDocx';
 export * from './transcription/meetingMinutesDocx';
 export * from './transcription/meta';
+export * from './transcription/tools';
+export * from './endpoints/ollama/context';
 /* types */
 export type * from './mcp/types';
 export type * from './flow/types';

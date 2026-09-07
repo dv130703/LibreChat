@@ -153,6 +153,34 @@ describe('getReasoningKey', () => {
     expect(reasoningKey).toBe('reasoning');
   });
 
+  it('reads Ollama thinking tokens from `reasoning`, by endpoint name', () => {
+    // Ollama's OpenAI-compatible layer emits `delta.reasoning`. Reading
+    // `reasoning_content` finds nothing, so a reasoning model streams its
+    // whole thinking phase invisibly and the client shows only a pulsing
+    // placeholder - measured at 3m14s on a local qwen3:14b.
+    const llmConfig = {} as Parameters<typeof getReasoningKey>[1];
+
+    expect(getReasoningKey(Providers.OPENAI, llmConfig, 'Ollama')).toBe('reasoning');
+  });
+
+  it('detects Ollama by its default port when the endpoint is named something else', () => {
+    const llmConfig = {
+      configuration: { baseURL: 'http://localhost:11434/v1/' },
+    } as Parameters<typeof getReasoningKey>[1];
+
+    expect(getReasoningKey(Providers.OPENAI, llmConfig, 'Local LLM')).toBe('reasoning');
+  });
+
+  it('lets customParams.reasoningKey still override the Ollama default', () => {
+    const llmConfig = {
+      configuration: { baseURL: 'http://localhost:11434/v1/' },
+    } as Parameters<typeof getReasoningKey>[1];
+
+    expect(
+      getReasoningKey(Providers.OPENAI, llmConfig, 'Ollama', ReasoningResponseKey.reasoningContent),
+    ).toBe('reasoning_content');
+  });
+
   it('keeps Vercel AI Gateway on ChatOpenAI normalized reasoning_content', () => {
     const llmConfig = {
       configuration: {

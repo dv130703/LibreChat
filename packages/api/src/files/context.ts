@@ -1,5 +1,5 @@
 import { logger } from '@librechat/data-schemas';
-import { FileSources, mergeFileConfig } from 'librechat-data-provider';
+import { FileContext, FileSources, mergeFileConfig } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types';
 import { processTextWithTokenLimit } from '~/utils/text';
@@ -14,6 +14,37 @@ import type { TokenCountFn } from '~/utils/text';
  * @param params.tokenCountFn - Function to count tokens in text
  * @returns The formatted file context text, or undefined if no text found
  */
+/**
+ * File kinds that must never be pasted into a prompt, whatever their
+ * `embedded` flag happens to say.
+ *
+ * A transcript is retrieved through `file_search`, one relevant chunk at a
+ * time. Its full text is also stored inline on the File record, which makes
+ * it eligible for the "not embedded, so ride along in context" fallback
+ * below - and that fallback is a trap for exactly this file kind. A failed or
+ * stale embed flips `embedded` to false, at which point an entire recording's
+ * transcript (tens of KB, and unbounded in principle) would silently start
+ * being prepended to every prompt in the conversation. Against a local model
+ * served at Ollama's 4096-token default that alone overflows the window
+ * before the user's question is even appended, and the truncation that
+ * follows is silent.
+ *
+ * The diarization-detail record is worse: raw pyannote turns, speaker
+ * embeddings and per-word assignments, up to 14MB of inline JSON, of no use
+ * to a model at all.
+ *
+ * So the rule is structural rather than conventional: a transcript is either
+ * retrievable via RAG or it is honestly reported as unavailable (see
+ * `buildUnavailableTranscriptNotice`). It is never inlined. Previously this
+ * was held only by every write site remembering to keep `embedded` true -
+ * see the comment in `transcriptCorrections.js` on why one missed update
+ * would have been "a much bigger regression".
+ */
+const NEVER_INLINED_CONTEXTS: ReadonlySet<string> = new Set([
+  FileContext.transcript_rag,
+  FileContext.transcript_diarization_detail,
+]);
+
 export async function extractFileContext({
   attachments,
   req,
@@ -38,6 +69,13 @@ export async function extractFileContext({
   let resultText = '';
 
   for (const file of attachments) {
+    if (file.context != null && NEVER_INLINED_CONTEXTS.has(file.context)) {
+      logger.debug(
+        `[extractFileContext] Skipping ${file.context} file "${file.filename}" - retrieved via file_search, never inlined.`,
+      );
+      continue;
+    }
+
     const source = file.source ?? FileSources.local;
     // A file that's already embedded is retrieved through `file_search`, not
     // blind inclusion - baking its full text into every prompt on top of that

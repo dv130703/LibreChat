@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as Popover from '@radix-ui/react-popover';
+import { useRecoilState } from 'recoil';
 import { isEqual } from 'lodash';
 import {
   X,
@@ -26,20 +27,23 @@ import {
   useRetranscribeAudioMutation,
   useExportInterviewDocxMutation,
   useExportMeetingMinutesDocxMutation,
-  useTranscribeStatusQuery,
+  useConversationTranscriptsQuery,
   useRetryTranscriptionMutation,
   useTranscribeAudioTokenQuery,
 } from '~/data-provider';
-import { parseTranscriptText } from 'librechat-data-provider';
+import { parseTranscriptText, sourceFileIdFromDerived } from 'librechat-data-provider';
 import type { InterviewTranscriptForm, MeetingMinutesForm } from 'librechat-data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
+import { usePendingUploadRetry } from '~/hooks/AudioTranscriber/usePendingUploadRetry';
 import { cn } from '~/utils';
+import store from '~/store';
 import type { MouseEvent } from 'react';
 import type { ParsedLine, SpeakerOption } from './types';
 import { useChatHeaderSlot } from './panelHostContext';
 import type { PanelComponentProps } from './panelHostContext';
 import { computeInsertionSlots, formatSlotTimestamp } from './lineInsert';
 import { reduceCorrections, createCustomSpeakerId } from './corrections';
+import { findFollowedLineIndex } from './playbackSync';
 import { getSpeakerDotColor } from './speakerColors';
 import TranscribeOptionsDialog from './TranscribeOptionsDialog';
 import type { TranscribeAudioOptions } from './TranscribeOptionsDialog';
@@ -47,7 +51,6 @@ import InterviewTranscriptDialog from './InterviewTranscriptDialog';
 import MeetingMinutesDialog from './MeetingMinutesDialog';
 import TranscriptHeader from './TranscriptHeader';
 import TranscriptRow from './TranscriptRow';
-import { splitFileIds } from './fileIds';
 import SpeakerRosterModal from './SpeakerRosterModal';
 
 /** How far short of a bounded-playback boundary to stop, so the next line
@@ -323,8 +326,8 @@ function TranscriptPanelHeader({
 /**
  * Memoized: `ChatPanelHost` re-rendering (e.g. from `useChatHeaderSlot`'s own
  * `setHeaderSlot` call below settling) must not cascade into re-executing
- * this component's body when its actual props haven't changed - `onResolved`/
- * `onUnresolvable` are stable (`useCallback`'d in `ChatPanelHost`), so a
+ * this component's body when its actual props haven't changed - `onResolved`
+ * is stable (`useCallback`'d in `ChatPanelHost`), so a
  * shallow prop comparison correctly bails out. Without this, every
  * `setHeaderSlot` call re-renders the panel, which recreates the header JSX
  * node it passes to `useChatHeaderSlot`, whose effect dependency on that
@@ -332,13 +335,7 @@ function TranscriptPanelHeader({
  * only `act()`'s "Maximum update depth exceeded" in tests makes obvious;
  * outside a test it just pegs a render loop silently.
  */
-function TranscriptPanel({
-  conversationId,
-  fileId,
-  onResolved,
-  onUnresolvable,
-  onClose,
-}: PanelComponentProps) {
+function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelComponentProps) {
   const localize = useLocalize();
   const { isAuthenticated } = useAuthContext();
   const {
@@ -347,50 +344,76 @@ function TranscriptPanel({
     isError: isConvoError,
     refetch: refetchConvo,
   } = useGetConvoIdQuery(conversationId, { enabled: isAuthenticated });
-  const { sourceFileId, transcriptFileId } = useMemo(
-    () => splitFileIds((conversation as { files?: string[] } | undefined)?.files ?? []),
-    [conversation],
-  );
+  /** Resolved from the conversation's transcripts read model - the single
+   *  server-side answer to "which recordings are on this conversation and
+   *  can they be searched" - rather than from the conversation document's
+   *  own `files` array. That array is a denormalized pointer list whose
+   *  client cache had no refetch on job completion unless this very
+   *  component happened to be mounted, so a panel opened after the job
+   *  finished could resolve against a list written before it started. */
+  const { data: transcriptsData, isLoading: isTranscriptsLoading } =
+    useConversationTranscriptsQuery(conversationId, { enabled: isAuthenticated });
+  const transcripts = transcriptsData?.transcripts;
 
-  /** A source file with no transcript yet is either mid-job or landed here
-   *  before the job even had a chance to be picked up (e.g. navigating
-   *  straight into `?panel=transcript` right after queuing a brand-new
-   *  conversation's transcription - the composer's "transcribe this?" flow
-   *  does exactly that, rather than waiting out the whole job before the
-   *  user sees anything). Polls the same status endpoint `TranscriptCard`
-   *  does; once it reports `ready`, the transcript file itself has been
-   *  attached to the conversation server-side, so refetching picks up the
-   *  now-real `transcriptFileId` from `splitFileIds` above. */
-  const { data: jobStatusData } = useTranscribeStatusQuery(sourceFileId ? [sourceFileId] : [], {
-    enabled: sourceFileId != null && transcriptFileId == null,
-  });
-  const jobStatus = jobStatusData?.files.find((entry) => entry.file_id === sourceFileId);
+  /** The recording this panel is showing. `fileId` names it by any of its
+   *  three ids (the URL may carry the source id, or a `-transcript` id from
+   *  an older link); with no `fileId` at all - the legacy
+   *  `/audio-transcriber/:id` redirect - the conversation's first recording
+   *  is correct, since every conversation from that era has exactly one. */
+  const record = useMemo(() => {
+    if (!transcripts || transcripts.length === 0) {
+      return undefined;
+    }
+    if (fileId == null || fileId === '') {
+      return transcripts[0];
+    }
+    const targetSourceId = sourceFileIdFromDerived(fileId) ?? fileId;
+    return transcripts.find((entry) => entry.sourceFileId === targetSourceId);
+  }, [transcripts, fileId]);
+
+  const sourceFileId = record?.sourceFileId;
+  const transcriptFileId = record?.transcriptFileId ?? undefined;
+
+  /** A file the composer's transcribe flow has committed to uploading, before
+   *  `POST /api/transcribe` has resolved - `fileId` names it (a client-only
+   *  `pendingId`, not a real file id) until the upload succeeds, see
+   *  `pendingTranscriptionUploadsByConvoId`'s own doc comment. Read/written
+   *  here via `useRecoilState` (not the dynamic-key `useRecoilCallback`
+   *  `maybeInterceptAudioVideo` needs) since this panel's `conversationId`
+   *  is a fixed prop, not minted at call time. */
+  const [pendingUploads, setPendingUploads] = useRecoilState(
+    store.pendingTranscriptionUploadsByConvoId(conversationId),
+  );
+  const pending = useMemo(
+    () => pendingUploads.find((entry) => entry.pendingId === fileId),
+    [pendingUploads, fileId],
+  );
+  const retryPendingUpload = usePendingUploadRetry(pending, setPendingUploads);
+
+  /** Job state comes from the same read model as the file ids, so the panel
+   *  can never show a transcript paired with a status resolved from a
+   *  different snapshot. That query polls itself while any recording is
+   *  still in progress, which is what replaces the previous
+   *  "poll status, then refetch the conversation once it says ready" pair. */
+  const jobStatus = record?.jobStatus ?? undefined;
   const retryTranscription = useRetryTranscriptionMutation();
 
+  /** Syncs the URL to this panel's real target so a reload or a shared link
+   *  lands on the same recording.
+   *
+   *  Notably does NOT close the panel when `fileId` resolves to nothing.
+   *  It used to, and that was defect 2: a `?file=` still holding the
+   *  client-only `pendingId` (or naming a recording this snapshot hadn't
+   *  caught up to yet) was read as "this target does not exist" and closed
+   *  the pane out from under a job that was running perfectly well. Whether
+   *  the panel is open is now the URL's business alone; not being able to
+   *  resolve a target is an in-panel state, not a reason to disappear. */
   useEffect(() => {
-    if (jobStatus?.status === 'ready') {
-      refetchConvo();
-    }
-  }, [jobStatus?.status, refetchConvo]);
-
-  /** Reports this panel's real target back to `ChatPanelHost` once the
-   *  conversation has loaded - `fileId` (from the `?file=` URL param, if
-   *  present) not matching what the conversation actually resolves to is
-   *  treated as "this specific target doesn't exist for this viewer"
-   *  (closed with a toast, ChatPanelHost §6.3), distinct from a query error
-   *  (transient, retryable, handled by the existing `isConvoError` state
-   *  below). Waits for a definite load outcome rather than firing on every
-   *  intermediate render, so a briefly-stale cache read can't misfire this. */
-  useEffect(() => {
-    if (isConvoLoading || isConvoError || !sourceFileId) {
-      return;
-    }
-    if (fileId != null && fileId !== sourceFileId) {
-      onUnresolvable();
+    if (sourceFileId == null || fileId === sourceFileId) {
       return;
     }
     onResolved(sourceFileId);
-  }, [isConvoLoading, isConvoError, sourceFileId, fileId, onResolved, onUnresolvable]);
+  }, [sourceFileId, fileId, onResolved]);
 
   const { data: preview, isLoading: isPreviewLoading } = useFilePreview(transcriptFileId);
   const lines = useMemo(
@@ -760,20 +783,13 @@ function TranscriptPanel({
 
   /** Whichever line the playhead currently falls within - drives both the
    *  "follow along" highlight/auto-scroll and, while `isPlaying`, doubles as
-   *  the previewing line's live position for its progress bar. */
-  const followedLineIndex = useMemo(() => {
-    for (let i = displayLines.length - 1; i >= 0; i--) {
-      const line = displayLines[i];
-      if (
-        line.seconds != null &&
-        currentTime >= line.seconds &&
-        (line.endSeconds == null || currentTime < line.endSeconds)
-      ) {
-        return line.lineIndex;
-      }
-    }
-    return -1;
-  }, [displayLines, currentTime]);
+   *  the previewing line's live position for its progress bar. See
+   *  `findFollowedLineIndex` for why this can't just scan `displayLines` in
+   *  array order. */
+  const followedLineIndex = useMemo(
+    () => findFollowedLineIndex(displayLines, currentTime),
+    [displayLines, currentTime],
+  );
 
   // Same reasoning as `effectiveLinesRef` above: `togglePlaySegment` needs
   // the current value of both at call time, not at the time it was created -
@@ -1307,7 +1323,8 @@ function TranscriptPanel({
   );
 
   const isLoading =
-    !isConvoError && (isConvoLoading || (transcriptFileId != null && isPreviewLoading));
+    !isConvoError &&
+    (isConvoLoading || isTranscriptsLoading || (transcriptFileId != null && isPreviewLoading));
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -1343,7 +1360,35 @@ function TranscriptPanel({
             <Spinner className="text-text-primary" />
           </div>
         )}
-        {!isLoading && isConvoError && (
+        {!isLoading && pending?.status === 'uploading' && (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <Spinner className="text-text-primary" />
+            <p className="text-sm font-medium text-text-primary">
+              {localize('com_ui_transcript_panel_awaiting_upload')}
+            </p>
+          </div>
+        )}
+        {!isLoading && pending?.status === 'failed' && (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <span
+              aria-hidden="true"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-500"
+            >
+              <AlertCircle className="h-5 w-5" />
+            </span>
+            <p role="alert" className="max-w-xs text-sm text-red-500">
+              {pending.errorMessage ?? localize('com_ui_transcript_upload_failed')}
+            </p>
+            <button
+              type="button"
+              onClick={retryPendingUpload}
+              className="rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+            >
+              {localize('com_ui_transcript_card_retry')}
+            </button>
+          </div>
+        )}
+        {!isLoading && pending == null && isConvoError && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
             <span
               aria-hidden="true"
@@ -1379,49 +1424,47 @@ function TranscriptPanel({
         {!isLoading &&
           !isConvoError &&
           transcriptFileId == null &&
-          (jobStatus?.status === 'queued' || jobStatus?.status === 'transcribing') && (
+          (jobStatus === 'queued' || jobStatus === 'transcribing') && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <Spinner className="text-text-primary" />
               <p className="text-sm font-medium text-text-primary">
-                {jobStatus.status === 'transcribing'
+                {jobStatus === 'transcribing'
                   ? localize('com_ui_transcript_card_transcribing')
                   : localize('com_ui_transcript_card_queued')}
               </p>
             </div>
           )}
-        {!isLoading &&
-          !isConvoError &&
-          transcriptFileId == null &&
-          jobStatus?.status === 'failed' && (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-              <span
-                aria-hidden="true"
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-500"
+        {!isLoading && !isConvoError && transcriptFileId == null && jobStatus === 'failed' && (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <span
+              aria-hidden="true"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-500"
+            >
+              <AlertCircle className="h-5 w-5" />
+            </span>
+            <p role="alert" className="max-w-xs text-sm text-red-500">
+              {record?.jobError ?? localize('com_ui_transcript_error')}
+            </p>
+            {sourceFileId && (
+              <button
+                type="button"
+                onClick={() => retryTranscription.mutate({ sourceFileId })}
+                disabled={retryTranscription.isLoading}
+                className="rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
               >
-                <AlertCircle className="h-5 w-5" />
-              </span>
-              <p role="alert" className="max-w-xs text-sm text-red-500">
-                {jobStatus.error ?? localize('com_ui_transcript_error')}
-              </p>
-              {sourceFileId && (
-                <button
-                  type="button"
-                  onClick={() => retryTranscription.mutate({ sourceFileId })}
-                  disabled={retryTranscription.isLoading}
-                  className="rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
-                >
-                  {localize('com_ui_transcript_card_retry')}
-                </button>
-              )}
-            </div>
-          )}
+                {localize('com_ui_transcript_card_retry')}
+              </button>
+            )}
+          </div>
+        )}
         {!isLoading &&
+          pending == null &&
           !isConvoError &&
           lines.length === 0 &&
           preview?.status !== 'failed' &&
-          jobStatus?.status !== 'queued' &&
-          jobStatus?.status !== 'transcribing' &&
-          jobStatus?.status !== 'failed' && (
+          jobStatus !== 'queued' &&
+          jobStatus !== 'transcribing' &&
+          jobStatus !== 'failed' && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <span
                 aria-hidden="true"

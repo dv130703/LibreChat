@@ -25,6 +25,7 @@ import {
 import { useIdChangeEffect, useAppStartup, useNewConvo, useLocalize } from '~/hooks';
 import { ToolCallsMapProvider } from '~/Providers';
 import ChatPanelHost from '~/components/AudioTranscriber/ChatPanelHost';
+import SyncTranscriptToolBadge from '~/components/AudioTranscriber/SyncTranscriptToolBadge';
 import ChatView from '~/components/Chat/ChatView';
 import { NotificationSeverity } from '~/common';
 import useAuthRedirect from './useAuthRedirect';
@@ -287,6 +288,10 @@ export default function ChatRoute() {
        * `onUnresolvable` before the real conversation ever got a chance to
        * load - see transcription/ARCHITECTURE.md §12). The URL param is
        * correct the instant `navigate()` runs, with no async gap to race. */}
+      {/* Cosmetic only - the server enables file_search for this
+       * conversation regardless (`attachTranscriptToolState`). This keeps the
+       * composer badge from reading "off" while retrieval is running. */}
+      <SyncTranscriptToolBadge conversationId={conversationId} />
       <ChatPanelHost conversationId={conversationId}>
         <ChatView index={index} project={verifiedChatProjectId ? projectQuery.data : undefined} />
       </ChatPanelHost>

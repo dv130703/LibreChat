@@ -90,6 +90,7 @@ async function embedTranscript({ req, file_id, filename, text }) {
  *   own id is derived from it (`${sourceFileId}-transcript`) so re-transcribing the same
  *   source overwrites its transcript instead of leaking a duplicate.
  * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; clusteringThreshold?: number; language?: string; contextTerms?: string; context?: string; model?: string; suppressNumerals?: boolean; channelSplit?: boolean}} [params.options]
+ * @param {AbortSignal} [params.signal] - lets a best-effort cancel abort the underlying request
  * @returns {Promise<{
  *   segments: Array<{start: number; end: number; speaker: string; text: string; assignmentMethod?: string; words?: Array<{word: string; start?: number; end?: number; speaker?: string; assignmentMethod: string}>}>,
  *   language: string | undefined,
@@ -102,7 +103,7 @@ async function embedTranscript({ req, file_id, filename, text }) {
  *   embedded: boolean,
  * }>}
  */
-async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
+async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signal }) {
   if (!process.env.RAG_API_URL) {
     throw new Error(
       'Audio transcription is not configured on this server (RAG_API_URL is not set).',
@@ -185,6 +186,13 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {} }) {
     // WhisperX on a long recording can legitimately take minutes, even with
     // large-v3-turbo on a GPU.
     timeout: 15 * 60 * 1000,
+    // Lets a best-effort cancel (`POST /:sourceFileId/cancel`) actually stop
+    // this specific request instead of just discarding its eventual result -
+    // see `runTranscriptionJob`'s `registerActiveController`. Kept as its
+    // own parameter rather than folded into `options`, which gets persisted
+    // verbatim (`transcription.effectiveOptions`) - an `AbortSignal` can't
+    // serialize.
+    signal,
   });
 
   const {

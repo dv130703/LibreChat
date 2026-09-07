@@ -51,6 +51,15 @@ describe('inferMimeType', () => {
     expect(inferMimeType('file.xyz', '')).toBe('');
   });
 
+  it('should infer video/audio types from extension when browser type is empty', () => {
+    // e.g. Chrome/Firefox on Linux commonly report an empty `File.type` for these containers
+    expect(inferMimeType('call-recording.mkv', '')).toBe('video/mkv');
+    expect(inferMimeType('clip.mov', '')).toBe('video/mov');
+    expect(inferMimeType('clip.avi', '')).toBe('video/avi');
+    expect(inferMimeType('voice-memo.m4a', '')).toBe('audio/mp4');
+    expect(inferMimeType('voice-memo.flac', '')).toBe('audio/flac');
+  });
+
   it('should produce a type accepted by checkType after normalizing text/x-python-script', () => {
     const normalized = inferMimeType('test.py', 'text/x-python-script');
     expect(baseFileConfig.checkType(normalized)).toBe(true);
@@ -783,7 +792,6 @@ describe('getEndpointFileConfig', () => {
       expect(result.disabled).toBe(true);
       expect(result.fileLimit).toBe(15);
     });
-
   });
 
   describe('agents endpoint handling', () => {

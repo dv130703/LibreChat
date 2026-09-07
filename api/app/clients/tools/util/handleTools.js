@@ -14,6 +14,7 @@ const {
   createAskUserQuestionTool,
   ASK_USER_QUESTION_TOOL_NAME,
   buildWebSearchDynamicContext,
+  buildUnavailableTranscriptNotice,
 } = require('@librechat/api');
 const {
   Tools,
@@ -297,6 +298,12 @@ const loadTools = async ({
           files,
           entity_id: agent?.id,
           fileCitations,
+          // Resolved once per request by `attachTranscriptToolState`; absent
+          // for every conversation with no unsearchable recording, which is
+          // the overwhelming majority.
+          unavailableNotice: buildUnavailableTranscriptNotice(
+            options.req?.transcriptToolState ?? { hasQueryableTranscript: false, unavailable: [] },
+          ),
         });
       };
       continue;

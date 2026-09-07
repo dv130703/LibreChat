@@ -144,8 +144,21 @@ describe('TranscribeIntentProvider (transcription/ARCHITECTURE.md §6.1/§6.4, P
     );
   });
 
-  it('multi-channel: offers the split choice, and carries the choice into the options dialog', async () => {
+  it('stereo (2 channels): skips the multi-channel dialog, since 2 channels commonly means stereo rather than one speaker per channel', async () => {
     mockProbeChannelCount.mockResolvedValue(2);
+    const onResult = jest.fn();
+    renderProvider(onResult);
+
+    fireEvent.click(screen.getByText('intercept-can-attach'));
+    fireEvent.click(await screen.findByText('Transcribe'));
+
+    await screen.findByTestId('options-dialog');
+    expect(screen.queryByTestId('multi-channel-dialog')).not.toBeInTheDocument();
+    expect(screen.getByText('channelSplitEnabled: false')).toBeInTheDocument();
+  });
+
+  it('multi-channel: offers the split choice, and carries the choice into the options dialog', async () => {
+    mockProbeChannelCount.mockResolvedValue(3);
     const onResult = jest.fn();
     renderProvider(onResult);
 

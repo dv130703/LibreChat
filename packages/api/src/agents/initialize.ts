@@ -55,6 +55,11 @@ import { registerMemoryTools, memoryToolUsageGuard } from './memory';
 import { applyBackgroundToolCalls } from './background';
 import { filterFilesByEndpointConfig } from '~/files';
 import { generateArtifactsPrompt } from '~/prompts';
+import {
+  isOllamaTarget,
+  reconcileOllamaContext,
+  resolveOllamaContextLength,
+} from '~/endpoints/ollama/context';
 import { getProviderConfig } from '~/endpoints';
 import { primeResources } from './resources';
 
@@ -651,6 +656,29 @@ export async function initializeAgent(
    * in the conversation. Without this, file_search and execute_code tools
    * on handoff agents would fail to find previously attached files.
    */
+  /**
+   * A conversation can hold a searchable transcript while the agent running
+   * on it has no `file_search` tool - the ephemeral path has this forced on
+   * server-side (`attachTranscriptToolState`), but a *persisted* agent's tool
+   * list is its owner's explicit configuration and is not rewritten here.
+   * The failure mode is otherwise invisible: retrieval simply never happens
+   * and the model answers from nothing, looking like a bad model rather than
+   * a missing tool. Say so once, loudly, instead.
+   */
+  const transcriptToolState = (
+    req as { transcriptToolState?: { hasQueryableTranscript?: boolean } }
+  )?.transcriptToolState;
+  if (
+    transcriptToolState?.hasQueryableTranscript === true &&
+    !(agent.tools ?? []).includes(Tools.file_search)
+  ) {
+    logger.warn(
+      `[initializeAgent] Conversation ${conversationId} has a searchable transcript but agent ` +
+        `${agent.id} has no ${Tools.file_search} tool, so it cannot retrieve it. Enable ` +
+        `${Tools.file_search} on this agent.`,
+    );
+  }
+
   if (conversationId != null && resendFiles) {
     const fileIds = (await db.getConvoFiles(conversationId)) ?? [];
     const toolResourceSet = new Set<EToolResources>();
@@ -1050,13 +1078,39 @@ export async function initializeAgent(
     llmConfig?.maxTokens as number | undefined,
     0,
   );
+  /** What the model's NAME implies - the only estimate available before this
+   *  change, and wrong by ~10x against a local Ollama server left at its
+   *  4096 default. Still the fallback for every non-Ollama endpoint. */
+  const estimatedContextTokens = getModelMaxTokens(
+    tokensModel ?? '',
+    providerEndpointMap[overrideProvider as keyof typeof providerEndpointMap],
+    options.endpointTokenConfig,
+  );
+
+  /** For Ollama, ask the server what it actually loaded the model with
+   *  rather than trusting the name. `num_ctx` cannot be negotiated per
+   *  request over the OpenAI-compatible API, so this is the only way to
+   *  find out - and budgeting above the served window is what silently
+   *  truncates prompts from the left, taking the system message and the
+   *  user's own question with them. Cached and fail-open: an unreachable or
+   *  not-yet-loaded model leaves the estimate untouched. */
+  const ollamaBaseURL = (llmConfig as { configuration?: { baseURL?: string } })?.configuration
+    ?.baseURL;
+  const servedContextTokens = isOllamaTarget(ollamaBaseURL, agent.endpoint)
+    ? reconcileOllamaContext({
+        servedContextLength: await resolveOllamaContextLength(
+          ollamaBaseURL,
+          llmConfig?.model as string | undefined,
+        ),
+        estimatedContextTokens,
+        model: llmConfig?.model as string | undefined,
+      })
+    : undefined;
+
   const agentMaxContextTokens = optionalChainWithEmptyCheck(
     maxContextTokens,
-    getModelMaxTokens(
-      tokensModel ?? '',
-      providerEndpointMap[overrideProvider as keyof typeof providerEndpointMap],
-      options.endpointTokenConfig,
-    ),
+    servedContextTokens,
+    estimatedContextTokens,
     DEFAULT_MAX_CONTEXT_TOKENS,
   );
 

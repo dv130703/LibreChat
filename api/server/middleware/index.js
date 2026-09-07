@@ -2,6 +2,7 @@ const validatePasswordReset = require('./validatePasswordReset');
 const setTwoFactorTempUser = require('./setTwoFactorTempUser');
 const validateRegistration = require('./validateRegistration');
 const buildEndpointOption = require('./buildEndpointOption');
+const attachTranscriptToolState = require('./transcriptTools');
 const validateEmailLogin = require('./validateEmailLogin');
 const validateMessageReq = require('./validateMessageReq');
 const { prepareMessageRequestValidation, sendValidationResponse } = require('./messageValidation');
@@ -38,6 +39,7 @@ module.exports = {
   setHeaders,
   logHeaders,
   moderateText,
+  attachTranscriptToolState,
   validateModel,
   requireJwtAuth,
   requireRumProxyAuth,

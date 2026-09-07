@@ -48,6 +48,18 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
   const rootSubmission = useRecoilValue(store.submissionByIndex(index));
   const isSubmitting = useRecoilValue(store.isSubmittingFamily(index));
   const centerFormOnLanding = useRecoilValue(store.centerFormOnLanding);
+  /** The composer's instant-navigate transcribe flow lands here well before
+   *  any message exists server-side for a brand-new conversation - the
+   *  messages query below is enabled (`conversationId` is real, not `new`)
+   *  but has nothing to fetch yet, so `isLoading` stays `true` through its
+   *  own retry/backoff cycle on the inevitable 404. Without this, the gate
+   *  below shows a bare, contextless spinner for that entire window instead
+   *  of ever mounting `MessagesView` - which is what actually renders the
+   *  pending-upload's "Processing…" bubble (`PendingTranscriptionMessages`).
+   *  A pending record existing at all is enough to know there's something
+   *  meaningful to show already. */
+  const hasPendingTranscriptionUpload =
+    useRecoilValue(store.pendingTranscriptionUploadsByConvoId(conversationId ?? '')).length > 0;
 
   const methods = useForm<ChatFormValues>({
     defaultValues: { text: '' },
@@ -106,9 +118,9 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
     isFetching && (!messagesTree || messagesTree.length === 0) && conversationId != null;
   const isProjectLandingPage = isLandingPage && project != null;
 
-  if (isLoading && conversationId !== Constants.NEW_CONVO) {
+  if (isLoading && conversationId !== Constants.NEW_CONVO && !hasPendingTranscriptionUpload) {
     content = <LoadingSpinner />;
-  } else if ((isLoading || isNavigating) && !isLandingPage) {
+  } else if ((isLoading || isNavigating) && !isLandingPage && !hasPendingTranscriptionUpload) {
     content = <LoadingSpinner />;
   } else if (!isLandingPage) {
     content = <MessagesView messagesTree={messagesTree} />;

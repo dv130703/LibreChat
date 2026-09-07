@@ -10,6 +10,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const { Constants } = require('librechat-data-provider');
 const { createMethods } = require('@librechat/data-schemas');
 const { onIdle } = require('~/server/services/Transcription/jobQueue');
+const db = require('~/models');
 
 // Only mock genuine external boundaries: JWT verification, the storage
 // strategy (would otherwise hit real S3/local disk semantics we don't need
@@ -21,6 +22,25 @@ const { onIdle } = require('~/server/services/Transcription/jobQueue');
 // synchronize on the fire-and-forget enqueued job actually finishing.
 jest.mock('~/server/middleware/requireJwtAuth', () => (req, res, next) => next());
 jest.mock('~/server/middleware/config/app', () => (req, res, next) => next());
+
+// `createFileLimiters` mocked out, matching `files/index.tenant.test.js`'s
+// own convention for exactly this reason: its underlying store is shared
+// process-wide (not per-file/per-`Express` app), so this suite's own volume
+// of `POST` requests - let alone any OTHER suite's, if Jest packs multiple
+// files into one worker - can trip the real limiter and produce flaky,
+// run-order-dependent 429s that have nothing to do with what's under test.
+// Rate limiting itself belongs in its own isolated test, not here.
+// `canAccessAgentFromBody` stays real - it's exactly what one of these tests
+// verifies.
+jest.mock('~/server/middleware', () => ({
+  createFileLimiters: jest.fn(() => ({
+    fileUploadIpLimiter: (req, res, next) => next(),
+    fileUploadUserLimiter: (req, res, next) => next(),
+  })),
+  canAccessAgentFromBody: jest.requireActual(
+    '~/server/middleware/accessResources/canAccessAgentFromBody',
+  ).canAccessAgentFromBody,
+}));
 
 jest.mock('~/server/services/Files/strategies', () => ({
   getStrategyFunctions: jest.fn(() => ({
@@ -172,10 +192,14 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
   const tinyAudioBuffer = Buffer.from('fake-audio-bytes');
 
   const uploadFile = (conversationId, filename = 'meeting.mp3', extraFields = {}) => {
+    // Not an agents-endpoint request (no `agent_id` is ever set up here) -
+    // `canAccessAgentFromBody` requires a real, permission-checked
+    // `agent_id` for `endpoint: 'agents'` specifically, same as the normal
+    // ask() pipeline. None of these tests exercise agent access itself.
     let req = request(app)
       .post('/api/transcribe')
       .field('conversationId', conversationId)
-      .field('endpoint', 'agents');
+      .field('endpoint', 'openAI');
     for (const [field, value] of Object.entries(extraFields)) {
       req = req.field(field, value);
     }
@@ -184,7 +208,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
 
   describe('POST /api/transcribe', () => {
     it('responds 202 immediately with a queued job, and completes asynchronously', async () => {
-      const conversationId = `convo-${Date.now()}`;
+      const conversationId = crypto.randomUUID();
 
       const response = await uploadFile(conversationId);
 
@@ -279,7 +303,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     });
 
     it('creates the conversation and queues the source file before transcribeAndEmbed is ever called', async () => {
-      const conversationId = `convo-${Date.now()}`;
+      const conversationId = crypto.randomUUID();
       let stateWhileTranscribing;
 
       mockTranscribeAndEmbed.mockImplementation(async () => {
@@ -298,7 +322,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     });
 
     it('keeps the conversation and source file when the job fails - marks transcription failed instead of deleting anything', async () => {
-      const conversationId = `convo-${Date.now()}`;
+      const conversationId = crypto.randomUUID();
       mockTranscribeAndEmbed.mockRejectedValue(new Error('diarization produced no segments'));
 
       const response = await uploadFile(conversationId);
@@ -328,15 +352,64 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     it('returns 400 when no file is provided', async () => {
       const response = await request(app)
         .post('/api/transcribe')
-        .field('conversationId', `convo-${Date.now()}`);
+        .field('conversationId', crypto.randomUUID());
 
       expect(response.status).toBe(400);
     });
 
+    it(
+      'returns 400 for a malformed (non-UUID) conversationId - regression: `saveMessage` ' +
+        'silently no-ops (rather than throwing) for a conversationId that fails its own UUID ' +
+        "format check, which used to defeat this route's rollback logic entirely and leave a " +
+        'permanently empty "ghost" conversation behind with a 202 success response.',
+      async () => {
+        const response = await uploadFile('not-a-real-uuid');
+
+        expect(response.status).toBe(400);
+        expect(mockTranscribeAndEmbed).not.toHaveBeenCalled();
+        const convo = await Conversation.findOne({ conversationId: 'not-a-real-uuid' }).lean();
+        expect(convo).toBeNull();
+      },
+    );
+
+    it(
+      "rejects a conversation-creating request for an agents-endpoint the caller doesn't have " +
+        'permission to use - regression: `agent_id` was previously written straight into the ' +
+        'new conversation with no access check at all, unlike the normal ask() pipeline.',
+      async () => {
+        const conversationId = crypto.randomUUID();
+        const response = await request(app)
+          .post('/api/transcribe')
+          .field('conversationId', conversationId)
+          .field('endpoint', 'agents')
+          .field('agent_id', 'agent_does-not-exist')
+          .attach('file', tinyAudioBuffer, { filename: 'meeting.mp3', contentType: 'audio/mpeg' });
+
+        expect(response.status).toBe(404);
+        expect(mockTranscribeAndEmbed).not.toHaveBeenCalled();
+        const convo = await Conversation.findOne({ conversationId }).lean();
+        expect(convo).toBeNull();
+      },
+    );
+
+    it(
+      'threads isTemporary through to the created conversation - regression: this field was ' +
+        'never sent at all, so a temporary/incognito chat with a recording attached never got ' +
+        'flagged temporary and its conversation (and file) never expired.',
+      async () => {
+        const conversationId = crypto.randomUUID();
+        const response = await uploadFile(conversationId, 'meeting.mp3', { isTemporary: 'true' });
+
+        expect(response.status).toBe(202);
+        const convo = await Conversation.findOne({ conversationId }).lean();
+        expect(convo.isTemporary).toBe(true);
+      },
+    );
+
     it('rejects non audio/video files', async () => {
       const response = await request(app)
         .post('/api/transcribe')
-        .field('conversationId', `convo-${Date.now()}`)
+        .field('conversationId', crypto.randomUUID())
         .attach('file', Buffer.from('not audio'), {
           filename: 'notes.txt',
           contentType: 'text/plain',
@@ -355,7 +428,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
         transcriptFileId: null,
         embedded: false,
       });
-      const conversationId = `convo-${Date.now()}`;
+      const conversationId = crypto.randomUUID();
 
       const response = await uploadFile(conversationId, 'silent.mp3');
       expect(response.status).toBe(202);
@@ -374,7 +447,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     // standalone page's always-fresh id.
     describe('against an existing conversation (Phase 4 composer integration)', () => {
       it('attaches the source file without touching the conversation title/endpoint', async () => {
-        const conversationId = `existing-convo-${Date.now()}`;
+        const conversationId = crypto.randomUUID();
         await Conversation.create({
           conversationId,
           user: userId,
@@ -434,7 +507,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
         // conversation - if it were ever set true for a pre-existing one, a
         // prep-phase failure would delete the user's entire chat, not just
         // this attempt's leftovers.
-        const conversationId = `existing-convo-fail-${Date.now()}`;
+        const conversationId = crypto.randomUUID();
         await Conversation.create({
           conversationId,
           user: userId,
@@ -503,7 +576,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
 
   describe('GET /api/transcribe/status', () => {
     it('returns status for owned source files', async () => {
-      const conversationId = `convo-${Date.now()}`;
+      const conversationId = crypto.randomUUID();
       const response = await uploadFile(conversationId);
       await onIdle();
       const sourceFileId = response.body.sourceFile.file_id;
@@ -554,6 +627,108 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     });
   });
 
+  describe('GET /api/transcribe/conversation/:conversationId', () => {
+    it('reports a finished, embedded recording as queryable', async () => {
+      const conversationId = crypto.randomUUID();
+      const response = await uploadFile(conversationId);
+      await onIdle();
+      const sourceFileId = response.body.sourceFile.file_id;
+
+      const result = await request(app).get(`/api/transcribe/conversation/${conversationId}`);
+
+      expect(result.status).toBe(200);
+      expect(result.body.transcripts).toHaveLength(1);
+      expect(result.body.transcripts[0]).toMatchObject({
+        sourceFileId,
+        transcriptFileId: 'source-file-transcript',
+        diarizationDetailFileId: `${sourceFileId}-diarization-detail`,
+        jobStatus: 'ready',
+        isQueryable: true,
+        unqueryableReason: null,
+      });
+    });
+
+    it('reports the uploaded filename, not the extracted audio track', async () => {
+      // Defect 1: the stored source file is the ffmpeg-extracted `.m4a`, so
+      // a chip labelled from `filename` visibly renamed itself the instant
+      // the real message replaced the upload placeholder.
+      const conversationId = crypto.randomUUID();
+      const response = await uploadFile(conversationId, 'standup.mp4');
+      await onIdle();
+
+      const result = await request(app).get(`/api/transcribe/conversation/${conversationId}`);
+
+      expect(result.body.transcripts[0].displayName).toBe('standup.mp4');
+
+      const sourceFile = await File.findOne({
+        file_id: response.body.sourceFile.file_id,
+      }).lean();
+      expect(sourceFile.filename).toBe('standup.m4a');
+      expect(sourceFile.originalFilename).toBe('standup.mp4');
+    });
+
+    it('answers from the File collection, not the conversation file list', async () => {
+      // The regression this whole read model exists for: a stale or emptied
+      // `Conversation.files` must not be able to make a finished transcript
+      // look absent.
+      const conversationId = crypto.randomUUID();
+      await uploadFile(conversationId);
+      await onIdle();
+
+      await Conversation.updateOne({ conversationId }, { $set: { files: [] } });
+
+      const result = await request(app).get(`/api/transcribe/conversation/${conversationId}`);
+
+      expect(result.status).toBe(200);
+      expect(result.body.transcripts).toHaveLength(1);
+      expect(result.body.transcripts[0].isQueryable).toBe(true);
+    });
+
+    it('reports a corrected transcript as stale rather than queryable', async () => {
+      const conversationId = crypto.randomUUID();
+      await uploadFile(conversationId);
+      await onIdle();
+
+      // Exactly what a correction does - bumps the text version and marks
+      // the index stale, while leaving `embedded` true.
+      await db.markTranscriptStale('source-file-transcript');
+
+      const result = await request(app).get(`/api/transcribe/conversation/${conversationId}`);
+
+      expect(result.body.transcripts[0]).toMatchObject({
+        isQueryable: false,
+        unqueryableReason: 'stale_index',
+      });
+    });
+
+    it('returns an empty list for a conversation with no recordings', async () => {
+      const result = await request(app).get(`/api/transcribe/conversation/${crypto.randomUUID()}`);
+      expect(result.status).toBe(200);
+      expect(result.body.transcripts).toEqual([]);
+    });
+
+    it("does not expose another user's recordings", async () => {
+      const conversationId = crypto.randomUUID();
+      await uploadFile(conversationId);
+      await onIdle();
+
+      await File.updateMany(
+        { conversationId },
+        { $set: { user: new mongoose.Types.ObjectId().toString() } },
+      );
+
+      const result = await request(app).get(`/api/transcribe/conversation/${conversationId}`);
+
+      expect(result.status).toBe(200);
+      expect(result.body.transcripts).toEqual([]);
+    });
+
+    it('returns 400 for a malformed conversationId', async () => {
+      const result = await request(app).get('/api/transcribe/conversation/not-a-uuid');
+      expect(result.status).toBe(400);
+    });
+  });
+
   describe('GET /api/transcribe/:sourceFileId/audio-token', () => {
     // transcription/ARCHITECTURE.md §12 #13: mints the token
     // `transcribeStream.js`'s unauthenticated (by `requireJwtAuth`) streaming
@@ -562,7 +737,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     // streaming route it authorizes for are covered end-to-end in
     // transcribeStream.spec.js.
     it('mints a token that verifies to the caller and a url scoped to this source file', async () => {
-      const conversationId = `convo-${Date.now()}`;
+      const conversationId = crypto.randomUUID();
       const response = await uploadFile(conversationId);
       await onIdle();
       const sourceFileId = response.body.sourceFile.file_id;
@@ -616,7 +791,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     });
 
     it('returns 409 when the job is not currently failed', async () => {
-      const conversationId = `convo-${Date.now()}`;
+      const conversationId = crypto.randomUUID();
       const response = await uploadFile(conversationId);
       await onIdle();
 
@@ -627,7 +802,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     });
 
     it('re-queues a failed job and it can succeed on retry', async () => {
-      const conversationId = `convo-${Date.now()}`;
+      const conversationId = crypto.randomUUID();
       mockTranscribeAndEmbed.mockRejectedValueOnce(new Error('transient failure'));
 
       const response = await uploadFile(conversationId);
@@ -649,9 +824,160 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     });
   });
 
+  describe('POST /api/transcribe/:sourceFileId/cancel', () => {
+    it('returns 404 for a source file that does not belong to the caller', async () => {
+      const otherUserId = new mongoose.Types.ObjectId().toString();
+      await File.create({
+        user: otherUserId,
+        file_id: 'foreign-cancel-target',
+        filename: 'a.m4a',
+        filepath: '/tmp/a',
+        type: 'audio/mp4',
+        bytes: 1,
+        source: 'local',
+        context: 'transcript_rag',
+        transcription: {
+          status: 'transcribing',
+          jobId: 'j',
+          instanceId: 'i',
+          heartbeatAt: new Date(),
+        },
+      });
+
+      const response = await request(app).post('/api/transcribe/foreign-cancel-target/cancel');
+      expect(response.status).toBe(404);
+    });
+
+    it('returns 409 when the job is not queued or transcribing', async () => {
+      const conversationId = crypto.randomUUID();
+      const response = await uploadFile(conversationId);
+      await onIdle();
+
+      const cancelResponse = await request(app).post(
+        `/api/transcribe/${response.body.sourceFile.file_id}/cancel`,
+      );
+      expect(cancelResponse.status).toBe(409);
+    });
+
+    it('cancels an in-progress job, and its own late completion never overwrites the cancelled state', async () => {
+      const conversationId = crypto.randomUUID();
+      let releaseJob;
+      mockTranscribeAndEmbed.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseJob = () => resolve(DEFAULT_RESULT);
+          }),
+      );
+
+      const response = await uploadFile(conversationId);
+      const sourceFileId = response.body.sourceFile.file_id;
+      // Give the queue a tick to actually start running the job (transitions
+      // it to 'transcribing') before cancelling it.
+      await new Promise((r) => setTimeout(r, 20));
+      expect((await File.findOne({ file_id: sourceFileId }).lean()).transcription.status).toBe(
+        'transcribing',
+      );
+
+      const cancelResponse = await request(app).post(`/api/transcribe/${sourceFileId}/cancel`);
+      expect(cancelResponse.status).toBe(200);
+      expect(cancelResponse.body).toEqual({
+        sourceFile: { file_id: sourceFileId, filename: expect.any(String) },
+        status: 'failed',
+        cancelled: true,
+      });
+
+      const sourceFileAfterCancel = await File.findOne({ file_id: sourceFileId }).lean();
+      expect(sourceFileAfterCancel.transcription.status).toBe('failed');
+      expect(sourceFileAfterCancel.transcription.error).toBe('Cancelled by user');
+      expect(sourceFileAfterCancel.transcription.cancelledAt).toBeTruthy();
+
+      // The job itself is still running (the mock hasn't resolved yet) -
+      // letting it finish "successfully" now must not resurrect a 'ready'
+      // status over the cancel that already happened.
+      releaseJob();
+      await onIdle();
+      const sourceFileAfterCompletion = await File.findOne({ file_id: sourceFileId }).lean();
+      expect(sourceFileAfterCompletion.transcription.status).toBe('failed');
+      expect(sourceFileAfterCompletion.transcription.cancelledAt).toBeTruthy();
+    });
+
+    it(
+      're-checks cancellation between transcribeAndEmbed resolving and the final success ' +
+        "write - regression: a cancel landing in that window (file saves, saveConvo's own " +
+        "dual-write) used to be silently overwritten back to 'ready' by the job's own " +
+        'terminal write, since only the FIRST cancellation check (right after ' +
+        'transcribeAndEmbed resolves) existed before this fix.',
+      async () => {
+        const conversationId = crypto.randomUUID();
+        const originalSaveConvo = db.saveConvo.bind(db);
+        // `db.saveConvo` with `context: 'transcription job'` is the dual-write
+        // that runs right before the job's own terminal `db.updateFile` -
+        // exactly the window the re-check exists to close. Issuing a REAL
+        // cancel request here (not calling `requestCancel` directly) exercises
+        // the actual race: the cancel route's own authoritative
+        // `status: 'failed'` write landing concurrently with the job still
+        // running its own success path.
+        const saveConvoSpy = jest
+          .spyOn(db, 'saveConvo')
+          .mockImplementation(async (ctx, params, opts) => {
+            const result = await originalSaveConvo(ctx, params, opts);
+            if (opts?.context === 'transcription job') {
+              const inProgress = await File.findOne({
+                conversationId: params.conversationId,
+                'transcription.status': 'transcribing',
+              }).lean();
+              if (inProgress) {
+                await request(app).post(`/api/transcribe/${inProgress.file_id}/cancel`);
+              }
+            }
+            return result;
+          });
+
+        try {
+          const response = await uploadFile(conversationId);
+          const sourceFileId = response.body.sourceFile.file_id;
+          await onIdle();
+
+          const sourceFile = await File.findOne({ file_id: sourceFileId }).lean();
+          expect(sourceFile.transcription.status).toBe('failed');
+          expect(sourceFile.transcription.error).toBe('Cancelled by user');
+          expect(sourceFile.transcription.cancelledAt).toBeTruthy();
+        } finally {
+          saveConvoSpy.mockRestore();
+        }
+      },
+    );
+
+    it('a cancelled job can be retried like any other failed job', async () => {
+      const conversationId = crypto.randomUUID();
+      let releaseJob;
+      mockTranscribeAndEmbed.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseJob = () => resolve(DEFAULT_RESULT);
+          }),
+      );
+
+      const response = await uploadFile(conversationId);
+      const sourceFileId = response.body.sourceFile.file_id;
+      await new Promise((r) => setTimeout(r, 20));
+      await request(app).post(`/api/transcribe/${sourceFileId}/cancel`);
+      releaseJob();
+      await onIdle();
+
+      mockTranscribeAndEmbed.mockResolvedValueOnce(DEFAULT_RESULT);
+      const retryResponse = await request(app).post(`/api/transcribe/${sourceFileId}/retry`);
+      expect(retryResponse.status).toBe(202);
+
+      await onIdle();
+      const sourceFileAfterRetry = await File.findOne({ file_id: sourceFileId }).lean();
+      expect(sourceFileAfterRetry.transcription.status).toBe('ready');
+    });
+  });
+
   describe('POST /api/transcribe/:sourceFileId/retranscribe', () => {
     async function seedTranscribedConversation() {
-      const conversationId = `convo-retranscribe-${Date.now()}-${Math.random()}`;
+      const conversationId = crypto.randomUUID();
       const audioPath = path.join(
         os.tmpdir(),
         `retranscribe-source-${Date.now()}-${Math.random()}.m4a`,
@@ -749,7 +1075,7 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     // this route no longer goes through a conversation lookup.
     it('returns 404 for a source file that belongs to a different user (R4)', async () => {
       const otherUserId = new mongoose.Types.ObjectId().toString();
-      const conversationId = `convo-foreign-${Date.now()}`;
+      const conversationId = crypto.randomUUID();
       await File.create({
         user: otherUserId,
         file_id: 'foreign-retranscribe-target',

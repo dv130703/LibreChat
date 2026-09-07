@@ -55,7 +55,11 @@ jest.mock('../AttachFile', () => {
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-function renderComponent(conversation: Record<string, unknown> | null, disableInputs = false) {
+function renderComponent(
+  conversation: Record<string, unknown> | null,
+  disableInputs = false,
+  extraProps: Record<string, unknown> = {},
+) {
   return render(
     <QueryClientProvider client={queryClient}>
       <RecoilRoot>
@@ -65,6 +69,7 @@ function renderComponent(conversation: Record<string, unknown> | null, disableIn
           files={new Map()}
           setFiles={() => {}}
           setFilesLoading={() => {}}
+          {...extraProps}
         />
       </RecoilRoot>
     </QueryClientProvider>,
@@ -214,6 +219,24 @@ describe('AttachFileChat', () => {
       expect(container.innerHTML).toBe('');
     });
   });
+
+  describe(
+    'forwards setConversation/latestMessageId to AttachFileMenu - regression: this is the ' +
+      'component every non-assistants attach path renders, and it used to drop both props ' +
+      'entirely rather than passing them through from its own caller (ChatForm.tsx). See ' +
+      "AttachFileMenu.spec.tsx's matching test for the full failure-mode explanation.",
+    () => {
+      it('passes both through unchanged', () => {
+        const setConversation = jest.fn();
+        renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' }, false, {
+          setConversation,
+          latestMessageId: 'leaf-message-id',
+        });
+        expect(mockAttachFileMenuProps.setConversation).toBe(setConversation);
+        expect(mockAttachFileMenuProps.latestMessageId).toBe('leaf-message-id');
+      });
+    },
+  );
 
   describe('endpointFileConfig resolution', () => {
     it('passes Moonshot-specific file config for agent with Moonshot provider', () => {

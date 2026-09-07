@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { createSearchParams } from 'react-router-dom';
 import { LocalStorageKeys, isEphemeralAgentId, Constants } from 'librechat-data-provider';
 import {
   atom,
@@ -17,6 +16,7 @@ import type {
   TSubmission,
   TMessage,
   TPreset,
+  TTranscribeOptions,
 } from 'librechat-data-provider';
 import type { TOptionSettings, ExtendedFile } from '~/common';
 import {
@@ -102,8 +102,21 @@ const conversationByIndex = atomFamily<TConversation | null, string | number>({
           if (newValue.chatProjectId) {
             newParams.set('projectId', newValue.chatProjectId);
           }
-          const searchParams = createSearchParams(newParams);
-          const url = `${window.location.pathname}?${searchParams.toString()}`;
+          // Merges onto whatever's already in the URL rather than replacing
+          // the query string outright - this raw `pushState` bypasses React
+          // Router entirely, so a concurrent flow that just navigated via the
+          // router (e.g. the audio transcriber's instant-navigate, which opens
+          // `?panel=transcript&file=<id>` on this exact same `/c/new` -> real-id
+          // transition) has those params silently erased the moment this runs
+          // right after, with nothing left to signal they ever existed - the
+          // side panel then closes itself moments later when its own next
+          // legitimate URL update reconciles against this now-corrupted
+          // address bar and finds its params gone.
+          const mergedParams = new URLSearchParams(window.location.search);
+          newParams.forEach((value, key) => {
+            mergedParams.set(key, value);
+          });
+          const url = `${window.location.pathname}?${mergedParams.toString()}`;
           window.history.pushState({}, '', url);
         }
       });
@@ -338,6 +351,60 @@ const pendingSteersByConvoId = atomFamily<PendingSteer[], string>({
   default: [],
 });
 
+/** One audio/video file the composer's transcribe flow has committed to
+ *  uploading, before `POST /api/transcribe` has resolved - the navigate into
+ *  `?panel=transcript&file=<pendingId>` happens the instant the options
+ *  dialog is confirmed (not once the upload finishes), so nothing exists
+ *  server-side yet for `TranscriptPanel` to poll. `pendingId` (not a real
+ *  file id) is what the URL carries in the meantime; `TranscriptPanel` swaps
+ *  it for the real `sourceFile.file_id` once the upload succeeds, and the
+ *  ordinary `queued`/`transcribing` polling takes over from there.
+ *
+ *  `status: 'failed'` here means the UPLOAD itself failed (network error,
+ *  validation, ffmpeg extraction) - before any `sourceFileId` exists, so the
+ *  ordinary `POST /:sourceFileId/retry` endpoint doesn't apply. `file` is
+ *  kept alive specifically so a "retry upload" action can re-run the exact
+ *  same attempt without asking the user to re-pick it.
+ *
+ *  Plain in-memory Recoil, deliberately not persisted: a reload while an
+ *  upload is still in flight loses this record (and with it, the retry
+ *  affordance) - accepted as a narrow gap, since this window is normally
+ *  just the upload + ffmpeg extraction (seconds), not the transcription job
+ *  itself. */
+export type PendingTranscriptionUpload = {
+  pendingId: string;
+  conversationId: string;
+  filename: string;
+  file: File;
+  options: TTranscribeOptions;
+  /** A plain id once resolved, or still the promise `maybeInterceptAudioVideo`
+   *  chained this attach's parent onto - see its own comment on
+   *  `transcribeLeafChainRef` for why a second recording queued before the
+   *  first's message id is known can't just read a plain string here. A
+   *  retry (`attemptTranscribeUpload` awaits either) reuses whichever this
+   *  already resolved to, rather than recomputing against whatever the
+   *  conversation's latest message happens to be by the time of the retry. */
+  parentMessageId: string | Promise<string>;
+  isNewConversation: boolean;
+  /** When this attach started - `PendingTranscriptionMessages` shows it next
+   *  to the header name, matching the timestamp every real message header
+   *  carries (`MessageTimestamp`), so the row's height/layout doesn't shift
+   *  once the real message replaces it. */
+  createdAt: string;
+  /** Carried so a retry (`usePendingUploadRetry`) resends the same value the
+   *  original attempt did - retry re-runs `attemptTranscribeUpload` from
+   *  scratch, with no other way to know what the composer's temporary-chat
+   *  setting was at attach time. */
+  isTemporary?: boolean;
+  status: 'uploading' | 'failed';
+  errorMessage?: string;
+};
+
+const pendingTranscriptionUploadsByConvoId = atomFamily<PendingTranscriptionUpload[], string>({
+  key: 'pendingTranscriptionUploadsByConvoId',
+  default: [],
+});
+
 /** A message composed during a run, queued to send after it finishes.
  *  Attachments ride the queued item (already uploaded at attach time) and are
  *  passed to `ask` as `overrideFiles` on drain — steering itself is text-only,
@@ -494,6 +561,16 @@ function useClearConvoState() {
             continue;
           }
 
+          // Unlike every other per-conversation atom this loop implicitly
+          // covers via `conversationByIndex`, `pendingTranscriptionUploadsByConvoId`
+          // is keyed by conversation id, not pane index - reset it for
+          // whichever conversation this pane actually held, read from the
+          // snapshot before that pane's own atom is reset below.
+          const paneConversation = await snapshot.getPromise(conversationByIndex(conversationKey));
+          if (paneConversation?.conversationId) {
+            reset(pendingTranscriptionUploadsByConvoId(paneConversation.conversationId));
+          }
+
           reset(conversationByIndex(conversationKey));
         }
 
@@ -596,6 +673,7 @@ export default {
   pendingManualSkillsByConvoId,
   pendingQuotesByConvoId,
   pendingSteersByConvoId,
+  pendingTranscriptionUploadsByConvoId,
   queuedMessagesByConvoId,
   runEndByIndex,
   pendingRunEndByConvoId,

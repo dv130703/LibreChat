@@ -13,6 +13,7 @@ const {
   mergeFileConfig,
   FileContext,
   FileSources,
+  PermissionBits,
 } = require('librechat-data-provider');
 const {
   getStorageMetadata,
@@ -27,6 +28,7 @@ const {
 } = require('@librechat/api');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
 const configMiddleware = require('~/server/middleware/config/app');
+const { createFileLimiters, canAccessAgentFromBody } = require('~/server/middleware');
 const { storage: uploadStorage } = require('~/server/routes/files/multer');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const {
@@ -38,6 +40,9 @@ const { getFileStrategy } = require('~/server/utils/getFileStrategy');
 const { transcribeAndEmbed } = require('~/server/services/Transcription');
 const {
   enqueueTranscriptionJob,
+  requestCancel,
+  registerActiveController,
+  wasJobCancelled,
   getQueueDepth,
 } = require('~/server/services/Transcription/jobQueue');
 const { HEARTBEAT_INTERVAL_MS } = require('~/server/services/Transcription/reconciliation');
@@ -200,6 +205,14 @@ async function runTranscriptionJob({
   }, HEARTBEAT_INTERVAL_MS);
   heartbeat.unref();
 
+  // Lets `POST /:sourceFileId/cancel` actually stop this specific request
+  // (rather than only ever being able to discard its eventual result) once
+  // it's registered below, right before the one call that's actually worth
+  // aborting - registering any earlier would let a cancel that arrives
+  // during the synchronous setup above call `.abort()` on a controller
+  // nothing has started listening to yet.
+  const controller = new AbortController();
+
   try {
     await db.updateFile({
       file_id: sourceFileId,
@@ -209,10 +222,28 @@ async function runTranscriptionJob({
       'transcription.error': null,
     });
 
-    const result = await transcribeAndEmbed({ req, file: audioFile, sourceFileId, options });
+    registerActiveController(sourceFileId, controller);
+    const result = await transcribeAndEmbed({
+      req,
+      file: audioFile,
+      sourceFileId,
+      options,
+      signal: controller.signal,
+    });
     logger.info(
       `[TRANSCRIPTION] job transcribeAndEmbed done sourceFileId=${sourceFileId} segments=${result.segments.length} embedded=${result.embedded}`,
     );
+
+    if (wasJobCancelled(sourceFileId)) {
+      // The abort didn't actually stop the request in time (it had already
+      // gotten far enough along) - `POST /:sourceFileId/cancel` already wrote
+      // the authoritative cancelled state, so a "ready" result arriving after
+      // the fact must never overwrite it.
+      logger.info(
+        `[TRANSCRIPTION] job finished after cancel, discarding result sourceFileId=${sourceFileId}`,
+      );
+      return;
+    }
 
     if (wipeCorrections) {
       await db.deleteTranscriptCorrections([conversationId]);
@@ -250,6 +281,20 @@ async function runTranscriptionJob({
       { context: 'transcription job' },
     );
 
+    // Re-checked here, not just once right after `transcribeAndEmbed`
+    // resolves above: a cancel can land anywhere across the several `await`s
+    // in between (file saves, `saveConvo`) - this is the LAST write in that
+    // sequence, and the one that would otherwise silently overwrite
+    // `POST /:sourceFileId/cancel`'s own authoritative `status: 'failed'`
+    // write back to `'ready'` (both use dot-notation `$set`, so neither
+    // naturally wins - whichever runs last does).
+    if (wasJobCancelled(sourceFileId)) {
+      logger.info(
+        `[TRANSCRIPTION] job cancelled during post-processing, discarding result sourceFileId=${sourceFileId}`,
+      );
+      return;
+    }
+
     await db.updateFile({
       file_id: sourceFileId,
       'transcription.status': 'ready',
@@ -264,6 +309,13 @@ async function runTranscriptionJob({
       `[TRANSCRIPTION] job complete sourceFileId=${sourceFileId} conversationId=${conversationId}`,
     );
   } catch (error) {
+    if (wasJobCancelled(sourceFileId)) {
+      // The abort is exactly what threw this (an aborted axios request) -
+      // expected, not a real failure. `POST /:sourceFileId/cancel` already
+      // wrote the authoritative cancelled state; nothing further to persist.
+      logger.info(`[TRANSCRIPTION] job aborted by cancel sourceFileId=${sourceFileId}`);
+      return;
+    }
     logger.error(`[TRANSCRIPTION] job failed sourceFileId=${sourceFileId}`, error);
     await db
       .updateFile({
@@ -314,6 +366,39 @@ async function persistDiarizationDetail({ req, sourceFileId, filename, result, c
 
 router.use(requireJwtAuth);
 router.use(configMiddleware);
+
+/**
+ * Unlike the normal chat-send and file-upload routes (`messageIpLimiter`/
+ * `fileUploadIpLimiter`), this router had no rate limiting at all - a script
+ * could hammer `POST /` (each call creating a Conversation + Message + a
+ * queued transcription job) with no per-endpoint throttle whatsoever.
+ * Reusing the existing file-upload limiter (rather than inventing new
+ * thresholds) since every route here is at least as expensive as a plain
+ * upload - `/` literally is one, and `/retry`/`/retranscribe` re-run a full
+ * transcription job. Registered before every route declaration below so it
+ * runs ahead of multer on `/` and `/probe`, not after.
+ */
+const { fileUploadIpLimiter, fileUploadUserLimiter } = createFileLimiters();
+router.use((req, res, next) => {
+  if (req.method !== 'POST') {
+    return next();
+  }
+  return fileUploadIpLimiter(req, res, (err) => {
+    if (err) {
+      return next(err);
+    }
+    return fileUploadUserLimiter(req, res, next);
+  });
+});
+
+/** Mirrors `packages/data-schemas/src/methods/message.ts`'s own `UUID_REGEX` -
+ *  `saveMessage` there silently logs and returns `undefined` (rather than
+ *  throwing) for a malformed `conversationId`, which would otherwise defeat
+ *  this route's `conversationCreated` rollback below: `saveConvo` has no such
+ *  format check, so a bad id still creates the Conversation, `saveMessage`
+ *  then no-ops without throwing, and the handler responds `202` with a real
+ *  conversationId pointing at a permanently empty conversation. */
+const CONVERSATION_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const AUDIO_VIDEO_PREFIX = /^(audio|video)\//;
 /** Static default (512MB) - admin-configured `fileSizeLimit` overrides don't
@@ -430,230 +515,259 @@ router.post('/probe', upload.single('file'), restoreTenantContextFromReq, async 
  * async, `conversationId`'s response value takes the client straight to a
  * `queued`/`transcribing` job it can watch settle, not a dead end.
  */
-router.post('/', upload.single('file'), restoreTenantContextFromReq, async (req, res) => {
-  const { file } = req;
-  if (!file) {
-    return res.status(400).json({ error: 'No file provided' });
-  }
+router.post(
+  '/',
+  upload.single('file'),
+  // Runs after multer so `req.body.agent_id`/`endpoint` are populated. The
+  // normal ask() pipeline gates every agents-endpoint request through this
+  // same check (`api/server/routes/agents/chat.js`) before ever touching a
+  // conversation; this route wrote a client-supplied `agent_id` straight
+  // into a new Conversation document with no such check. Ephemeral/
+  // non-agents requests are unaffected - `canAccessAgentFromBody` treats
+  // those as a no-op by design.
+  canAccessAgentFromBody({ requiredPermission: PermissionBits.VIEW }),
+  restoreTenantContextFromReq,
+  async (req, res) => {
+    const { file } = req;
+    if (!file) {
+      return res.status(400).json({ error: 'No file provided' });
+    }
 
-  const extractedAudioPath = `${file.path}-audio.m4a`;
-  const cleanupUploadTempFiles = () =>
-    Promise.all([
-      fs.promises.unlink(file.path).catch(() => {}),
-      fs.promises.unlink(extractedAudioPath).catch(() => {}),
-    ]);
+    const extractedAudioPath = `${file.path}-audio.m4a`;
+    const cleanupUploadTempFiles = () =>
+      Promise.all([
+        fs.promises.unlink(file.path).catch(() => {}),
+        fs.promises.unlink(extractedAudioPath).catch(() => {}),
+      ]);
 
-  const { conversationId, endpoint, agent_id, parentMessageId } = req.body;
-  if (!conversationId) {
-    await cleanupUploadTempFiles();
-    return res.status(400).json({ error: 'conversationId is required' });
-  }
+    const { conversationId, endpoint, agent_id, parentMessageId } = req.body;
+    if (!conversationId || !CONVERSATION_ID_REGEX.test(conversationId)) {
+      await cleanupUploadTempFiles();
+      return res.status(400).json({ error: 'conversationId is required and must be a valid UUID' });
+    }
+    // The client never sent this field at all (unlike a plain file upload's
+    // `startUpload`, which does) - `req.body.isTemporary` was always
+    // `undefined` here, so the *second* `saveConvo` call below (`reqCtx`)
+    // evaluated `false` and actively de-flagged the conversation even for a
+    // temporary-chat session, and the file's own retention lookup
+    // (`getRetentionExpiry`) fell through the same way. Both the conversation
+    // and its audio/transcript files never expired.
+    const isTemporary = req.body.isTemporary === 'true';
 
-  let options = {};
-  try {
-    options = req.body.options ? JSON.parse(req.body.options) : {};
-  } catch {
-    await cleanupUploadTempFiles();
-    return res.status(400).json({ error: 'Invalid options payload' });
-  }
+    let options = {};
+    try {
+      options = req.body.options ? JSON.parse(req.body.options) : {};
+    } catch {
+      await cleanupUploadTempFiles();
+      return res.status(400).json({ error: 'Invalid options payload' });
+    }
 
-  // Tracks what's actually been persisted so a mid-way failure - during
-  // this synchronous *preparation* phase only (extraction, storage,
-  // conversation creation) - can be rolled back below. Once the job is
-  // actually enqueued, a failure is no longer this kind of rollback: it's
-  // `transcription.status = 'failed'`, a retryable state on the file that
-  // was already committed (see `runTranscriptionCore`).
-  let sourceFile = null;
-  let sourceFileSource = null;
-  let conversationCreated = false;
+    // Tracks what's actually been persisted so a mid-way failure - during
+    // this synchronous *preparation* phase only (extraction, storage,
+    // conversation creation) - can be rolled back below. Once the job is
+    // actually enqueued, a failure is no longer this kind of rollback: it's
+    // `transcription.status = 'failed'`, a retryable state on the file that
+    // was already committed (see `runTranscriptionCore`).
+    let sourceFile = null;
+    let sourceFileSource = null;
+    let conversationCreated = false;
 
-  try {
-    // Video keyframes commonly sit several seconds apart, and browsers snap
-    // seeks to the nearest one - fine for scrubbing a movie, but far too
-    // imprecise for jumping to one transcript line. Extracting just the
-    // audio (uniformly, even for audio-only uploads) is what makes per-line
-    // playback seeking land where it's supposed to; it's also what gets
-    // transcribed, since WhisperX only ever needed the audio anyway.
-    await extractAudioTrack(file.path, extractedAudioPath);
-    const audioFile = {
-      path: extractedAudioPath,
-      originalname: `${path.parse(file.originalname).name}.m4a`,
-      mimetype: 'audio/mp4',
-      size: (await fs.promises.stat(extractedAudioPath)).size,
-    };
+    try {
+      // Video keyframes commonly sit several seconds apart, and browsers snap
+      // seeks to the nearest one - fine for scrubbing a movie, but far too
+      // imprecise for jumping to one transcript line. Extracting just the
+      // audio (uniformly, even for audio-only uploads) is what makes per-line
+      // playback seeking land where it's supposed to; it's also what gets
+      // transcribed, since WhisperX only ever needed the audio anyway.
+      await extractAudioTrack(file.path, extractedAudioPath);
+      const audioFile = {
+        path: extractedAudioPath,
+        originalname: `${path.parse(file.originalname).name}.m4a`,
+        mimetype: 'audio/mp4',
+        size: (await fs.promises.stat(extractedAudioPath)).size,
+      };
 
-    sourceFileSource = getFileStrategy(req.config, { isImage: false });
-    const filepath = await saveSourceFile({
-      req,
-      file: audioFile,
-      source: sourceFileSource,
-      fileName: `${req.file_id}-${audioFile.originalname}`,
-    });
-    const storageMetadata = getStorageMetadata({ filepath, source: sourceFileSource });
-    const now = new Date();
-    sourceFile = await db.createFile(
-      {
-        type: audioFile.mimetype,
+      sourceFileSource = getFileStrategy(req.config, { isImage: false });
+      const filepath = await saveSourceFile({
+        req,
+        file: audioFile,
         source: sourceFileSource,
-        context: FileContext.transcript_rag,
-        file_id: req.file_id,
-        filepath,
-        ...storageMetadata,
-        filename: audioFile.originalname,
-        user: req.user.id,
-        bytes: audioFile.size,
-        conversationId,
-        transcription: {
-          status: 'queued',
-          jobId: crypto.randomUUID(),
-          instanceId: os.hostname(),
-          heartbeatAt: now,
-          requestedOptions: options,
+        fileName: `${req.file_id}-${audioFile.originalname}`,
+      });
+      const storageMetadata = getStorageMetadata({ filepath, source: sourceFileSource });
+      const now = new Date();
+      sourceFile = await db.createFile(
+        {
+          type: audioFile.mimetype,
+          source: sourceFileSource,
+          context: FileContext.transcript_rag,
+          file_id: req.file_id,
+          filepath,
+          ...storageMetadata,
+          filename: audioFile.originalname,
+          // What the user actually picked. `filename` above is the
+          // ffmpeg-extracted audio track (`clip.m4a`), so without this the
+          // chip's label changed out from under them the moment the real
+          // message replaced the upload placeholder - see `displayName` on
+          // `TConversationTranscript`.
+          originalFilename: file.originalname,
+          user: req.user.id,
+          bytes: audioFile.size,
+          conversationId,
+          transcription: {
+            status: 'queued',
+            jobId: crypto.randomUUID(),
+            instanceId: os.hostname(),
+            heartbeatAt: now,
+            requestedOptions: options,
+          },
+          ...(await getRetentionExpiry(req)),
+          tenantId: req.user.tenantId,
         },
-        ...(await getRetentionExpiry(req)),
-        tenantId: req.user.tenantId,
-      },
-      true,
-    );
-    logger.info(`[TRANSCRIPTION] source file queued file_id=${sourceFile.file_id}`);
-
-    // Phase 4 (transcription/ARCHITECTURE.md §6.1): the composer can now
-    // call this route against a conversation that already exists (attaching
-    // a recording mid-chat), not just the standalone page's always-fresh
-    // id. Checked explicitly rather than assumed from the caller, since
-    // getting this wrong is a real, not theoretical, correctness bug two
-    // different ways: (1) unconditionally writing `title`/`endpoint` would
-    // silently rename the user's ongoing conversation to the audio
-    // filename; (2) `conversationCreated` gates the failure-path rollback
-    // below, which fully *deletes* the conversation - if it were set true
-    // for a pre-existing conversation, a prep-phase failure (a bad upload,
-    // a storage error) would delete the user's entire chat, not just this
-    // attempt's leftovers. Left `false` here is what keeps that rollback
-    // scoped to conversations this request itself created.
-    const existingConversation = await db.getConvo(req.user.id, conversationId);
-    if (existingConversation) {
-      await db.addConvoFile(conversationId, sourceFile.file_id);
-      logger.info(
-        `[TRANSCRIPTION] attached to existing conversation conversationId=${conversationId}`,
+        true,
       );
-    } else {
-      await db.saveConvo(
-        { userId: req.user.id },
-        { conversationId, title: file.originalname, endpoint, agent_id },
+      logger.info(`[TRANSCRIPTION] source file queued file_id=${sourceFile.file_id}`);
+
+      // Phase 4 (transcription/ARCHITECTURE.md §6.1): the composer can now
+      // call this route against a conversation that already exists (attaching
+      // a recording mid-chat), not just the standalone page's always-fresh
+      // id. Checked explicitly rather than assumed from the caller, since
+      // getting this wrong is a real, not theoretical, correctness bug two
+      // different ways: (1) unconditionally writing `title`/`endpoint` would
+      // silently rename the user's ongoing conversation to the audio
+      // filename; (2) `conversationCreated` gates the failure-path rollback
+      // below, which fully *deletes* the conversation - if it were set true
+      // for a pre-existing conversation, a prep-phase failure (a bad upload,
+      // a storage error) would delete the user's entire chat, not just this
+      // attempt's leftovers. Left `false` here is what keeps that rollback
+      // scoped to conversations this request itself created.
+      const existingConversation = await db.getConvo(req.user.id, conversationId);
+      if (existingConversation) {
+        await db.addConvoFile(conversationId, sourceFile.file_id);
+        logger.info(
+          `[TRANSCRIPTION] attached to existing conversation conversationId=${conversationId}`,
+        );
+      } else {
+        await db.saveConvo(
+          { userId: req.user.id, isTemporary },
+          { conversationId, title: file.originalname, endpoint, agent_id },
+          { context: 'POST /api/transcribe' },
+        );
+        conversationCreated = true;
+        await db.addConvoFile(conversationId, sourceFile.file_id);
+        logger.info(`[TRANSCRIPTION] conversation ready conversationId=${conversationId}`);
+      }
+
+      // A real, persisted chat message - not just a file record - is what
+      // makes this recording show up in the conversation the instant upload
+      // finishes, the same way any other attachment does: the client's
+      // ordinary message-list query (`GET /api/messages/:conversationId`,
+      // already polled/refetched on every conversation view) picks it up with
+      // no bespoke client-side plumbing, unlike a composer-only attachment,
+      // which only ever becomes a real message once the user manually sends.
+      // `Files.tsx` already routes an audio/video `message.files` entry to
+      // `TranscriptCard`, which polls this same job's status and opens the
+      // transcript panel on click - so this alone is what makes "submitted
+      // file bubble now, click to view the transcript later" work, matching
+      // the standalone page's own message-based flow instead of re-inventing
+      // a separate one for the composer.
+      const reqCtx = {
+        userId: req.user.id,
+        isTemporary,
+        interfaceConfig: req.config?.interfaceConfig,
+      };
+      const savedMessage = await db.saveMessage(
+        reqCtx,
+        {
+          messageId: crypto.randomUUID(),
+          conversationId,
+          parentMessageId: parentMessageId || Constants.NO_PARENT,
+          isCreatedByUser: true,
+          user: req.user.id,
+          sender: 'User',
+          text: '',
+          endpoint,
+          files: [
+            {
+              file_id: sourceFile.file_id,
+              filepath: sourceFile.filepath,
+              filename: sourceFile.filename,
+              type: sourceFile.type,
+              bytes: sourceFile.bytes,
+              source: sourceFile.source,
+              context: sourceFile.context,
+            },
+          ],
+        },
         { context: 'POST /api/transcribe' },
       );
-      conversationCreated = true;
-      await db.addConvoFile(conversationId, sourceFile.file_id);
-      logger.info(`[TRANSCRIPTION] conversation ready conversationId=${conversationId}`);
-    }
+      if (savedMessage) {
+        // Deliberately *not* `saveConvo(reqCtx, savedMessage, ...)` (the
+        // `POST /api/messages/:conversationId` precedent) - `savedMessage.files`
+        // is an array of file objects, but `Conversation.files` is a plain
+        // `[String]` of ids, and spreading the former into the latter throws a
+        // Mongoose CastError. Passing just the id is enough: `saveConvo`
+        // unconditionally re-derives `messages` from what's actually
+        // persisted, so this alone refreshes the conversation's pointer to
+        // include the message just saved.
+        await db.saveConvo(reqCtx, { conversationId }, { context: 'POST /api/transcribe' });
+      }
 
-    // A real, persisted chat message - not just a file record - is what
-    // makes this recording show up in the conversation the instant upload
-    // finishes, the same way any other attachment does: the client's
-    // ordinary message-list query (`GET /api/messages/:conversationId`,
-    // already polled/refetched on every conversation view) picks it up with
-    // no bespoke client-side plumbing, unlike a composer-only attachment,
-    // which only ever becomes a real message once the user manually sends.
-    // `Files.tsx` already routes an audio/video `message.files` entry to
-    // `TranscriptCard`, which polls this same job's status and opens the
-    // transcript panel on click - so this alone is what makes "submitted
-    // file bubble now, click to view the transcript later" work, matching
-    // the standalone page's own message-based flow instead of re-inventing
-    // a separate one for the composer.
-    const reqCtx = {
-      userId: req.user.id,
-      isTemporary: req.body.isTemporary === 'true',
-      interfaceConfig: req.config?.interfaceConfig,
-    };
-    const savedMessage = await db.saveMessage(
-      reqCtx,
-      {
-        messageId: crypto.randomUUID(),
+      res.status(202).json({
         conversationId,
-        parentMessageId: parentMessageId || Constants.NO_PARENT,
-        isCreatedByUser: true,
-        user: req.user.id,
-        sender: 'User',
-        text: '',
-        endpoint,
-        files: [
-          {
-            file_id: sourceFile.file_id,
-            filepath: sourceFile.filepath,
-            filename: sourceFile.filename,
-            type: sourceFile.type,
-            bytes: sourceFile.bytes,
-            source: sourceFile.source,
-            context: sourceFile.context,
-          },
-        ],
-      },
-      { context: 'POST /api/transcribe' },
-    );
-    if (savedMessage) {
-      // Deliberately *not* `saveConvo(reqCtx, savedMessage, ...)` (the
-      // `POST /api/messages/:conversationId` precedent) - `savedMessage.files`
-      // is an array of file objects, but `Conversation.files` is a plain
-      // `[String]` of ids, and spreading the former into the latter throws a
-      // Mongoose CastError. Passing just the id is enough: `saveConvo`
-      // unconditionally re-derives `messages` from what's actually
-      // persisted, so this alone refreshes the conversation's pointer to
-      // include the message just saved.
-      await db.saveConvo(reqCtx, { conversationId }, { context: 'POST /api/transcribe' });
-    }
+        messageId: savedMessage?.messageId,
+        sourceFile: { file_id: sourceFile.file_id, filename: sourceFile.filename },
+        status: 'queued',
+        queuePosition: getQueueDepth(),
+      });
 
-    res.status(202).json({
-      conversationId,
-      messageId: savedMessage?.messageId,
-      sourceFile: { file_id: sourceFile.file_id, filename: sourceFile.filename },
-      status: 'queued',
-      queuePosition: getQueueDepth(),
-    });
+      // Not awaited - the queue itself serializes execution (D5), and this
+      // request is done the moment the client has a conversation to open.
+      // `runTranscriptionCore` persists its own success/failure state, so
+      // the `.catch` below exists only to keep an unhandled-rejection
+      // warning from firing for this fire-and-forget enqueue.
+      enqueueTranscriptionJob(
+        () =>
+          runTranscriptionCore({
+            req,
+            sourceFileId: sourceFile.file_id,
+            sourceFilename: file.originalname,
+            audioFile,
+            conversationId,
+            options,
+            wipeCorrections: false,
+            cleanupPaths: [file.path, extractedAudioPath],
+          }),
+        sourceFile.file_id,
+      ).catch(() => {});
+    } catch (error) {
+      logger.error('[POST /api/transcribe] Failed to prepare transcription job', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: getTranscribeErrorMessage(error) });
+      }
 
-    // Not awaited - the queue itself serializes execution (D5), and this
-    // request is done the moment the client has a conversation to open.
-    // `runTranscriptionCore` persists its own success/failure state, so
-    // the `.catch` below exists only to keep an unhandled-rejection
-    // warning from firing for this fire-and-forget enqueue.
-    enqueueTranscriptionJob(() =>
-      runTranscriptionCore({
-        req,
-        sourceFileId: sourceFile.file_id,
-        sourceFilename: file.originalname,
-        audioFile,
-        conversationId,
-        options,
-        wipeCorrections: false,
-        cleanupPaths: [file.path, extractedAudioPath],
-      }),
-    ).catch(() => {});
-  } catch (error) {
-    logger.error('[POST /api/transcribe] Failed to prepare transcription job', error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: getTranscribeErrorMessage(error) });
-    }
-
-    // Best-effort rollback of the *preparation* phase only - nothing here
-    // runs once the job has actually been enqueued, since by then the
-    // response has already gone out and cleanup is `runTranscriptionCore`'s
-    // job instead.
-    try {
-      if (sourceFile) {
-        const { deleteFile: deleteStoredFile } = getStrategyFunctions(sourceFileSource);
-        if (deleteStoredFile) {
-          await deleteStoredFile(req, sourceFile).catch(() => {});
+      // Best-effort rollback of the *preparation* phase only - nothing here
+      // runs once the job has actually been enqueued, since by then the
+      // response has already gone out and cleanup is `runTranscriptionCore`'s
+      // job instead.
+      try {
+        if (sourceFile) {
+          const { deleteFile: deleteStoredFile } = getStrategyFunctions(sourceFileSource);
+          if (deleteStoredFile) {
+            await deleteStoredFile(req, sourceFile).catch(() => {});
+          }
+          await db.deleteFile(sourceFile.file_id);
         }
-        await db.deleteFile(sourceFile.file_id);
+        if (conversationCreated) {
+          await db.deleteConvos(req.user.id, { conversationId });
+        }
+      } catch (cleanupError) {
+        logger.error('[POST /api/transcribe] Failed to roll back failed preparation', cleanupError);
       }
-      if (conversationCreated) {
-        await db.deleteConvos(req.user.id, { conversationId });
-      }
-    } catch (cleanupError) {
-      logger.error('[POST /api/transcribe] Failed to roll back failed preparation', cleanupError);
+      await cleanupUploadTempFiles();
     }
-    await cleanupUploadTempFiles();
-  }
-});
+  },
+);
 
 /**
  * Batch status poll for the cards/panel of an open conversation - one
@@ -686,6 +800,7 @@ router.get('/status', async (req, res) => {
         file_id: record.file_id,
         status: record.transcription.status,
         error: record.transcription.error ?? null,
+        cancelled: record.transcription.cancelledAt != null,
         transcriptFileId: record.transcription.transcriptFileId ?? null,
         diarizationDetailFileId: record.transcription.diarizationDetailFileId ?? null,
       }));
@@ -693,6 +808,41 @@ router.get('/status', async (req, res) => {
   } catch (error) {
     logger.error('[GET /api/transcribe/status] Failed', error);
     res.status(500).json({ error: 'Could not read transcription status' });
+  }
+});
+
+/**
+ * Every recording attached to one conversation, with the authoritative
+ * "can this be searched right now" answer on each - see
+ * `TConversationTranscript` and `db.getConversationTranscripts`.
+ *
+ * Keyed by conversation rather than by file id because every caller that
+ * needs this knows the conversation and nothing else yet: a chat turn about
+ * to assemble its tools, a panel resolving which recording to open. Answers
+ * from the `File` collection alone, so it stays correct for a client whose
+ * cached conversation document was last written before the job finished -
+ * the exact gap that let a conversation with a finished transcript report
+ * having none.
+ */
+router.get('/conversation/:conversationId', async (req, res) => {
+  const { conversationId } = req.params;
+  if (!conversationId || !CONVERSATION_ID_REGEX.test(conversationId)) {
+    return res.status(400).json({ error: 'A valid conversationId is required' });
+  }
+
+  try {
+    // Ownership is enforced inside the query itself (every file must match
+    // this user, and this tenant when there is one) rather than by a
+    // separate conversation-ownership read first: one round trip, and no
+    // window where the check and the read could disagree.
+    const transcripts = await db.getConversationTranscripts(conversationId, {
+      userId: req.user.id,
+      tenantId: req.user.tenantId,
+    });
+    res.json({ transcripts });
+  } catch (error) {
+    logger.error('[GET /api/transcribe/conversation/:conversationId] Failed', error);
+    res.status(500).json({ error: "Could not read this conversation's transcripts" });
   }
 });
 
@@ -769,21 +919,23 @@ router.post('/:sourceFileId/retry', async (req, res) => {
       queuePosition: getQueueDepth(),
     });
 
-    enqueueTranscriptionJob(() =>
-      runTranscriptionCore({
-        req,
-        sourceFileId,
-        sourceFilename: sourceFile.filename,
-        audioFile: {
-          path: tmpPath,
-          originalname: sourceFile.filename,
-          mimetype: sourceFile.type || inferMimeType(sourceFile.filename),
-        },
-        conversationId: sourceFile.conversationId,
-        options: sourceFile.transcription?.requestedOptions ?? {},
-        wipeCorrections: false,
-        cleanupPaths: [tmpPath],
-      }),
+    enqueueTranscriptionJob(
+      () =>
+        runTranscriptionCore({
+          req,
+          sourceFileId,
+          sourceFilename: sourceFile.originalFilename ?? sourceFile.filename,
+          audioFile: {
+            path: tmpPath,
+            originalname: sourceFile.filename,
+            mimetype: sourceFile.type || inferMimeType(sourceFile.filename),
+          },
+          conversationId: sourceFile.conversationId,
+          options: sourceFile.transcription?.requestedOptions ?? {},
+          wipeCorrections: false,
+          cleanupPaths: [tmpPath],
+        }),
+      sourceFileId,
     ).catch(() => {});
   } catch (error) {
     logger.error(
@@ -797,6 +949,51 @@ router.post('/:sourceFileId/retry', async (req, res) => {
       await fs.promises.unlink(tmpPath).catch(() => {});
     }
   }
+});
+
+/**
+ * Best-effort cancel of a job that's still `queued` or actively
+ * `transcribing` - §5.2's `POST /:sourceFileId/cancel`. Writes the terminal
+ * state itself, immediately, rather than waiting for the job to notice it's
+ * been asked to stop: `requestCancel` either removes it from the queue
+ * (never started) or aborts its in-flight request to the RAG/WhisperX
+ * service (already running, which may keep working for a few moments after
+ * the connection drops - nothing here waits on or trusts whatever it
+ * eventually returns; `runTranscriptionJob`'s own success/failure handling
+ * checks `wasJobCancelled` and discards it either way). Reuses
+ * `transcription.status: 'failed'` rather than a new status value, so the
+ * existing `POST /:sourceFileId/retry` (and every other "is this terminal?"
+ * check) needs no changes to also serve a cancelled job.
+ */
+router.post('/:sourceFileId/cancel', async (req, res) => {
+  const { sourceFileId } = req.params;
+  const sourceFile = await assertOwnsSourceFile(req, res, sourceFileId);
+  if (!sourceFile) {
+    return;
+  }
+  const status = sourceFile.transcription?.status;
+  if (status !== 'queued' && status !== 'transcribing') {
+    return res.status(409).json({
+      error: `Only a queued or in-progress job can be cancelled (current status: ${status ?? 'unknown'})`,
+    });
+  }
+
+  await db.updateFile({
+    file_id: sourceFileId,
+    'transcription.status': 'failed',
+    'transcription.error': 'Cancelled by user',
+    'transcription.cancelledAt': new Date(),
+    'transcription.completedAt': new Date(),
+  });
+  const wasTracked = requestCancel(sourceFileId);
+  logger.info(
+    `[TRANSCRIPTION] cancel requested sourceFileId=${sourceFileId} wasTracked=${wasTracked}`,
+  );
+  res.status(200).json({
+    sourceFile: { file_id: sourceFile.file_id, filename: sourceFile.filename },
+    status: 'failed',
+    cancelled: true,
+  });
 });
 
 /**
@@ -862,21 +1059,23 @@ router.post('/:sourceFileId/retranscribe', async (req, res) => {
       queuePosition: getQueueDepth(),
     });
 
-    enqueueTranscriptionJob(() =>
-      runTranscriptionCore({
-        req,
-        sourceFileId,
-        sourceFilename: sourceFile.filename,
-        audioFile: {
-          path: tmpPath,
-          originalname: sourceFile.filename,
-          mimetype: sourceFile.type || inferMimeType(sourceFile.filename),
-        },
-        conversationId,
-        options,
-        wipeCorrections: true,
-        cleanupPaths: [tmpPath],
-      }),
+    enqueueTranscriptionJob(
+      () =>
+        runTranscriptionCore({
+          req,
+          sourceFileId,
+          sourceFilename: sourceFile.originalFilename ?? sourceFile.filename,
+          audioFile: {
+            path: tmpPath,
+            originalname: sourceFile.filename,
+            mimetype: sourceFile.type || inferMimeType(sourceFile.filename),
+          },
+          conversationId,
+          options,
+          wipeCorrections: true,
+          cleanupPaths: [tmpPath],
+        }),
+      sourceFileId,
     ).catch(() => {});
   } catch (error) {
     logger.error(

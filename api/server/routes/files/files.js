@@ -47,7 +47,13 @@ const isAgentToolResourceKey = (toolResource) =>
 router.get('/', async (req, res) => {
   try {
     const appConfig = req.config;
-    const files = await db.getFiles({ user: req.user.id });
+    // `text` is projected away, matching the agent-files route below. Some
+    // file kinds store their whole content inline in that field - the Audio
+    // Transcriber's diarization-detail record is up to 14MB on its own, and
+    // a transcript is tens of KB - so returning it here shipped megabytes of
+    // payload the file list never reads, growing with every recording the
+    // user has ever made. No consumer of `GET /api/files` touches `text`.
+    const files = await db.getFiles({ user: req.user.id }, null, { text: 0 });
     if (appConfig.fileStrategy === FileSources.s3) {
       try {
         const cache = getLogStores(CacheKeys.S3_EXPIRY_INTERVAL);

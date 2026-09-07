@@ -18,11 +18,13 @@ interface MultiChannelDialogProps {
 
 /**
  * Shown once, right after a file is picked, only when the browser can tell
- * the recording has more than one audio channel - the common shape of a
- * call recording or a multi-mic interview, where each channel already IS one
- * speaker. Splitting by channel in that case is more accurate than asking
- * pyannote to guess who's who from a single mixed-down stream, so this
- * dialog exists to offer that shortcut rather than assume it.
+ * the recording has 3 or more audio channels - the common shape of a
+ * multi-mic call recording or interview, where each channel already IS one
+ * speaker. (2 channels is left alone, since that's ordinarily just stereo
+ * rather than one speaker per channel.) Splitting by channel in that case
+ * is more accurate than asking pyannote to guess who's who from a single
+ * mixed-down stream, so this dialog exists to offer that shortcut rather
+ * than assume it.
  */
 export default function MultiChannelDialog({
   isOpen,
@@ -47,7 +49,7 @@ export default function MultiChannelDialog({
     <OGDialog open={isOpen} onOpenChange={onOpenChange}>
       <OGDialogTemplate
         title={localize('com_ui_multi_channel_dialog_title')}
-        className="w-11/12 sm:w-[26rem]"
+        className="w-11/12 border border-solid border-border-medium bg-surface-tertiary sm:w-[26rem]"
         showCloseButton={false}
         showCancelButton={false}
         footerClassName="[&>*]:flex-1 [&>*]:justify-center"
@@ -69,10 +71,11 @@ export default function MultiChannelDialog({
             {localize('com_ui_multi_channel_dialog_decline')}
           </Button>
         }
-        selection={{
-          selectHandler: handleAccept,
-          selectText: localize('com_ui_multi_channel_dialog_accept'),
-        }}
+        selection={
+          <Button variant="submit" onClick={handleAccept}>
+            {localize('com_ui_multi_channel_dialog_accept')}
+          </Button>
+        }
       />
     </OGDialog>
   );

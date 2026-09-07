@@ -1,4 +1,12 @@
-const { enqueueTranscriptionJob, getQueueDepth, onIdle } = require('./jobQueue');
+const {
+  enqueueTranscriptionJob,
+  dequeueTranscriptionJob,
+  registerActiveController,
+  requestCancel,
+  wasJobCancelled,
+  getQueueDepth,
+  onIdle,
+} = require('./jobQueue');
 
 function deferred() {
   let resolve;
@@ -119,6 +127,94 @@ describe('transcription job queue (transcription/ARCHITECTURE.md D5)', () => {
       });
       await expect(job).rejects.toThrow('boom');
       await expect(onIdle()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('cancellation', () => {
+    it('a job enqueued with no jobId is unaffected - existing single-arg callers keep working', async () => {
+      const result = await enqueueTranscriptionJob(async () => 'done');
+      expect(result).toBe('done');
+      // Nothing to cancel - never registered, so this is just a no-op.
+      expect(requestCancel('never-enqueued')).toBe(false);
+    });
+
+    it('dequeueTranscriptionJob removes a job that has not started yet, rejecting its promise', async () => {
+      const blocker = deferred();
+      const running = enqueueTranscriptionJob(async () => {
+        await blocker.promise;
+        return 'running';
+      }, 'job-running');
+      const queued = enqueueTranscriptionJob(async () => 'should never run', 'job-queued');
+
+      expect(dequeueTranscriptionJob('job-queued')).toBe(true);
+      await expect(queued).rejects.toThrow('Job cancelled before it started');
+
+      blocker.resolve();
+      await expect(running).resolves.toBe('running');
+    });
+
+    it('dequeueTranscriptionJob is a no-op once the job has already started running', async () => {
+      const blocker = deferred();
+      const running = enqueueTranscriptionJob(async () => {
+        await blocker.promise;
+        return 'done';
+      }, 'already-running');
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(dequeueTranscriptionJob('already-running')).toBe(false);
+
+      blocker.resolve();
+      await expect(running).resolves.toBe('done');
+    });
+
+    it('requestCancel aborts the registered controller of an already-running job', async () => {
+      const blocker = deferred();
+      let abortSignalWasAborted = false;
+
+      const job = enqueueTranscriptionJob(async () => {
+        const controller = new AbortController();
+        registerActiveController('running-with-controller', controller);
+        controller.signal.addEventListener('abort', () => {
+          abortSignalWasAborted = true;
+        });
+        await blocker.promise;
+        return wasJobCancelled('running-with-controller') ? 'cancelled-outcome' : 'normal-outcome';
+      }, 'running-with-controller');
+
+      await new Promise((r) => setTimeout(r, 10));
+      expect(requestCancel('running-with-controller')).toBe(true);
+      expect(abortSignalWasAborted).toBe(true);
+      expect(wasJobCancelled('running-with-controller')).toBe(true);
+
+      blocker.resolve();
+      // The job itself decides what to do about being cancelled (here,
+      // returning a different value) - `requestCancel` only signals it.
+      await expect(job).resolves.toBe('cancelled-outcome');
+    });
+
+    it('requestCancel on a still-queued job removes it from the queue instead of trying to abort anything', async () => {
+      const blocker = deferred();
+      const running = enqueueTranscriptionJob(async () => {
+        await blocker.promise;
+        return 'running';
+      }, 'blocking-job');
+      const queued = enqueueTranscriptionJob(async () => 'should never run', 'queued-job');
+
+      expect(requestCancel('queued-job')).toBe(true);
+      await expect(queued).rejects.toThrow('Job cancelled before it started');
+
+      blocker.resolve();
+      await expect(running).resolves.toBe('running');
+    });
+
+    it('wasJobCancelled is false for a job that was never cancelled, and stops being tracked once settled', async () => {
+      const jobId = 'settles-normally';
+      expect(wasJobCancelled(jobId)).toBe(false);
+      await enqueueTranscriptionJob(async () => 'done', jobId);
+      // The job's entry in the internal map is cleaned up once it settles -
+      // asking about a job id that already finished reports "not cancelled",
+      // not a leaked stale record.
+      expect(wasJobCancelled(jobId)).toBe(false);
     });
   });
 });

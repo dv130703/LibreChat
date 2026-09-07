@@ -1,9 +1,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useToastContext } from '@librechat/client';
 import { QueryKeys, MutationKeys, dataService } from 'librechat-data-provider';
 import type { UseMutationResult } from '@tanstack/react-query';
+import useLocalize from '~/hooks/useLocalize';
 import type {
   TTranscribeOptions,
   TTranscribeQueuedResponse,
+  TTranscribeCancelResponse,
   TTranscriptCorrection,
   InterviewTranscriptForm,
   MeetingMinutesForm,
@@ -121,6 +124,52 @@ export const useRetryTranscriptionMutation = (): UseMutationResult<
       // single-id key here would miss any batched poll where this file
       // isn't first.
       queryClient.invalidateQueries([QueryKeys.transcribeStatus]);
+    },
+  });
+};
+
+export interface CancelTranscriptionVariables {
+  sourceFileId: string;
+}
+
+/** Best-effort cancel of a job that's still `queued`/`transcribing` - drives
+ *  the composer's stop-square while a transcription is in flight. */
+export const useCancelTranscriptionMutation = (): UseMutationResult<
+  TTranscribeCancelResponse,
+  unknown,
+  CancelTranscriptionVariables,
+  unknown
+> => {
+  const queryClient = useQueryClient();
+  const { showToast } = useToastContext();
+  const localize = useLocalize();
+  return useMutation([MutationKeys.cancelTranscription], {
+    mutationFn: ({ sourceFileId }: CancelTranscriptionVariables) =>
+      dataService.cancelTranscription(sourceFileId),
+    onSuccess: () => {
+      // Same reasoning as `useRetryTranscriptionMutation` above.
+      queryClient.invalidateQueries([QueryKeys.transcribeStatus]);
+    },
+    onError: (error) => {
+      const status =
+        error && typeof error === 'object' && 'response' in error
+          ? (error as { response?: { status?: number } }).response?.status
+          : undefined;
+      if (status === 409) {
+        // The job already reached `ready`/`failed` before this request
+        // landed (a real, narrow window - the status poll can lag the
+        // server by up to its own interval) - the user's intent ("stop it")
+        // is already satisfied, so this isn't a failure worth alarming them
+        // over. Just make sure the UI reflects the real, current state
+        // instead of leaving the stop-square looking like the click did
+        // nothing at all.
+        queryClient.invalidateQueries([QueryKeys.transcribeStatus]);
+        return;
+      }
+      showToast({
+        message: localize('com_ui_transcribe_cancel_error'),
+        status: 'error',
+      });
     },
   });
 };

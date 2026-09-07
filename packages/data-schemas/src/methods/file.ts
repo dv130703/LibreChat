@@ -1,4 +1,10 @@
-import { EToolResources, FileContext } from 'librechat-data-provider';
+import {
+  EToolResources,
+  FileContext,
+  isTranscriptQueryable,
+  sourceFileIdFromDerived,
+} from 'librechat-data-provider';
+import type { TConversationTranscript, TTranscribeJobStatus } from 'librechat-data-provider';
 import type { FilterQuery, SortOrder, Model } from 'mongoose';
 import type { IMongoFile } from '~/types/file';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
@@ -41,6 +47,10 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
     toolResourceSet?: Set<EToolResources>,
     ownerScope?: FileOwnerScope,
   ) => Promise<IMongoFile[]>;
+  getConversationTranscripts: (
+    conversationId: string,
+    ownerScope: FileOwnerScope,
+  ) => Promise<TConversationTranscript[]>;
   getCodeGeneratedFiles: (
     conversationId: string,
     threadFileIds?: string[],
@@ -178,7 +188,26 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
       const sortOptions = { updatedAt: -1 as SortOrder };
 
       const results = await getFiles(filter, sortOptions, selectFields);
-      return results ?? [];
+      if (!results) {
+        return [];
+      }
+
+      // A transcript is searchable only while its RAG index still reflects
+      // its current text. `embedded: true` above answers "did an embed ever
+      // succeed", which stops being the same question the moment a
+      // correction lands: `markTranscriptStale` bumps `transcriptVersion`
+      // and sets `indexStatus: 'stale'` but leaves `embedded` alone, so the
+      // broader filter would keep serving - and citing - superseded chunks.
+      // Applied here rather than as a Mongo expression so the decision has
+      // exactly one implementation (`isTranscriptQueryable`), shared with
+      // `getConversationTranscripts` and the client. Only transcript records
+      // are subject to it; every other file kind keeps the gate it had.
+      return results.filter((file) => {
+        if (file.context !== FileContext.transcript_rag || file.sourceFileId == null) {
+          return true;
+        }
+        return isTranscriptQueryable(file).isQueryable;
+      });
     } catch (error) {
       logger.error('[getToolFilesByIds] Error retrieving tool files:', error);
       throw new Error('Error retrieving tool files');
@@ -439,6 +468,126 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
    * @returns The updated file document (read `transcriptVersion` off it to
    *   see the new value), or null if no file has that id.
    */
+  /**
+   * Every recording attached to a conversation, with the single authoritative
+   * answer to "can this be searched right now" on each - see
+   * `TConversationTranscript`.
+   *
+   * Derived only from the `File` collection, which already carries
+   * `conversationId` on the source audio and on both derived files.
+   * Deliberately does NOT read `Conversation.files[]`: that array is a
+   * denormalized pointer list maintained for general agent file resolution,
+   * and answering this question from it is what allowed a client cache that
+   * had not been refetched since job completion to conclude a conversation
+   * had no transcript at all.
+   *
+   * One query, one pass. The `text` projection is excluded because the
+   * diarization-detail record inlines its full JSON blob (up to 14MB) in
+   * that field, and nothing here reads it.
+   */
+  async function getConversationTranscripts(
+    conversationId: string,
+    ownerScope: FileOwnerScope,
+  ): Promise<TConversationTranscript[]> {
+    if (!conversationId) {
+      return [];
+    }
+
+    const File = mongoose.models.File as Model<IMongoFile>;
+    const files = await File.find(
+      withOwnerScope(
+        {
+          conversationId,
+          context: {
+            $in: [FileContext.transcript_rag, FileContext.transcript_diarization_detail],
+          },
+        },
+        ownerScope,
+      ),
+      { text: 0 },
+    )
+      .sort({ createdAt: 1 })
+      .lean<IMongoFile[]>();
+
+    /** Keyed by source recording. Entries are created on first sight of ANY
+     *  of a recording's three files, since sort order is by creation time
+     *  and says nothing about which of them is encountered first. */
+    const bySourceId = new Map<string, TConversationTranscript>();
+    const ensure = (sourceFileId: string): TConversationTranscript => {
+      const existing = bySourceId.get(sourceFileId);
+      if (existing) {
+        return existing;
+      }
+      const created: TConversationTranscript = {
+        sourceFileId,
+        displayName: sourceFileId,
+        transcriptFileId: null,
+        diarizationDetailFileId: null,
+        jobStatus: null,
+        jobError: null,
+        cancelled: false,
+        indexStatus: null,
+        isQueryable: false,
+        unqueryableReason: 'not_indexed',
+      };
+      bySourceId.set(sourceFileId, created);
+      return created;
+    };
+
+    for (const file of files) {
+      // The source audio is the only one of the three carrying a job record.
+      if (file.transcription != null) {
+        const entry = ensure(file.file_id);
+        entry.displayName = file.originalFilename ?? file.filename;
+        entry.jobStatus = (file.transcription.status ?? null) as TTranscribeJobStatus | null;
+        entry.jobError = file.transcription.error ?? null;
+        entry.cancelled = file.transcription.cancelledAt != null;
+        continue;
+      }
+
+      // `sourceFileId` is an explicit back-reference written on transcript
+      // records; the diarization-detail record has never carried one, so the
+      // id scheme is the fallback for it and for pre-migration transcripts.
+      const sourceFileId = file.sourceFileId ?? sourceFileIdFromDerived(file.file_id);
+      if (sourceFileId == null) {
+        continue;
+      }
+      const entry = ensure(sourceFileId);
+
+      if (file.context === FileContext.transcript_diarization_detail) {
+        entry.diarizationDetailFileId = file.file_id;
+        continue;
+      }
+
+      entry.transcriptFileId = file.file_id;
+      entry.indexStatus = file.indexStatus ?? null;
+      const { isQueryable, reason } = isTranscriptQueryable({
+        indexStatus: file.indexStatus,
+        indexVersion: file.indexVersion,
+        transcriptVersion: file.transcriptVersion,
+        embedded: file.embedded,
+      });
+      entry.isQueryable = isQueryable;
+      entry.unqueryableReason = reason;
+    }
+
+    // A recording with no transcript file yet has nothing to index, so its
+    // reason comes from the job instead - "still running" and "it failed"
+    // are different things to tell a user, and neither is "not indexed".
+    for (const entry of bySourceId.values()) {
+      if (entry.transcriptFileId != null) {
+        continue;
+      }
+      if (entry.jobStatus === 'queued' || entry.jobStatus === 'transcribing') {
+        entry.unqueryableReason = 'in_progress';
+      } else if (entry.jobStatus === 'failed') {
+        entry.unqueryableReason = 'job_failed';
+      }
+    }
+
+    return Array.from(bySourceId.values());
+  }
+
   async function markTranscriptStale(file_id: string): Promise<IMongoFile | null> {
     const File = mongoose.models.File as Model<IMongoFile>;
     return File.findOneAndUpdate(
@@ -609,6 +758,7 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
     updateFile,
     updateFileUsage,
     markTranscriptStale,
+    getConversationTranscripts,
     deleteFile,
     deleteFiles,
     deleteFileByFilter,

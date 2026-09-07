@@ -496,10 +496,23 @@ export const getTranscribeStatus = (fileIds: string[]): Promise<f.TTranscribeSta
   return request.get(endpoints.transcribeStatus(fileIds));
 };
 
+/** Every recording attached to a conversation, with the authoritative
+ *  "is it queryable" answer on each - see `TConversationTranscript`. */
+export const getConversationTranscripts = (
+  conversationId: string,
+): Promise<f.TConversationTranscriptsResponse> => {
+  return request.get(endpoints.conversationTranscripts(conversationId));
+};
+
 /** Re-enqueues a failed job with the options it originally ran with. Only
  *  valid when the job's current status is `'failed'`. */
 export const retryTranscription = (sourceFileId: string): Promise<f.TTranscribeQueuedResponse> => {
   return request.post(endpoints.retryTranscription(sourceFileId), {});
+};
+
+/** Best-effort cancel of a job that's still `queued`/`transcribing`. */
+export const cancelTranscription = (sourceFileId: string): Promise<f.TTranscribeCancelResponse> => {
+  return request.post(endpoints.cancelTranscription(sourceFileId), {});
 };
 
 /** Mints a short-lived, ready-to-use `<audio src>` URL for a source audio

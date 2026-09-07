@@ -36,8 +36,10 @@ const AuthLayout = () => (
  *  keep working by landing on the same conversation with the transcript
  *  panel open, which is now the canonical place to view one. No `?file=`
  *  param: `TranscriptPanel` resolves it itself from the conversation's file
- *  list (`splitFileIds`), same as it already does for any bare
- *  `?panel=transcript` link. */
+ *  list (`resolveFileTrio`'s no-requested-id fallback, correct here since
+ *  every conversation from that standalone-page era carries exactly one
+ *  recording), same as it already does for any bare `?panel=transcript`
+ *  link. */
 const AudioTranscriberRedirect = () => {
   const { conversationId } = useParams();
   return <Navigate to={`/c/${conversationId}?panel=transcript`} replace={true} />;

@@ -13,6 +13,7 @@ import MessageContent from '~/components/Chat/Messages/Content/MessageContent';
 import MessageTimestamp from '~/components/Chat/Messages/ui/MessageTimestamp';
 import { useLocalize, useMessageActions, useContentMetadata } from '~/hooks';
 import PlaceholderRow from '~/components/Chat/Messages/ui/PlaceholderRow';
+import { MESSAGE_BODY_CLASSES } from '~/components/Chat/Messages/ui/messageShell';
 import SiblingSwitch from '~/components/Chat/Messages/SiblingSwitch';
 import HoverButtons from '~/components/Chat/Messages/HoverButtons';
 import MessageIcon from '~/components/Chat/Messages/MessageIcon';
@@ -200,7 +201,7 @@ const MessageRender = memo(function MessageRender({
         )}
 
         <div className="flex flex-col gap-1">
-          <div className="flex min-h-[20px] max-w-full flex-grow flex-col gap-0">
+          <div className={MESSAGE_BODY_CLASSES}>
             <MessageContext.Provider value={messageContextValue}>
               <MessageContent
                 ask={ask}

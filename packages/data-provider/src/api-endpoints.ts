@@ -311,6 +311,14 @@ export const transcribeConfig = () => `${BASE_URL}/api/transcribe/config`;
  *  queued, just `ffprobe` on an uploaded temp file. */
 export const probeAudioChannels = () => `${BASE_URL}/api/transcribe/probe`;
 
+/** Every recording on a conversation plus, per recording, whether its
+ *  transcript is actually searchable right now - the single read model UI
+ *  and retrieval both answer that question from. Keyed by conversation, not
+ *  by file id, because the caller asking it (a chat turn, a panel opening)
+ *  knows the conversation and nothing else. */
+export const conversationTranscripts = (conversationId: string) =>
+  `${BASE_URL}/api/transcribe/conversation/${encodeURIComponent(conversationId)}`;
+
 /** Batch status poll (Phase 2, transcription/ARCHITECTURE.md §5.2) - source
  *  audio file ids, comma-joined. */
 export const transcribeStatus = (fileIds: string[]) =>
@@ -319,6 +327,10 @@ export const transcribeStatus = (fileIds: string[]) =>
 /** Re-enqueues a failed job with the options it originally ran with. */
 export const retryTranscription = (sourceFileId: string) =>
   `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/retry`;
+
+/** Best-effort cancel of a `queued`/`transcribing` job. */
+export const cancelTranscription = (sourceFileId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/cancel`;
 
 /** Mints the short-lived token `transcribeStream`'s direct-streaming
  *  `<audio src>` URL needs (§12 #13) - itself behind the normal auth chain,

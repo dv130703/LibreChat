@@ -1,17 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
-import type { TFile, TTranscribeStatusEntry } from 'librechat-data-provider';
+import type { TConversationTranscript } from 'librechat-data-provider';
 import TranscriptCard from '../TranscriptCard';
-
-const mockRetryMutate = jest.fn();
-let mockRetryIsLoading = false;
-
-jest.mock('~/data-provider', () => ({
-  useRetryTranscriptionMutation: () => ({
-    mutate: mockRetryMutate,
-    isLoading: mockRetryIsLoading,
-  }),
-}));
 
 jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
@@ -46,36 +36,33 @@ function SearchParamsDisplay() {
   return <div data-testid="search-params">{searchParams.toString()}</div>;
 }
 
-function renderCard(file: Partial<TFile>, jobStatus: TTranscribeStatusEntry | undefined) {
+function renderCard(record: TConversationTranscript) {
   return render(
     <MemoryRouter initialEntries={['/c/convo-1']}>
       <SearchParamsDisplay />
-      <TranscriptCard file={file} jobStatus={jobStatus} />
+      <TranscriptCard record={record} />
     </MemoryRouter>,
   );
 }
 
-const baseFile: Partial<TFile> = {
-  file_id: 'source-file-1',
-  filename: 'interview.mp3',
-  type: 'audio/mpeg',
-};
-
-const baseJobStatus: Omit<TTranscribeStatusEntry, 'status'> = {
-  file_id: 'source-file-1',
-  error: null,
+const baseRecord: TConversationTranscript = {
+  sourceFileId: 'source-file-1',
+  // The uploaded name, not the extracted `.m4a` artifact's - see
+  // `originalFilename`. Defect 1 was this label changing mid-flight.
+  displayName: 'interview.mp4',
   transcriptFileId: null,
   diarizationDetailFileId: null,
+  jobStatus: 'queued',
+  jobError: null,
+  cancelled: false,
+  indexStatus: null,
+  isQueryable: false,
+  unqueryableReason: 'in_progress',
 };
 
 describe('TranscriptCard (transcription/ARCHITECTURE.md §6.1/§6.4, Phase 4)', () => {
-  beforeEach(() => {
-    mockRetryMutate.mockClear();
-    mockRetryIsLoading = false;
-  });
-
   it('shows a queued spinner and still opens the transcript panel when clicked', () => {
-    renderCard(baseFile, { ...baseJobStatus, status: 'queued' });
+    renderCard(baseRecord);
 
     expect(screen.getByText('com_ui_transcript_card_queued')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('file-container'));
@@ -89,7 +76,7 @@ describe('TranscriptCard (transcription/ARCHITECTURE.md §6.1/§6.4, Phase 4)', 
   });
 
   it('shows a transcribing spinner and still opens the transcript panel when clicked', () => {
-    renderCard(baseFile, { ...baseJobStatus, status: 'transcribing' });
+    renderCard({ ...baseRecord, jobStatus: 'transcribing' });
 
     expect(screen.getByText('com_ui_transcript_card_transcribing')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('file-container'));
@@ -99,19 +86,26 @@ describe('TranscriptCard (transcription/ARCHITECTURE.md §6.1/§6.4, Phase 4)', 
     expect(params).toContain('file=source-file-1');
   });
 
-  it('shows the failure state with a working retry button, without opening the transcript', () => {
-    renderCard(baseFile, { ...baseJobStatus, status: 'failed', error: 'boom' });
+  it(
+    'shows the failure state with no retry action of its own - regression: retry now ' +
+      "renders as an icon among the message's other hover actions instead (see " +
+      'HoverButtons.spec.tsx), not as a text link next to this card',
+    () => {
+      renderCard({ ...baseRecord, jobStatus: 'failed', jobError: 'boom' });
 
-    expect(screen.getByText('com_ui_transcript_card_failed')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('com_ui_transcript_card_retry'));
-
-    expect(mockRetryMutate).toHaveBeenCalledWith({ sourceFileId: 'source-file-1' });
-    // Retry's own click must not also bubble into the card's onClick.
-    expect(screen.getByTestId('search-params').textContent).toBe('');
-  });
+      expect(screen.getByText('com_ui_transcript_card_failed')).toBeInTheDocument();
+      expect(screen.queryByText('com_ui_transcript_card_retry')).not.toBeInTheDocument();
+    },
+  );
 
   it("opens the transcript panel on this conversation's URL once ready", () => {
-    renderCard(baseFile, { ...baseJobStatus, status: 'ready', transcriptFileId: 'transcript-1' });
+    renderCard({
+      ...baseRecord,
+      jobStatus: 'ready',
+      transcriptFileId: 'transcript-1',
+      isQueryable: true,
+      unqueryableReason: null,
+    });
 
     expect(screen.getByText('com_ui_transcript_card_ready')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('file-container'));
@@ -121,9 +115,17 @@ describe('TranscriptCard (transcription/ARCHITECTURE.md §6.1/§6.4, Phase 4)', 
     expect(params).toContain('file=source-file-1');
   });
 
-  it('treats a missing job status (not yet polled, or not a transcription job) as non-interactive', () => {
-    renderCard(baseFile, undefined);
+  it('falls back to the queued label when the job record has no status yet', () => {
+    renderCard({ ...baseRecord, jobStatus: null });
 
     expect(screen.getByText('com_ui_transcript_card_queued')).toBeInTheDocument();
+  });
+
+  it('labels the recording with the uploaded name, never the extracted track', () => {
+    // Defect 1: the persisted source file is `interview.m4a`, so a chip
+    // labelled from it renamed itself the moment the placeholder handed off.
+    renderCard(baseRecord);
+
+    expect(screen.getByText('interview.mp4')).toBeInTheDocument();
   });
 });

@@ -20,12 +20,16 @@ export interface PanelComponentProps {
    *  should report it via `onResolved`. */
   fileId: string | null;
   /** Call once the panel has resolved which file it's actually showing, so
-   *  the URL can be synced to a bookmarkable/shareable address. */
+   *  the URL can be synced to a bookmarkable/shareable address.
+   *
+   *  There is deliberately no counterpart for "this target doesn't resolve".
+   *  There used to be (`onUnresolvable`, which closed the panel with a
+   *  toast), and it was defect 2: a `?file=` naming something the panel
+   *  couldn't resolve *yet* - a pending upload's client-only id, a snapshot
+   *  taken before the recording landed - closed the pane out from under a
+   *  perfectly healthy job. Whether the panel is open is the URL's business;
+   *  a panel that can't resolve its target renders that, and stays put. */
   onResolved: (fileId: string) => void;
-  /** Call when `fileId` was present but doesn't correspond to anything this
-   *  caller can access (deleted, failed, not owned) - closes the panel with
-   *  a toast instead of rendering an in-panel error state. */
-  onUnresolvable: () => void;
   /** Closes the panel outright - the user is done with it, not that
    *  anything went wrong. `ChatPanelHost`'s own `closePanel`, threaded
    *  through so a panel component can offer this from wherever makes sense

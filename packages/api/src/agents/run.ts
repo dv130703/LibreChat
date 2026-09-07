@@ -243,6 +243,20 @@ function includesOpenRouter(value?: string | null): boolean {
   return typeof value === 'string' && value.toLowerCase().includes(KnownEndpoints.openrouter);
 }
 
+/** Ollama's default listening port, as it appears in a `baseURL`. Matched
+ *  alongside the endpoint name because an admin is free to call the endpoint
+ *  anything (`Local`, `LLM`, a hostname) - the port is the part that stays
+ *  put. */
+const OLLAMA_DEFAULT_PORT = ':11434';
+
+function includesOllama(value?: string | null): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const normalized = value.toLowerCase();
+  return normalized.includes(KnownEndpoints.ollama) || normalized.includes(OLLAMA_DEFAULT_PORT);
+}
+
 export function getReasoningKey(
   provider: Providers,
   llmConfig: t.RunLLMConfig,
@@ -260,6 +274,22 @@ export function getReasoningKey(
     includesOpenRouter(llmConfig.configuration?.baseURL) ||
     includesOpenRouter(agentEndpoint)
   ) {
+    reasoningKey = 'reasoning';
+  } else if (includesOllama(llmConfig.configuration?.baseURL) || includesOllama(agentEndpoint)) {
+    /**
+     * Ollama's OpenAI-compatible layer emits thinking tokens on
+     * `delta.reasoning`, not `delta.reasoning_content`. Reading the wrong key
+     * doesn't error - it just finds nothing, so a reasoning model (qwen3,
+     * deepseek-r1, gpt-oss) streams its entire thinking phase into a field
+     * nobody reads and the client shows a pulsing placeholder with no content
+     * for the whole duration. Measured against a local qwen3:14b: 3m14s of
+     * `reasoning` deltas for "say hi in 3 words", with 4 content deltas at
+     * the very end. The run was completing correctly the whole time; it was
+     * only ever invisible.
+     *
+     * `customParams.reasoningKey` still overrides this (handled above), for a
+     * gateway that speaks Ollama's dialect under a different name.
+     */
     reasoningKey = 'reasoning';
   } else if (
     (llmConfig as OpenAIClientOptions).useResponsesApi === true &&

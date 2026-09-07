@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import type { EndpointFileConfig, FileConfig } from './types/files';
-import { Providers, EModelEndpoint, isAgentsEndpoint, isDocumentSupportedProvider } from './schemas';
+import {
+  Providers,
+  EModelEndpoint,
+  isAgentsEndpoint,
+  isDocumentSupportedProvider,
+} from './schemas';
 import { normalizeEndpointName } from './utils';
 
 export const supportsFiles = {
@@ -337,6 +342,35 @@ export const imageTypeMapping: { [key: string]: string } = {
   heif: 'image/heif',
 };
 
+/** Maps video extensions to MIME types for containers browsers commonly report with an
+ *  empty `File.type` (e.g. `.mkv` in Chrome/Firefox on Linux) - keep in sync with the
+ *  extensions accepted by `videoMimeTypes`. */
+export const videoTypeMapping: { [key: string]: string } = {
+  mp4: 'video/mp4',
+  avi: 'video/avi',
+  mov: 'video/mov',
+  wmv: 'video/wmv',
+  flv: 'video/flv',
+  webm: 'video/webm',
+  mkv: 'video/mkv',
+  m4v: 'video/m4v',
+  '3gp': 'video/3gp',
+  ogv: 'video/ogv',
+};
+
+/** Maps audio extensions to MIME types for formats browsers commonly report with an
+ *  empty `File.type` - keep in sync with the extensions accepted by `audioMimeTypes`. */
+export const audioTypeMapping: { [key: string]: string } = {
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  m4a: 'audio/mp4',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
+  wma: 'audio/wma',
+  opus: 'audio/opus',
+};
+
 /** Normalizes non-standard MIME types that browsers may report to their canonical forms */
 export const mimeTypeAliases: Readonly<Record<string, string>> = {
   'application/x-zip-compressed': 'application/zip',
@@ -357,7 +391,13 @@ export function inferMimeType(fileName: string, currentType: string): string {
   }
 
   const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
-  return codeTypeMapping[extension] || imageTypeMapping[extension] || currentType;
+  return (
+    codeTypeMapping[extension] ||
+    imageTypeMapping[extension] ||
+    videoTypeMapping[extension] ||
+    audioTypeMapping[extension] ||
+    currentType
+  );
 }
 
 export const retrievalMimeTypes = [

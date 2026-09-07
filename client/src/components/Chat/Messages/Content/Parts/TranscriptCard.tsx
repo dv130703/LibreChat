@@ -1,115 +1,70 @@
 import { memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle } from 'lucide-react';
-import { Spinner } from '@librechat/client';
-import type { TFile, TTranscribeStatusEntry } from 'librechat-data-provider';
-import FileContainer from '~/components/Chat/Input/Files/FileContainer';
-import { useRetryTranscriptionMutation } from '~/data-provider';
+import type { TConversationTranscript } from 'librechat-data-provider';
+import RecordingChip from '~/components/AudioTranscriber/RecordingChip';
+import type { TranslationKeys } from '~/hooks';
 import { useLocalize } from '~/hooks';
 
 /**
- * Renders in place of the generic file chip for an audio/video attachment
- * queued for transcription from the composer (Phase 4, transcription/
- * ARCHITECTURE.md §6.1/§6.4) - `Files.tsx` routes here instead of the plain
- * `FileContainer` branch, and owns the single batched `useTranscribeStatusQuery`
- * poll for every audio/video file on the message (one request, not one per
- * card) - `jobStatus` is this file's entry from that poll. Clicking through
- * once the job is `ready` opens the transcript panel on this same `/c/:id`
- * URL via `ChatPanelHost` (mounted for every conversation as of this phase),
- * rather than navigating away to the standalone page.
+ * A recording attached to a message, rendered from the conversation's
+ * transcripts read model rather than from the message's own file record.
+ *
+ * That matters for identity: the persisted file is the ffmpeg-extracted
+ * audio track (`clip.m4a`), so labelling this from `file.filename` renamed
+ * the recording the instant the real message replaced the upload
+ * placeholder. `displayName` carries what the user actually chose.
+ *
+ * Clicking opens the transcript panel on this same `/c/:id` URL in every
+ * state except `failed` - `TranscriptPanel` renders its own queued/
+ * transcribing view, so there is no reason to make the user wait for
+ * `ready` before they can see the audio player.
  */
-function TranscriptCard({
-  file,
-  jobStatus,
-}: {
-  file: Partial<TFile>;
-  jobStatus: TTranscribeStatusEntry | undefined;
-}) {
+const STATUS_LABEL_KEYS = {
+  queued: 'com_ui_transcript_card_queued',
+  transcribing: 'com_ui_transcript_card_transcribing',
+  ready: 'com_ui_transcript_card_ready',
+} as const satisfies Record<'queued' | 'transcribing' | 'ready', TranslationKeys>;
+
+function TranscriptCard({ record }: { record: TConversationTranscript }) {
   const localize = useLocalize();
   const [, setSearchParams] = useSearchParams();
-  const fileId = file.file_id ?? '';
-
-  const retryMutation = useRetryTranscriptionMutation();
-  const status = jobStatus?.status;
 
   const openTranscript = () => {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
         next.set('panel', 'transcript');
-        next.set('file', fileId);
+        next.set('file', record.sourceFileId);
         return next;
       },
       { replace: false },
     );
   };
 
-  const handleRetry: React.MouseEventHandler<HTMLButtonElement> = (event) => {
-    event.stopPropagation();
-    retryMutation.mutate({ sourceFileId: fileId });
-  };
-
-  if (status === 'failed') {
-    // Retry renders as a sibling of `FileContainer`, not inside its
-    // `subtitle` slot: that slot lives inside `FileContainer`'s own
-    // clickable `<button>`, and nesting an interactive `<button>` inside
-    // another is invalid HTML with undefined click/focus behavior in some
-    // browsers - the same reason `FileContainer`'s own `RemoveFile` renders
-    // as a sibling rather than inline content.
+  if (record.jobStatus === 'failed') {
+    // Retry renders alongside the message's other hover actions rather than
+    // in the chip - see `HoverButtons.tsx`.
     return (
-      <div className="inline-flex items-center gap-2">
-        <FileContainer
-          file={file}
-          displayName={file.filename ?? localize('com_ui_audio_transcriber')}
-          subtitle={
-            <span className="flex items-center gap-1 truncate text-red-500">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              {localize('com_ui_transcript_card_failed')}
-            </span>
-          }
-        />
-        <button
-          type="button"
-          onClick={handleRetry}
-          disabled={retryMutation.isLoading}
-          className="text-text-link shrink-0 underline-offset-2 hover:underline"
-        >
-          {localize('com_ui_transcript_card_retry')}
-        </button>
-      </div>
+      <RecordingChip
+        displayName={record.displayName}
+        state="failed"
+        statusLabel={localize('com_ui_transcript_card_failed')}
+        errorMessage={record.cancelled ? localize('com_ui_transcript_card_cancelled') : undefined}
+      />
     );
   }
 
-  let subtitle: React.ReactNode;
-  // Clickable in every non-`failed` state, not just `ready` - `TranscriptPanel`
-  // already renders a proper "queued"/"transcribing" state of its own (spinner
-  // + status text) when opened before the job finishes, so there's no reason to
-  // make the user wait for `ready` before they can even see the audio player.
-  const onClick: React.MouseEventHandler<HTMLButtonElement> = openTranscript;
-
-  if (status === 'ready') {
-    subtitle = (
-      <div className="truncate text-text-secondary">{localize('com_ui_transcript_card_ready')}</div>
-    );
-  } else {
-    const label =
-      status === 'transcribing'
-        ? localize('com_ui_transcript_card_transcribing')
-        : localize('com_ui_transcript_card_queued');
-    subtitle = (
-      <div className="flex items-center gap-1.5 text-text-secondary">
-        <Spinner className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{label}</span>
-      </div>
-    );
-  }
+  /** A record with no job status yet reads as `queued` - the recording
+   *  exists, its job just hasn't been stamped on it. */
+  const state = record.jobStatus ?? 'queued';
+  const statusLabel = localize(STATUS_LABEL_KEYS[state]);
 
   return (
-    <FileContainer
-      file={file}
-      displayName={file.filename ?? localize('com_ui_audio_transcriber')}
-      subtitle={subtitle}
-      onClick={onClick}
+    <RecordingChip
+      displayName={record.displayName}
+      state={state}
+      statusLabel={statusLabel}
+      onClick={openTranscript}
     />
   );
 }

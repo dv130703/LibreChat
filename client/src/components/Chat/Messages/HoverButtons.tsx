@@ -1,12 +1,14 @@
 import React, { useState, useMemo, memo } from 'react';
 import { useRecoilState } from 'recoil';
+import { RotateCw } from 'lucide-react';
 import { EditIcon, Clipboard, CheckMark, ContinueIcon, RegenerateIcon } from '@librechat/client';
 import type { TConversation, TMessage, TFeedback } from 'librechat-data-provider';
+import { useTranscribeStatusQuery, useRetryTranscriptionMutation } from '~/data-provider';
 import { useGenerationsByLatest, useLocalize } from '~/hooks';
 import { Fork } from '~/components/Conversations';
 import MessageAudio from './MessageAudio';
 import Feedback from './Feedback';
-import { cn } from '~/utils';
+import { cn, isAudioOrVideoMimeType } from '~/utils';
 import store from '~/store';
 
 type THoverButtons = {
@@ -147,6 +149,26 @@ const HoverButtons = ({
     [TextToSpeech, message.content, message.text],
   );
 
+  /** Same batched poll `Files.tsx`/`TranscriptCard` already run for this
+   *  message's own audio/video attachments (react-query dedupes against
+   *  their identical cache key) - used only to surface a retry action here
+   *  when one of them failed, alongside the message's other hover actions
+   *  rather than as a text link next to the file chip itself. */
+  const audioVideoFileIds = useMemo(
+    () =>
+      (message.files ?? [])
+        .filter((file) => isAudioOrVideoMimeType(file.type))
+        .map((file) => file.file_id ?? '')
+        .filter(Boolean),
+    [message.files],
+  );
+  const { data: transcribeStatusData } = useTranscribeStatusQuery(audioVideoFileIds);
+  const failedTranscriptionFileId = useMemo(
+    () => transcribeStatusData?.files.find((entry) => entry.status === 'failed')?.file_id,
+    [transcribeStatusData],
+  );
+  const retryTranscription = useRetryTranscriptionMutation();
+
   const generationCapabilities = useGenerationsByLatest({
     isEditing,
     isSubmitting,
@@ -260,6 +282,18 @@ const HoverButtons = ({
         latestMessageId={latestMessageId}
         isLast={isLast}
       />
+
+      {/* Retry Transcription Button */}
+      {failedTranscriptionFileId != null && (
+        <HoverButton
+          onClick={() => retryTranscription.mutate({ sourceFileId: failedTranscriptionFileId })}
+          title={localize('com_ui_transcript_card_retry')}
+          icon={<RotateCw size="19" />}
+          isDisabled={retryTranscription.isLoading}
+          isLast={isLast}
+          dataTestId="retry-transcription-button"
+        />
+      )}
 
       {/* Feedback Buttons */}
       {!isCreatedByUser && handleFeedback != null && (

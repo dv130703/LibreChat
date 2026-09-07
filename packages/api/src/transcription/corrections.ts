@@ -1,5 +1,5 @@
 import { formatTranscriptTimestamp, parseTranscriptText } from 'librechat-data-provider';
-import type { TTranscriptCorrection } from 'librechat-data-provider';
+import type { ParsedTranscriptLine, TTranscriptCorrection } from 'librechat-data-provider';
 
 /**
  * Regenerates the Audio Transcriber's RAG-embedded transcript from its

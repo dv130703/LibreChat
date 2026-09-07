@@ -4,7 +4,7 @@ import { v4 } from 'uuid';
 import debounce from 'lodash/debounce';
 import { useToastContext } from '@librechat/client';
 import { useQueryClient } from '@tanstack/react-query';
-import { useRecoilValue, useSetRecoilState } from 'recoil';
+import { useRecoilValue, useSetRecoilState, useRecoilCallback } from 'recoil';
 import {
   QueryKeys,
   Constants,
@@ -36,8 +36,10 @@ import { useChatContext } from '~/Providers/ChatContext';
 import { useTranscribeIntent } from '~/Providers/TranscribeIntentContext';
 import { useSetConvoContext } from '~/Providers/SetConvoContext';
 import store, { ephemeralAgentByConvoId } from '~/store';
+import type { PendingTranscriptionUpload } from '~/store/families';
 import useClientResize from './useClientResize';
 import useUpdateFiles from './useUpdateFiles';
+import { attemptTranscribeUpload } from './transcribeUpload';
 
 type UseFileHandling = {
   fileSetter?: FileSetter;
@@ -58,6 +60,11 @@ export type FileHandlingState = {
    *  of the synthetic message the transcribe-upload flow creates so it links
    *  onto the existing branch instead of becoming a disconnected root. */
   latestMessageId?: string;
+  /** Same setter `ChatRoute`/`ChatView` read the conversation from
+   *  (`useChatContext().setConversation`) - the transcribe flow uses this to
+   *  seed a brand-new conversation's real id into that shared atom directly,
+   *  instead of navigating to a URL the route itself would have to fetch. */
+  setConversation?: (conversation: TConversation) => void;
 };
 
 const noop = () => {};
@@ -69,7 +76,7 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
   const [errors, setErrors] = useState<string[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { startUploadTimer, clearUploadTimer } = useDelayedUploadToast();
-  const { files, setFiles, conversation, latestMessageId } = fileState;
+  const { files, setFiles, conversation, latestMessageId, setConversation } = fileState;
   const setFilesLoading = fileState.setFilesLoading ?? noop;
   const setEphemeralAgent = useSetRecoilState(
     ephemeralAgentByConvoId(conversation?.conversationId ?? Constants.NEW_CONVO),
@@ -83,8 +90,76 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
   const { interceptAudioVideo } = useTranscribeIntent();
   const navigate = useNavigate();
   const [, setSearchParams] = useSearchParams();
+  /** `useSearchParams`'s setter closes over the `searchParams` value from
+   *  whichever render produced it (see its source: the function-updater form
+   *  calls `nextInit(searchParams)` using that captured snapshot, not a fresh
+   *  read at call time) - fine for a call made synchronously within the same
+   *  render that captured it, but `onUploaded` below fires from deep inside
+   *  an async upload that can take a second or more, well after this
+   *  component has re-rendered (following this same function's own
+   *  `navigate()` call) with a materially different `searchParams`. Calling
+   *  the stale setter there sees an empty `prev` (this render's, from before
+   *  the navigate), fails the "did the user navigate away" check that
+   *  guards it, and - since this setter unconditionally calls `navigate()`
+   *  with whatever the updater returns, unchanged or not - actually
+   *  navigates to a blank query string, wiping `panel`/`file` and closing
+   *  the transcript panel right as the real job starts. Reading through a
+   *  ref updated on every render, same pattern `ChatPanelHost` already uses
+   *  for its own callbacks, gets `onUploaded` the setter (and the fresh
+   *  `searchParams` it's bound to) from whatever the LATEST render was. */
+  const latestSetSearchParams = useRef(setSearchParams);
+  latestSetSearchParams.current = setSearchParams;
   const hasSetConversation = useSetConvoContext();
+  // `useRecoilCallback`, not `useSetRecoilState`, because `targetConversationId`
+  // in `maybeInterceptAudioVideo` is only known at call time - a fresh v4()
+  // for a brand-new conversation, not `conversation.conversationId` (which is
+  // still `Constants.NEW_CONVO` at that point).
+  const setPendingUploads = useRecoilCallback(
+    ({ set }) =>
+      (
+        conversationId: string,
+        updater: (current: PendingTranscriptionUpload[]) => PendingTranscriptionUpload[],
+      ) => {
+        set(store.pendingTranscriptionUploadsByConvoId(conversationId), updater);
+      },
+    [],
+  );
   const transcribeAudioMutation = useTranscribeAudioMutation();
+  /** One promise chain per conversation, so recordings queued back-to-back
+   *  (before the first's own `POST /api/transcribe` has even resolved) still
+   *  link up as parent/child in submission order, not as siblings under
+   *  whatever `latestMessageId` happened to be at the moment each was
+   *  attached - see `maybeInterceptAudioVideo`'s use of this below. */
+  const transcribeLeafChainRef = useRef<Map<string, Promise<string>>>(new Map());
+  /** What `latestMessageId` was the last time this ran, per conversation -
+   *  lets the effect below tell "still the same leaf" from "the real
+   *  conversation moved on" without re-deriving it from the chain's own
+   *  (already-resolved, but not synchronously readable) promises. */
+  const lastKnownLatestMessageIdRef = useRef<Map<string, string>>(new Map());
+  /** An ordinary `ask()` reply sent after a transcribe upload advances the
+   *  conversation's real leaf (`latestMessageId`, from chat context) with no
+   *  way for `transcribeLeafChainRef` to find out - regression: attaching a
+   *  second recording after asking a question about the first one chained it
+   *  onto the FIRST recording's own message (the chain's last entry), making
+   *  it a sibling of the question-and-answer that followed instead of a
+   *  child of it. LibreChat's tree view renders only the newest sibling by
+   *  default, so the whole exchange appeared to vanish the moment the second
+   *  recording landed. Clearing the chain here whenever `latestMessageId`
+   *  moves to something the chain didn't itself produce falls through to
+   *  `maybeInterceptAudioVideo`'s own `latestMessageId` fallback below,
+   *  which is correct again once nothing else has changed it - and is a
+   *  no-op right after a transcribe upload resolves, since at that instant
+   *  `latestMessageId` and the chain's own entry are the same value anyway. */
+  useEffect(() => {
+    const convoId = conversation?.conversationId;
+    if (!convoId || !latestMessageId) {
+      return;
+    }
+    if (lastKnownLatestMessageIdRef.current.get(convoId) !== latestMessageId) {
+      lastKnownLatestMessageIdRef.current.set(convoId, latestMessageId);
+      transcribeLeafChainRef.current.delete(convoId);
+    }
+  }, [conversation?.conversationId, latestMessageId]);
 
   const agent_id = params?.additionalMetadata?.agent_id ?? '';
   const assistant_id = params?.additionalMetadata?.assistant_id ?? '';
@@ -283,8 +358,15 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
   /**
    * Composer entry point for transcription (Phase 4, transcription/
    * ARCHITECTURE.md §6.1/§6.4) - asks `TranscribeIntentProvider` whether the
-   * user wants to transcribe or just attach, and on "transcribe" calls
-   * `POST /api/transcribe` in place of the normal `startUpload` path.
+   * user wants to transcribe or just attach, and on "transcribe" navigates
+   * into the transcript panel immediately (before the upload itself even
+   * starts) instead of waiting out the `POST /api/transcribe` round trip
+   * first. Nothing exists server-side at that instant, so a client-only
+   * pending record (`pendingTranscriptionUploadsByConvoId`) stands in for the
+   * real file id until the upload resolves - `TranscriptPanel` renders it as
+   * an "uploading" state and swaps it for the real id once `attemptTranscribeUpload`
+   * (below) succeeds; a failure lands the same record in `status: 'failed'`
+   * with a retry affordance, rather than losing the attempt.
    *
    * Two cases, because `POST /api/transcribe` always needs a real
    * `conversationId` up front (the async job has to know where to attach),
@@ -332,78 +414,167 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
     const isNewConversation =
       !existingConversationId || existingConversationId === Constants.NEW_CONVO;
     const targetConversationId = isNewConversation ? v4() : existingConversationId;
-    const parentMessageId = isNewConversation
-      ? Constants.NO_PARENT
-      : (latestMessageId ?? Constants.NO_PARENT);
+    const pendingId = v4();
 
-    try {
-      const formData = new FormData();
-      formData.append('file', originalFile);
-      formData.append('conversationId', targetConversationId);
-      formData.append('parentMessageId', parentMessageId);
-      if (endpoint) {
-        formData.append('endpoint', endpoint);
-      }
-      if (conversation?.agent_id) {
-        formData.append('agent_id', conversation.agent_id);
-      }
-      formData.append('options', JSON.stringify(result.options));
-      const data = await transcribeAudioMutation.mutateAsync({ formData });
-      // The pending composer chip is discarded, not converted - the backend
-      // now creates a REAL message carrying this file (`POST /api/transcribe`,
-      // transcription/ARCHITECTURE.md #12), so the recording shows up as its
-      // own "submitted file" bubble in the conversation the instant upload
-      // finishes, the same way any other attachment does. That's a message
-      // fetched through the ordinary `useGetMessagesByConvoId` query - the
-      // same path every other conversation's history already renders through
-      // reliably - rather than depending on `filesByIndex` composer state
-      // surviving a conversation switch, which is what made the file
-      // disappear behind a blank pane in the previous attempt at this.
-      deleteFileById(extendedFile.file_id);
-      queryClient.invalidateQueries([QueryKeys.messages, targetConversationId]);
-      if (isNewConversation) {
-        // `ChatRoute`'s own hydration effect only re-fetches/re-initializes
-        // the conversation when `!hasSetConversation.current` (or a narrow
-        // same-id project-mismatch case) - it was already `true` from the
-        // draft this navigate is leaving, so without this reset the URL
-        // changes but the chat pane silently keeps rendering the old empty
-        // "new" draft's state - exactly the bug `Workspace.tsx` used to
-        // guard against for the standalone page's own equivalent navigate,
-        // via the same ref.
-        hasSetConversation.current = false;
-        // Opens the transcript panel immediately, with the audio player and
-        // an empty transcript, instead of landing on a bare empty chat pane
-        // with nothing to do for the several minutes the job can take -
-        // matches the standalone page's old behavior for this exact case
-        // (see the function doc comment above).
-        navigate(
-          `/c/${data.conversationId}?panel=transcript&file=${encodeURIComponent(
-            data.sourceFile.file_id,
-          )}`,
-          { replace: true },
-        );
-        return 'navigated';
-      }
+    // Chains this attach onto whatever the PREVIOUS attach to this same
+    // conversation resolves to, rather than reading `latestMessageId` (a
+    // snapshot of a react-query cache that a same-conversation transcribe
+    // upload updates via an un-awaited `invalidateQueries` - stale exactly
+    // long enough for a second recording, attached moments after the first,
+    // to compute the same parent the first one used). Both messages landing
+    // under the same parent renders as siblings, and LibreChat's message
+    // list shows only the newest sibling by default - the earlier recording
+    // would visually vanish, not just show stale. `isNewConversation` has no
+    // previous attach to chain onto; every subsequent attach to the
+    // conversation this one is about to create/reuse does, via the entry
+    // this call registers below regardless of which branch it takes.
+    const previousLeafPromise = transcribeLeafChainRef.current.get(targetConversationId);
+    const parentMessageIdPromise: Promise<string> = isNewConversation
+      ? Promise.resolve(Constants.NO_PARENT as string)
+      : (previousLeafPromise ??
+        Promise.resolve(latestMessageId ?? (Constants.NO_PARENT as string)));
+    let resolveThisLeaf: (messageId: string) => void = () => {};
+    const thisLeafPromise = new Promise<string>((resolve) => {
+      resolveThisLeaf = resolve;
+    });
+    transcribeLeafChainRef.current.set(targetConversationId, thisLeafPromise);
+    // If this attach's own upload never reports a message id (queueing
+    // failed before one existed), the chain must still advance - a next
+    // attach waiting on `thisLeafPromise` would otherwise hang forever.
+    // Falling through to this attach's OWN parent has the same effect as if
+    // this failed attach had never happened.
+    let queuedMessageId: string | undefined;
+
+    setPendingUploads(targetConversationId, (current) => [
+      ...current,
+      {
+        pendingId,
+        conversationId: targetConversationId,
+        filename: originalFile.name,
+        file: originalFile,
+        options: result.options,
+        parentMessageId: parentMessageIdPromise,
+        isNewConversation,
+        isTemporary,
+        status: 'uploading',
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    // The pending composer chip is discarded, not converted - the backend
+    // creates a REAL message carrying this file once the upload resolves
+    // (`POST /api/transcribe`, transcription/ARCHITECTURE.md #12), so the
+    // recording shows up as its own "submitted file" bubble in the
+    // conversation. Discarding it here rather than waiting for that message
+    // is what makes the navigate below actually instant - the composer has
+    // nothing further to show for this file either way.
+    deleteFileById(extendedFile.file_id);
+
+    if (isNewConversation) {
+      // Seeds the exact Recoil atom `ChatRoute`/`ChatView` read the
+      // conversation from, synchronously and with no server round trip -
+      // mirrors `useNavigateToConvo`'s own pattern for jumping straight to a
+      // conversation id (`hasSetConversation.current = true` BEFORE
+      // `setConversation`, before navigating). `targetConversationId`
+      // doesn't exist server-side yet - the upload below is what creates it
+      // - so forcing `hasSetConversation.current = false` here (as this used
+      // to) would instead make `ChatRoute`'s own hydration effect fetch that
+      // id itself, get a 404 well before the upload finishes, and treat it
+      // as "conversation not found": resetting straight back to `/c/new`
+      // and wiping this navigate's URL out from under it (with the
+      // transcript panel left showing a stale pending record for a URL the
+      // app already abandoned). Keeping `hasSetConversation.current` true
+      // keeps that fetch from ever firing in the first place.
+      hasSetConversation.current = true;
+      setConversation?.({ ...conversation, conversationId: targetConversationId });
+      // Opens the transcript panel immediately, with the audio player and
+      // an "uploading" placeholder, instead of landing on a bare empty chat
+      // pane with nothing to do while the upload (and then the multi-minute
+      // job) runs - matches the standalone page's old behavior for this
+      // exact case (see the function doc comment above).
+      navigate(
+        `/c/${targetConversationId}?panel=transcript&file=${encodeURIComponent(pendingId)}`,
+        { replace: true },
+      );
+    } else {
       // Same reasoning for an already-open conversation - queuing the job
       // leaves only an inert "Transcribing..." card in the message list
-      // (`TranscriptCard`) until the panel is opened, same several-minute
-      // dead end. Already on this conversation's URL, so just add the panel's
-      // query params to it instead of a full navigate.
+      // (`TranscriptCard`) until the panel is opened, same dead end while
+      // nothing has uploaded yet. Already on this conversation's URL, so
+      // just add the panel's query params to it instead of a full navigate.
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
           next.set('panel', 'transcript');
-          next.set('file', data.sourceFile.file_id);
+          next.set('file', pendingId);
           return next;
         },
         { replace: false },
       );
-    } catch (error) {
-      console.error('transcribe upload error', error);
-      deleteFileById(extendedFile.file_id);
-      setError('com_ui_audio_transcriber_error');
     }
-    return 'handled';
+
+    // Fire-and-forget from this function's own perspective: the navigate
+    // above already happened, so nothing here is on the caller's critical
+    // path - `handleFiles`'s file-processing loop moves on immediately
+    // (or, for a new conversation, is about to unmount anyway). Success/
+    // failure is reported through the pending record itself, not this
+    // promise - `attemptTranscribeUpload` never throws.
+    void attemptTranscribeUpload({
+      pendingId,
+      targetConversationId,
+      parentMessageId: parentMessageIdPromise,
+      originalFile,
+      options: result.options,
+      endpoint,
+      agentId: conversation?.agent_id,
+      isTemporary,
+      mutateAsync: transcribeAudioMutation.mutateAsync,
+      queryClient,
+      setPendingUploads,
+      fallbackErrorMessage: localize('com_ui_audio_transcriber_error'),
+      onQueued: (messageId) => {
+        queuedMessageId = messageId;
+        resolveThisLeaf(messageId);
+      },
+      // The earlier `setConversation` call (new-conversation branch above)
+      // could only seed a client-side placeholder - nothing existed
+      // server-side yet to fetch. This is what actually clears that
+      // placeholder's "brand-new, unsent draft" shape (`createdAt: ''`,
+      // etc.) once the conversation is genuinely real, the same way a
+      // normal `ask()` send's SSE `final` event would - without it, every
+      // ordinary send after this one keeps computing against a conversation
+      // atom that still looks uncreated.
+      onConversationRefreshed: (freshConversation) => {
+        setConversation?.({ ...conversation, ...freshConversation });
+      },
+      onUploaded: (sourceFileId) => {
+        latestSetSearchParams.current(
+          (prev) => {
+            if (prev.get('file') !== pendingId) {
+              // The user has since navigated elsewhere (or opened a
+              // different recording's panel) - swapping the URL here would
+              // yank them back to a file they're no longer looking at.
+              return prev;
+            }
+            const next = new URLSearchParams(prev);
+            next.set('file', sourceFileId);
+            return next;
+          },
+          { replace: true },
+        );
+      },
+    }).then(async () => {
+      // `onQueued` already resolved the chain on success. This only matters
+      // when the upload failed before any message id existed (`onQueued`
+      // never fired) - falls through to this attach's own parent so a next
+      // attach chained on `thisLeafPromise` isn't left waiting forever on a
+      // failed attempt, with the same effect as if this one had never
+      // happened.
+      if (queuedMessageId == null) {
+        resolveThisLeaf(await parentMessageIdPromise);
+      }
+    });
+
+    return isNewConversation ? 'navigated' : 'handled';
   };
 
   const handleFiles = async (_files: FileList | File[], _toolResource?: string) => {
@@ -623,7 +794,8 @@ export const useFileHandlingNoChatContext = (
 ) => useFileHandlingCore(params, fileState);
 
 const useFileHandling = (params?: UseFileHandling) => {
-  const { files, setFiles, setFilesLoading, conversation, latestMessageId } = useChatContext();
+  const { files, setFiles, setFilesLoading, conversation, latestMessageId, setConversation } =
+    useChatContext();
 
   return useFileHandlingCore(params, {
     files,
@@ -631,6 +803,7 @@ const useFileHandling = (params?: UseFileHandling) => {
     conversation,
     setFilesLoading,
     latestMessageId,
+    setConversation,
   });
 };
 

@@ -1,10 +1,15 @@
 import {
+  diarizationDetailFileIdFor,
   TRANSCRIPT_LINE_PATTERN,
-  formatTranscriptLine,
+  TRANSCRIPT_FILE_SUFFIX,
   formatTranscriptTimestamp,
+  parseTranscriptTimestamp,
+  isTranscriptQueryable,
+  sourceFileIdFromDerived,
+  formatTranscriptLine,
+  transcriptFileIdFor,
   parseTranscriptLine,
   parseTranscriptText,
-  parseTranscriptTimestamp,
 } from './transcript';
 
 /** I1 (transcription/ARCHITECTURE.md §8): the transcript line format must
@@ -188,5 +193,87 @@ describe('transcript line format round-trip (I1)', () => {
   it('TRANSCRIPT_LINE_PATTERN always matches (every group is optional)', () => {
     expect(TRANSCRIPT_LINE_PATTERN.test('')).toBe(true);
     expect(TRANSCRIPT_LINE_PATTERN.test('plain text, no prefixes at all')).toBe(true);
+  });
+});
+
+describe('sourceFileIdFromDerived', () => {
+  const sourceId = 'd92b9bec-026e-4c75-a301-ad1947ff3b0c';
+
+  it('recovers the source id from either derived file', () => {
+    expect(sourceFileIdFromDerived(transcriptFileIdFor(sourceId))).toBe(sourceId);
+    expect(sourceFileIdFromDerived(diarizationDetailFileIdFor(sourceId))).toBe(sourceId);
+  });
+
+  it('returns null for a source id, which carries no suffix', () => {
+    expect(sourceFileIdFromDerived(sourceId)).toBeNull();
+  });
+
+  it('does not mistake a diarization-detail file for a transcript', () => {
+    // Both suffixes end in a word that the other does not contain, but the
+    // ordering inside `sourceFileIdFromDerived` is what guarantees this -
+    // regression guard for adding a future suffix that overlaps.
+    const detailId = diarizationDetailFileIdFor(sourceId);
+    expect(detailId.endsWith(TRANSCRIPT_FILE_SUFFIX)).toBe(false);
+    expect(sourceFileIdFromDerived(detailId)).toBe(sourceId);
+  });
+});
+
+describe('isTranscriptQueryable', () => {
+  it('is queryable when indexed and the index reflects the current text', () => {
+    expect(
+      isTranscriptQueryable({ indexStatus: 'indexed', indexVersion: 3, transcriptVersion: 3 }),
+    ).toEqual({ isQueryable: true, reason: null });
+  });
+
+  it('is NOT queryable when the transcript was revised after indexing', () => {
+    // The case the old `embedded: true` gate got wrong: an embed did once
+    // succeed, so `embedded` stays true, but the indexed text is superseded.
+    expect(
+      isTranscriptQueryable({
+        indexStatus: 'indexed',
+        indexVersion: 2,
+        transcriptVersion: 3,
+        embedded: true,
+      }),
+    ).toEqual({ isQueryable: false, reason: 'stale_index' });
+  });
+
+  it('reports a stale status as stale even before re-indexing starts', () => {
+    expect(
+      isTranscriptQueryable({ indexStatus: 'stale', indexVersion: 2, transcriptVersion: 3 }),
+    ).toEqual({ isQueryable: false, reason: 'stale_index' });
+  });
+
+  it('distinguishes a failed embed from one never attempted', () => {
+    expect(isTranscriptQueryable({ indexStatus: 'index_failed' })).toEqual({
+      isQueryable: false,
+      reason: 'index_failed',
+    });
+    expect(isTranscriptQueryable({ indexStatus: 'not_indexed' })).toEqual({
+      isQueryable: false,
+      reason: 'not_indexed',
+    });
+    expect(isTranscriptQueryable({ indexStatus: 'indexing' })).toEqual({
+      isQueryable: false,
+      reason: 'not_indexed',
+    });
+  });
+
+  it('falls back to `embedded` for legacy records with no indexStatus', () => {
+    // Requiring indexStatus outright would make every pre-migration
+    // conversation silently unsearchable.
+    expect(isTranscriptQueryable({ embedded: true })).toEqual({ isQueryable: true, reason: null });
+    expect(isTranscriptQueryable({ embedded: false })).toEqual({
+      isQueryable: false,
+      reason: 'not_indexed',
+    });
+    expect(isTranscriptQueryable({})).toEqual({ isQueryable: false, reason: 'not_indexed' });
+  });
+
+  it('trusts `indexed` when version data is absent rather than failing closed', () => {
+    expect(isTranscriptQueryable({ indexStatus: 'indexed' })).toEqual({
+      isQueryable: true,
+      reason: null,
+    });
   });
 });

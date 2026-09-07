@@ -43,7 +43,7 @@ export default function TranscribeIntentDialog({
     <OGDialog open={isOpen} onOpenChange={onOpenChange}>
       <OGDialogTemplate
         title={localize('com_ui_transcribe_intent_dialog_title')}
-        className="w-11/12 sm:w-[26rem]"
+        className="w-11/12 border border-solid border-border-medium bg-surface-tertiary sm:w-[26rem]"
         showCloseButton={false}
         showCancelButton={false}
         footerClassName="[&>*]:flex-1 [&>*]:justify-center"
@@ -65,10 +65,11 @@ export default function TranscribeIntentDialog({
             {localize('com_ui_transcribe_intent_dialog_attach')}
           </Button>
         }
-        selection={{
-          selectHandler: handleTranscribe,
-          selectText: localize('com_ui_transcribe_intent_dialog_transcribe'),
-        }}
+        selection={
+          <Button variant="submit" onClick={handleTranscribe}>
+            {localize('com_ui_transcribe_intent_dialog_transcribe')}
+          </Button>
+        }
       />
     </OGDialog>
   );

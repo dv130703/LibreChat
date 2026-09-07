@@ -1,11 +1,7 @@
 const axios = require('axios');
 const { logger } = require('@librechat/data-schemas');
 const { tool } = require('@librechat/agents/langchain/tools');
-const {
-  generateShortLivedToken,
-  logAxiosError,
-  extractChunkEvidence,
-} = require('@librechat/api');
+const { generateShortLivedToken, logAxiosError, extractChunkEvidence } = require('@librechat/api');
 const { Tools, EToolResources } = require('librechat-data-provider');
 const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
 const { getFiles } = require('~/models');
@@ -134,6 +130,13 @@ function logRetrieval({ query, files, versionByFileId, startedAt, candidateCount
   });
 }
 
+/** Keeps a zero-result answer honest about recordings that were excluded
+ *  from the search entirely - without it, "I found nothing" and "I could
+ *  not look" are indistinguishable to the model. */
+function appendUnavailableNotice(message, unavailableNotice) {
+  return unavailableNotice ? `${message}\n\n${unavailableNotice}` : message;
+}
+
 /**
  *
  * @param {Object} options
@@ -143,7 +146,13 @@ function logRetrieval({ query, files, versionByFileId, startedAt, candidateCount
  * @param {boolean} [options.fileCitations=false] - Whether to include citation instructions
  * @returns
  */
-const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = false }) => {
+const createFileSearchTool = async ({
+  userId,
+  files,
+  entity_id,
+  fileCitations = false,
+  unavailableNotice = null,
+}) => {
   return tool(
     async ({ query }) => {
       const startedAt = Date.now();
@@ -151,6 +160,13 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
         logger.warn(
           `[RAG] ${Tools.file_search} invoked with no files attached to the tool resource — nothing will be queried.`,
         );
+        // A conversation whose only documents are recordings that failed to
+        // index is NOT the same as one with nothing attached, and saying so
+        // is the difference between the model reporting a real limitation
+        // and it retrying an identical call expecting a different answer.
+        if (unavailableNotice) {
+          return [unavailableNotice, undefined];
+        }
         return ['No files to search. Instruct the user to add files for the search.', undefined];
       }
       const jwtToken = generateShortLivedToken(userId);
@@ -248,7 +264,13 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
 
       if (validResults.length === 0) {
         logRetrieval({ query, files, versionByFileId, startedAt, candidateCount: 0, returned: [] });
-        return ['No results found or errors occurred while searching the files.', undefined];
+        return [
+          appendUnavailableNotice(
+            'No results found or errors occurred while searching the files.',
+            unavailableNotice,
+          ),
+          undefined,
+        ];
       }
 
       const formattedResults = validResults
@@ -283,7 +305,10 @@ const createFileSearchTool = async ({ userId, files, entity_id, fileCitations = 
       if (formattedResults.length === 0) {
         logRetrieval({ query, files, versionByFileId, startedAt, candidateCount, returned: [] });
         return [
-          'No content found in the files. The files may not have been processed correctly or you may need to refine your query.',
+          appendUnavailableNotice(
+            'No content found in the files. The files may not have been processed correctly or you may need to refine your query.',
+            unavailableNotice,
+          ),
           undefined,
         ];
       }

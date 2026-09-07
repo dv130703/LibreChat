@@ -9,6 +9,8 @@
  *  makes that drift structurally impossible instead of just discouraged.
  */
 
+import type { TTranscriptIndexStatus, TTranscriptUnqueryableReason } from './types/files';
+
 export interface TranscriptLineSegment {
   start: number;
   end: number;
@@ -118,4 +120,99 @@ export function parseTranscriptText(text: string): ParsedTranscriptLine[] {
     .split('\n')
     .filter((line) => line.length > 0)
     .map((line, lineIndex) => parseTranscriptLine(line, lineIndex));
+}
+
+/** The one place the derived-file id scheme is written down. A recording's
+ *  three files are always `sourceFileId`, `${sourceFileId}-transcript`, and
+ *  `${sourceFileId}-diarization-detail`, so no filename lookup is ever
+ *  needed to tell them apart or to pair them back up. */
+export const TRANSCRIPT_FILE_SUFFIX = '-transcript';
+export const DIARIZATION_DETAIL_FILE_SUFFIX = '-diarization-detail';
+
+export function transcriptFileIdFor(sourceFileId: string): string {
+  return `${sourceFileId}${TRANSCRIPT_FILE_SUFFIX}`;
+}
+
+export function diarizationDetailFileIdFor(sourceFileId: string): string {
+  return `${sourceFileId}${DIARIZATION_DETAIL_FILE_SUFFIX}`;
+}
+
+/** The source recording a derived file belongs to, or `null` if the id
+ *  carries neither suffix (i.e. it is already a source id, or unrelated).
+ *  Checks the longer suffix first: `-diarization-detail` does not end with
+ *  `-transcript`, but keeping the order explicit means adding a future
+ *  suffix that does can't silently mis-attribute a file to the wrong
+ *  recording. */
+export function sourceFileIdFromDerived(fileId: string): string | null {
+  if (fileId.endsWith(DIARIZATION_DETAIL_FILE_SUFFIX)) {
+    return fileId.slice(0, -DIARIZATION_DETAIL_FILE_SUFFIX.length);
+  }
+  if (fileId.endsWith(TRANSCRIPT_FILE_SUFFIX)) {
+    return fileId.slice(0, -TRANSCRIPT_FILE_SUFFIX.length);
+  }
+  return null;
+}
+
+/** The subset of a transcript File record `isTranscriptQueryable` needs.
+ *  Deliberately structural rather than the full `IMongoFile`: the same
+ *  decision has to be reachable from `packages/data-schemas` (Mongo docs)
+ *  and from anything holding a serialized copy, without either importing
+ *  the other's model type. */
+export interface TranscriptIndexState {
+  indexStatus?: TTranscriptIndexStatus | null;
+  /** Which `transcriptVersion` the RAG index actually reflects. */
+  indexVersion?: number | null;
+  /** How many times the transcript text has been revised. */
+  transcriptVersion?: number | null;
+  /** The pre-`indexStatus` signal: whether an embed ever succeeded. Read
+   *  only as a legacy fallback - see below. */
+  embedded?: boolean | null;
+}
+
+/**
+ * Whether a transcript can be searched *right now*, and if not, why.
+ *
+ * This is the single decision retrieval is allowed to gate on. It replaces
+ * the previous gate, a bare `embedded: true` - which answers "did an embed
+ * ever succeed", not "does the index reflect the text we would be citing".
+ * Those diverge every time a transcript is corrected: `markTranscriptStale`
+ * bumps `transcriptVersion` and sets `indexStatus: 'stale'` while leaving
+ * `embedded` true, so the old gate would keep serving superseded chunks and
+ * cite them as current.
+ *
+ * Legacy fallback: transcript records written before `indexStatus` existed
+ * carry only `embedded`. Requiring `indexStatus === 'indexed'` outright
+ * would silently make every one of those conversations unsearchable, so an
+ * absent `indexStatus` defers to `embedded`. New records always set it.
+ */
+export function isTranscriptQueryable(state: TranscriptIndexState): {
+  isQueryable: boolean;
+  reason: TTranscriptUnqueryableReason | null;
+} {
+  if (state.indexStatus == null) {
+    return state.embedded === true
+      ? { isQueryable: true, reason: null }
+      : { isQueryable: false, reason: 'not_indexed' };
+  }
+  if (state.indexStatus === 'index_failed') {
+    return { isQueryable: false, reason: 'index_failed' };
+  }
+  if (state.indexStatus === 'stale') {
+    return { isQueryable: false, reason: 'stale_index' };
+  }
+  if (state.indexStatus !== 'indexed') {
+    return { isQueryable: false, reason: 'not_indexed' };
+  }
+  // `indexed` is written together with `indexVersion = transcriptVersion`,
+  // so a mismatch here means a later revision landed without the status
+  // being updated with it. Trusting the status alone would cite superseded
+  // text; the version pair is the tiebreaker.
+  if (
+    state.indexVersion != null &&
+    state.transcriptVersion != null &&
+    state.indexVersion !== state.transcriptVersion
+  ) {
+    return { isQueryable: false, reason: 'stale_index' };
+  }
+  return { isQueryable: true, reason: null };
 }

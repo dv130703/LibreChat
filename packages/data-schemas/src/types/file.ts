@@ -28,6 +28,11 @@ export interface IFileTranscriptionJob {
   heartbeatAt: Date;
   startedAt?: Date;
   completedAt?: Date;
+  /** Set only when `status: 'failed'` was reached via a user-initiated
+   *  `POST /:sourceFileId/cancel`, not a genuine failure - see that route's
+   *  own comment on why cancellation reuses `'failed'` instead of its own
+   *  status value. */
+  cancelledAt?: Date;
   /** Server diagnosis text, shown on the card - set only when `status === 'failed'`. */
   error?: string;
   /** The options this job was asked to run with. Optional, not just in the
@@ -100,6 +105,12 @@ export interface IMongoFile extends Omit<Document, 'model'> {
    */
   previewRevision?: string;
   filename: string;
+  /** The name of the file the user actually chose, when that differs from
+   *  the stored artifact's own `filename`. Set by the Audio Transcriber,
+   *  whose stored source file is the ffmpeg-extracted audio track
+   *  (`clip.m4a`) rather than the uploaded recording (`clip.mp4`). Absent
+   *  for every file kind whose stored name IS the chosen name. */
+  originalFilename?: string;
   filepath: string;
   storageKey?: string;
   storageRegion?: string;

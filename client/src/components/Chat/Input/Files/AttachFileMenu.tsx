@@ -75,6 +75,8 @@ interface AttachFileMenuProps {
   setFiles: FileSetter;
   setFilesLoading: React.Dispatch<React.SetStateAction<boolean>>;
   conversation: TConversation | null;
+  setConversation?: (conversation: TConversation) => void;
+  latestMessageId?: string;
 }
 
 const AttachFileMenu = ({
@@ -88,6 +90,8 @@ const AttachFileMenu = ({
   setFiles,
   setFilesLoading,
   conversation,
+  setConversation,
+  latestMessageId,
 }: AttachFileMenuProps) => {
   const localize = useLocalize();
   const isUploadDisabled = disabled ?? false;
@@ -104,6 +108,8 @@ const AttachFileMenu = ({
     setFiles,
     setFilesLoading,
     conversation,
+    setConversation,
+    latestMessageId,
   });
   const { handleSharePointFiles, isProcessing, downloadProgress } =
     useSharePointFileHandlingNoChatContext(
@@ -175,7 +181,10 @@ const AttachFileMenu = ({
         currentProvider = Providers.OPENROUTER;
       }
 
-      if (isDocumentSupportedProvider(endpointType) || isDocumentSupportedProvider(currentProvider)) {
+      if (
+        isDocumentSupportedProvider(endpointType) ||
+        isDocumentSupportedProvider(currentProvider)
+      ) {
         items.push({
           label: localize('com_ui_upload_provider'),
           onClick: () => {
