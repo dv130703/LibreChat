@@ -43,6 +43,7 @@ export * from './favoritesError';
 export * from './approval';
 export * from './steer';
 export * from './numbers';
+export * from './findPassage';
 export { default as cn } from './cn';
 export { default as logger } from './logger';
 export { default as getLoginError } from './getLoginError';

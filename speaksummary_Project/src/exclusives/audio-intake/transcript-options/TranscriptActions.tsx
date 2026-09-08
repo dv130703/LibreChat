@@ -16,6 +16,8 @@ interface TranscriptActionsProps {
   promptReport?: PromptReport | null
   /** How the last run's speaker-count hint fared. Null before any run. */
   speakerReport?: SpeakerReport | null
+  /** What the last run's permissive VAD tier recovered. Null before any run. */
+  vadReport?: VadReport | null
   onGenerate: () => void
   onCancel: () => void
   /** Rotating reassurance copy shown next to the progress bar while busy - there's
@@ -41,6 +43,22 @@ function describeBounds(min: number | null, max: number | null): string {
   if (min !== null) return `at least ${min}`
   if (max !== null) return `at most ${max}`
   return 'auto'
+}
+
+/** What the permissive VAD tier recovered on the last transcription. */
+export interface VadReport {
+  /** Seconds of speech only the permissive tier found. */
+  borderlineSeconds: number
+  /** Lines holding that speech, flagged in the transcript for review. */
+  borderlineLines: number
+  /** Share of the recording the confident tier called speech. */
+  speechRatio: number | null
+}
+
+function describeSeconds(seconds: number): string {
+  if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${Math.round(seconds - minutes * 60)}s`
 }
 
 /** How the model's prompt window was spent on the last transcription. */
@@ -69,6 +87,7 @@ export function TranscriptActions({
   error,
   promptReport,
   speakerReport,
+  vadReport,
   onGenerate,
   onCancel,
   reassurance,
@@ -198,6 +217,26 @@ export function TranscriptActions({
               relying on them.
             </small>
           )}
+        </div>
+      )}
+
+      {vadReport && vadReport.borderlineLines > 0 && (
+        <div className="transcript-actions__prompt">
+          <span className="transcript-actions__prompt-head">
+            Quiet speech
+            <span>
+              {describeSeconds(vadReport.borderlineSeconds)} recovered
+              {vadReport.speechRatio !== null
+                ? ` · ${Math.round(vadReport.speechRatio * 100)}% clear speech`
+                : ''}
+            </span>
+          </span>
+          <small className="transcript-actions__prompt-warn">
+            {vadReport.borderlineLines} line{vadReport.borderlineLines === 1 ? '' : 's'} came from below the
+            main detection threshold and {vadReport.borderlineLines === 1 ? 'is' : 'are'} marked unverified. A
+            single threshold would have dropped this audio without recording it — check the marked lines
+            against the recording.
+          </small>
         </div>
       )}
 

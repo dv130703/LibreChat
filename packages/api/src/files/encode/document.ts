@@ -2,6 +2,7 @@ import { Providers } from '@librechat/agents';
 import { isOpenAILikeProvider, isDocumentSupportedProvider } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
 import type { DocumentBlock, StrategyFunctions, DocumentResult, ServerRequest } from '~/types';
+import { isOllamaTarget } from '~/endpoints/ollama/context';
 import { validatePdf } from '~/files/validation';
 import { getFileStream, getConfiguredFileSizeLimit } from './utils';
 import { runGuardedEncode } from './memoryGuard';
@@ -75,7 +76,12 @@ export async function encodeAndFormatDocuments(
   const encodingMethods: Record<string, StrategyFunctions> = {};
   const result: DocumentResult = { documents: [], files: [] };
 
-  const isDocSupported = isDocumentSupportedProvider(provider);
+  /* `custom`/`Providers.OPENAI` covers Ollama's resolved provider tag too, but
+   * Ollama's OpenAI-compatible endpoint has no PDF content-block support -
+   * sending one gets the whole request rejected with a generic "invalid
+   * message format" 400. Real document content still reaches the model via
+   * the extracted-text context path; only the direct-vision block is skipped. */
+  const isDocSupported = isDocumentSupportedProvider(provider) && !isOllamaTarget(undefined, endpoint);
   if (!isDocSupported) {
     return result;
   }

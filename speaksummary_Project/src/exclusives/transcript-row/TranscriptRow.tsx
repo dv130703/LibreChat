@@ -45,7 +45,9 @@ export const TranscriptRow = memo(function TranscriptRow({
   return (
     <div
       data-segment-id={segment.id}
-      className={`transcript-row${isFollowed ? ' transcript-row--active' : ''}`}
+      className={`transcript-row${isFollowed ? ' transcript-row--active' : ''}${
+        segment.vad_borderline ? ' transcript-row--borderline' : ''
+      }`}
     >
       <div className="transcript-row__meta">
         <button
@@ -70,6 +72,17 @@ export const TranscriptRow = memo(function TranscriptRow({
         {includeTimestamps && (
           <span className="transcript-row__timestamp">
             {formatTimestamp(segment.start)}–{formatTimestamp(segment.end)}
+          </span>
+        )}
+        {segment.vad_borderline && (
+          <span
+            className="transcript-row__borderline"
+            title="Quiet speech, picked up below the main detection threshold. Check it against the audio before relying on it."
+          >
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path d="M8 1.6a1.2 1.2 0 0 1 1.04.6l6 10.4A1.2 1.2 0 0 1 14 14.4H2a1.2 1.2 0 0 1-1.04-1.8l6-10.4A1.2 1.2 0 0 1 8 1.6Zm0 3.6a.85.85 0 0 0-.85.93l.3 3.1a.55.55 0 0 0 1.1 0l.3-3.1A.85.85 0 0 0 8 5.2Zm0 5.4a.9.9 0 1 0 0 1.8.9.9 0 0 0 0-1.8Z" />
+            </svg>
+            Unverified
           </span>
         )}
         {diarize && isAddingSpeaker && (
@@ -103,7 +116,9 @@ export const TranscriptRow = memo(function TranscriptRow({
         className="transcript-row__text"
         value={segment.text}
         rows={2}
-        aria-label={`Transcript text, ${formatTimestamp(segment.start)}–${formatTimestamp(segment.end)}`}
+        aria-label={`Transcript text, ${formatTimestamp(segment.start)}–${formatTimestamp(segment.end)}${
+          segment.vad_borderline ? ', unverified quiet speech' : ''
+        }`}
         onChange={(event) => onTextChange(segment.id, event.target.value)}
       />
       {isPreviewing && (

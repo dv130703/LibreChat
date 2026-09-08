@@ -2,7 +2,7 @@
 Audio quality analysis — v2.0 rewrite.
 
 Measures:
-  1. SNR via Silero VAD (speech/non-speech classification)
+  1. SNR via pyannote VAD (speech/non-speech classification)
   2. LUFS (EBU R128 integrated loudness, with corrected band thresholds)
   3. Clipping (PCM-level analysis)
   4. Effective bandwidth (frequency above which energy collapses)
@@ -23,12 +23,13 @@ from typing import Optional
 import librosa
 import numpy as np
 
+from ..config import get_settings
 from ..schemas import (
     AudioQualityAssessment,
     AudioQualityMetrics,
     ClippingAnalysis,
 )
-from .vad_service import VadService
+from .vad import PyannoteVad
 
 logger = logging.getLogger(__name__)
 
@@ -97,25 +98,30 @@ class QualityAnalyzer:
     """Measure and classify audio quality for transcription."""
 
     def __init__(self):
-        self.vad_service = None
+        self.vad = None
         try:
-            self.vad_service = VadService(onset=0.500, offset=0.363, device="cpu")
+            self.vad = PyannoteVad()
         except Exception as e:
-            logger.warning(f"VAD service initialization failed; SNR measurement will be unavailable: {e}")
+            logger.warning(f"VAD initialization failed; SNR measurement will be unavailable: {e}")
 
     def _measure_snr_via_vad(self, path: Path) -> tuple[Optional[float], Optional[float], Optional[float]]:
         """
-        Measure SNR using Silero VAD speech/non-speech classification.
+        Measure SNR using pyannote VAD speech/non-speech classification.
+
+        Measured against the confident tier's thresholds, so the noise floor is
+        taken from audio the transcription pipeline also treats as non-speech.
 
         Returns: (snr_db, speech_rms_db, noise_rms_db)
         """
-        if self.vad_service is None:
-            logger.warning("VAD service not available; returning None for SNR")
+        if self.vad is None:
+            logger.warning("VAD not available; returning None for SNR")
             return None, None, None
 
         try:
-            # Get VAD timeline
-            vad_timeline = self.vad_service.get_speech_timeline(path)
+            settings = get_settings()
+            vad_timeline = self.vad.timeline_for_path(
+                path, onset=settings.vad_onset, offset=settings.vad_offset
+            )
             if not vad_timeline:
                 logger.warning(f"No speech detected in {path}")
                 return None, None, None

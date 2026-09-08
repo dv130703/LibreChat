@@ -115,7 +115,7 @@ function PendingUploadRow({
   // icon padding) - the layout visibly shifted the instant the real
   // message replaced this placeholder.
   return (
-    <div className="w-full border-0 bg-transparent dark:border-0 dark:bg-transparent">
+    <div className="text-token-text-primary w-full border-0 bg-transparent dark:border-0 dark:bg-transparent">
       <div className="m-auto justify-center p-4 py-2 md:gap-6">
         <div className="group mx-auto flex flex-1 transform-gpu gap-3 transition-all duration-300 md:max-w-[47rem] xl:max-w-[55rem]">
           <div className="relative flex flex-shrink-0 flex-col items-center">
@@ -132,9 +132,19 @@ function PendingUploadRow({
               {/* The real row nests these two wrappers (`MessageRender` ->
                   `MessageContent` -> `Container`); merging them here is what
                   previously dropped `items-start` and stretched this chip to
-                  full width while the real message's hugged its content. */}
+                  full width while the real message's hugged its content.
+                  `dir="auto"` and `[.text-message+&]:mt-5` are `Container`'s
+                  own attribute/class, and the trailing empty div mirrors
+                  `DisplayMessage`'s text wrapper (real user uploads carry no
+                  text alongside the file, but the div renders regardless) -
+                  without it this row sat measurably shorter/tighter than the
+                  real message it hands off to, since the flex column's
+                  `gap-3` only applies between two children, not after one. */}
               <div className={MESSAGE_BODY_CLASSES}>
-                <div className={MESSAGE_CONTENT_CLASSES}>{content}</div>
+                <div className={cn(MESSAGE_CONTENT_CLASSES, '[.text-message+&]:mt-5')} dir="auto">
+                  {content}
+                  <div className="markdown prose message-content dark:prose-invert light w-full break-words dark:text-gray-20" />
+                </div>
               </div>
               <PlaceholderRow />
             </div>

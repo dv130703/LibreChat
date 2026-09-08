@@ -25,6 +25,7 @@ const {
   buildInterviewDocx,
   buildMeetingMinutesDocx,
   buildDiarizationDetail,
+  getTranscriptionApiUrl,
 } = require('@librechat/api');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
 const configMiddleware = require('~/server/middleware/config/app');
@@ -81,7 +82,15 @@ const router = express.Router();
 function buildTranscriptionMeta(options, result) {
   return {
     model: result.diagnostics?.model_used,
-    requestedModel: result.diagnostics?.model_requested,
+    // `model_requested` is the raw request field on the RAG server's side
+    // (transcription/whisperx_service.py's `diagnostics["model_requested"]`)
+    // and is genuinely `None` - JSON `null`, not an absent key - whenever the
+    // caller left the model on "auto". The client's conversation schema only
+    // allows `string | undefined` here (`z.string().optional()`), so writing
+    // that `null` through unchanged fails validation on every later read of
+    // this conversation, breaking message submission entirely, not just the
+    // transcript display.
+    requestedModel: result.diagnostics?.model_requested ?? undefined,
     language: result.language,
     diarize: options.diarize,
     minSpeakers: options.minSpeakers,
@@ -424,7 +433,7 @@ const upload = multer({
  * When `transcribeAndEmbed`'s call to the RAG/WhisperX service fails, the
  * thrown error is an Axios error whose own `.message` is just the generic
  * "Request failed with status code 500" - the actually useful diagnosis
- * (e.g. "Diarization produced no speaker segments...") lives one level
+ * (e.g. "No speech could be detected in this recording...") lives one level
  * deeper, in the response body the service sent back. Surfacing that instead
  * is the difference between a client error card that says something
  * genuinely actionable and one that just repeats an HTTP status code.
@@ -455,14 +464,21 @@ function getTranscribeErrorMessage(error) {
  * transcribed by a model nobody chose.
  */
 router.get('/config', async (req, res) => {
-  if (!process.env.RAG_API_URL) {
+  // Same target `transcribeAndEmbed` posts to, so the defaults the UI labels
+  // its "auto" options with come from the machine that will actually decode
+  // the audio - with TRANSCRIPTION_API_URL pointed elsewhere, reading them
+  // from the local RAG server would advertise a model the remote worker may
+  // not even be configured with.
+  const transcriptionApiUrl = getTranscriptionApiUrl();
+  if (!transcriptionApiUrl) {
     return res.status(503).json({
-      error: 'Audio transcription is not configured on this server (RAG_API_URL is not set).',
+      error:
+        'Audio transcription is not configured on this server (neither TRANSCRIPTION_API_URL nor RAG_API_URL is set).',
     });
   }
   try {
     const jwtToken = generateShortLivedToken(req.user.id);
-    const response = await axios.get(`${process.env.RAG_API_URL}/transcribe/config`, {
+    const response = await axios.get(`${transcriptionApiUrl}/transcribe/config`, {
       headers: { Authorization: `Bearer ${jwtToken}` },
       timeout: 10 * 1000,
     });

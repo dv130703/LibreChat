@@ -9,6 +9,10 @@ interface FileSource {
   relevance?: number;
   pageRelevance?: Record<string, number>;
   metadata?: any;
+  /** The retrieved chunk's own text - threaded through to the citation click
+   *  handler so `FilePreviewDialog` can scroll to and highlight the exact
+   *  passage instead of just opening the file. */
+  content?: string;
 }
 
 interface DeduplicatedSource {
@@ -18,6 +22,7 @@ interface DeduplicatedSource {
   relevance: number;
   pageRelevance: Record<string, number>;
   metadata?: any;
+  content?: string;
 }
 
 /**
@@ -78,6 +83,15 @@ export function useSearchResultsByTurn(attachments?: TAttachment[]) {
               existing.pages = uniquePages;
               existing.relevance = Math.max(existing.relevance || 0, source.relevance || 0);
               existing.pageRelevance = mergedPageRelevance;
+              // Mirrors `RetrievalCall.tsx`'s own `extractFileSources` merge -
+              // same file matched by more than one chunk, so the highlighted
+              // passage should cover all of them, not just whichever arrived
+              // first.
+              if (source.content) {
+                existing.content = existing.content
+                  ? `${existing.content}\n\n${source.content}`
+                  : source.content;
+              }
             }
           } else {
             deduplicatedSources.set(fileId, {
@@ -87,6 +101,7 @@ export function useSearchResultsByTurn(attachments?: TAttachment[]) {
               relevance: source.relevance || 0.5,
               pageRelevance: source.pageRelevance || {},
               metadata: source.metadata,
+              content: source.content,
             });
           }
         });
@@ -114,6 +129,11 @@ export function useSearchResultsByTurn(attachments?: TAttachment[]) {
                 pages: source.pages,
                 pageRelevance: source.pageRelevance,
                 metadata: source.metadata,
+                // Kept separate from `snippet` (which stays page numbers only,
+                // for the hovercard) - this is the retrieved chunk's own
+                // text, read by `Citation.tsx` to highlight the exact passage
+                // in `FilePreviewDialog` rather than just opening the file.
+                content: source.content,
               }) as any,
           ),
         };

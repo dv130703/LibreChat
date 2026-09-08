@@ -11,6 +11,9 @@ from app.config import Settings
 from app.services.whisperx_service import WhisperXService
 
 
+SPEECH = [(0.0, 5.0)]
+
+
 @dataclass
 class FakeOptions:
     initial_prompt: str | None = None
@@ -22,6 +25,7 @@ class FakePipeline:
 
     def __init__(self, options: FakeOptions):
         self.options = options
+        self.vad_model = None
         self.seen_prompts: list[str | None] = []
         self.raise_on_call = False
 
@@ -43,13 +47,13 @@ def pipeline():
 
 
 def test_prompt_is_in_force_during_the_call(service, pipeline):
-    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="SFO, POCA.")
+    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="SFO, POCA.", speech=SPEECH)
     assert pipeline.seen_prompts == ["SFO, POCA."]
 
 
 def test_options_are_restored_afterwards(service, pipeline):
     before = pipeline.options
-    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="SFO, POCA.")
+    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="SFO, POCA.", speech=SPEECH)
     assert pipeline.options is before
     assert pipeline.options.initial_prompt is None
 
@@ -59,24 +63,24 @@ def test_options_are_restored_even_when_the_call_raises(service, pipeline):
     # one's terminology, so the restore has to survive a failure.
     pipeline.raise_on_call = True
     with pytest.raises(RuntimeError):
-        service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="SFO.")
+        service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="SFO.", speech=SPEECH)
     assert pipeline.options.initial_prompt is None
 
 
 def test_no_prompt_leaves_options_untouched(service, pipeline):
     before = pipeline.options
-    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt=None)
+    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt=None, speech=SPEECH)
     assert pipeline.options is before
     assert pipeline.seen_prompts == [None]
 
 
 def test_empty_prompt_is_treated_as_no_prompt(service, pipeline):
-    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="")
+    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="", speech=SPEECH)
     assert pipeline.seen_prompts == [None]
 
 
 def test_deployment_hotwords_survive_the_swap(service, pipeline):
     # The two glossaries are independent: a per-recording prompt must not wipe
     # the deployment-wide hotwords out of the options it replaces.
-    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="SFO.")
+    service._transcribe_batched(pipeline, audio=None, language="en", initial_prompt="SFO.", speech=SPEECH)
     assert pipeline.options.hotwords == "deployment glossary"

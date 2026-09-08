@@ -1,5 +1,17 @@
+import path from 'path';
 import { spawn } from 'child_process';
 import { logger } from '@librechat/data-schemas';
+
+/** Resolves to `FFMPEG_PATH/ffmpeg.exe` (or `/ffmpeg` on POSIX) when
+ *  `FFMPEG_PATH` is set, otherwise falls back to the bare command, relying
+ *  on ffmpeg being present on the system `PATH`. */
+function resolveFfmpegBin(): string {
+  const dir = process.env.FFMPEG_PATH;
+  if (!dir) {
+    return 'ffmpeg';
+  }
+  return path.join(dir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+}
 
 /**
  * Extracts (and normalizes) just the audio track from a media file into a
@@ -17,7 +29,7 @@ import { logger } from '@librechat/data-schemas';
  */
 export function extractAudioTrack(inputPath: string, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const ffmpeg = spawn('ffmpeg', [
+    const ffmpeg = spawn(resolveFfmpegBin(), [
       '-y',
       '-i',
       inputPath,

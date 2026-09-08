@@ -7,7 +7,7 @@ const fsPromises = require('fs/promises');
 const axios = require('axios');
 const FormData = require('form-data');
 const { logger } = require('@librechat/data-schemas');
-const { generateShortLivedToken, logAxiosError } = require('@librechat/api');
+const { generateShortLivedToken, logAxiosError, getTranscriptionApiUrl } = require('@librechat/api');
 const {
   formatTranscriptLine: formatLine,
   formatTranscriptTimestamp: formatTimestamp,
@@ -104,9 +104,10 @@ async function embedTranscript({ req, file_id, filename, text }) {
  * }>}
  */
 async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signal }) {
-  if (!process.env.RAG_API_URL) {
+  const transcriptionApiUrl = getTranscriptionApiUrl();
+  if (!transcriptionApiUrl) {
     throw new Error(
-      'Audio transcription is not configured on this server (RAG_API_URL is not set).',
+      'Audio transcription is not configured on this server (neither TRANSCRIPTION_API_URL nor RAG_API_URL is set).',
     );
   }
 
@@ -172,10 +173,8 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
     formData.append('model', model);
   }
 
-  logger.info(
-    `[TRANSCRIPTION] POST ${process.env.RAG_API_URL}/transcribe file=${file.originalname}`,
-  );
-  const response = await axios.post(`${process.env.RAG_API_URL}/transcribe`, formData, {
+  logger.info(`[TRANSCRIPTION] POST ${transcriptionApiUrl}/transcribe file=${file.originalname}`);
+  const response = await axios.post(`${transcriptionApiUrl}/transcribe`, formData, {
     headers: {
       Authorization: `Bearer ${jwtToken}`,
       accept: 'application/json',

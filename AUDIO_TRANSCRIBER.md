@@ -65,7 +65,7 @@ The feature is explicitly designed to be **self-contained and removable** — it
 4. `TranscribeOptionsDialog` opens next (full option list in §3.3).
 5. On confirm: mints a fresh `uuidv4()` conversation id client-side, builds `FormData` (`file`, `conversationId`, `endpoint`, optional `agent_id`, `options` as a JSON string), calls `useTranscribeAudioMutation()` → `POST /api/transcribe` (20-minute axios timeout, real byte-level upload progress).
 6. UI shows upload progress (`Uploading… N%`), then an **indeterminate elapsed-seconds counter** ("Processing recording… (Ns elapsed)") for the transcription phase — there is no real progress signal once the upload itself completes.
-7. On error: shows the server's own diagnosis text if present (e.g. "Diarization produced no speaker segments...") with "Try again" / "Choose a different file".
+7. On error: shows the server's own diagnosis text if present (e.g. "No speech could be detected in this recording...") with "Try again" / "Choose a different file".
 8. On success: navigates (`replace: true`) to `/audio-transcriber/:conversationId`, force-enables `file_search` on the conversation's ephemeral agent.
 
 ### 3.3 `TranscribeOptionsDialog.tsx` — every configurable option

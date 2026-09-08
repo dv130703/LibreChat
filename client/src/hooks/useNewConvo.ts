@@ -209,6 +209,14 @@ const useNewConvo = (index = 0) => {
         const getParams = (nextConversation: TConversation) => {
           const nextParams = new URLSearchParams(searchParams);
           nextParams.delete('projectId');
+          // `panel`/`file` name a transcript scoped to whichever conversation
+          // was open before this switch (`ChatPanelHost`'s side panel) -
+          // carrying them into a different conversation's URL, new or
+          // existing, points the panel at a file that conversation doesn't
+          // have, surfacing as "Failed to load the transcript." instead of
+          // just closing.
+          nextParams.delete('panel');
+          nextParams.delete('file');
           if (
             nextConversation.conversationId === Constants.NEW_CONVO &&
             nextConversation.chatProjectId

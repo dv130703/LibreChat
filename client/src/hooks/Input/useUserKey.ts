@@ -29,7 +29,7 @@ const useUserKey = (endpoint: string) => {
   const saveUserKey = useCallback(
     (userKey: string, expiresAt: number | null) => {
       const dateStr = expiresAt ? new Date(expiresAt).toISOString() : '';
-      updateKey.mutate({
+      return updateKey.mutateAsync({
         name: keyName,
         value: userKey,
         expiresAt: dateStr,

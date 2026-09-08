@@ -38,6 +38,15 @@ from .transcription_prompt import (
 
 logger = logging.getLogger(__name__)
 
+
+class NoSpeakerSegments(Exception):
+    """Diarization found nothing to label - the recording carries no speech
+    it can separate (silent, near-silent, or far too short). A property of
+    the file the caller sent, not a fault in this service, so it is mapped
+    to a 4xx by the route rather than surfacing as an opaque 500 that reads
+    like a server crash."""
+
+
 # Past this many seconds from the nearest diarization turn, "nearest" is no
 # longer meaningful evidence about who's speaking - see
 # `WhisperXService._resolve_speaker_assignment`. Illustrative, not calibrated
@@ -94,8 +103,22 @@ class WhisperXService:
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.device = settings.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.compute_type = settings.compute_type or ("float16" if self.device == "cuda" else "int8")
+        # Pinned to CUDA - no silent CPU fallback. A GPU-less host used to
+        # quietly get a correct-but-far-slower CPU run; failing loudly here
+        # instead surfaces a misconfigured/GPU-less deployment immediately,
+        # rather than as an unexplained multi-minute transcription later.
+        self.device = settings.device or "cuda"
+        if self.device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                'WhisperXService is pinned to device="cuda" but torch.cuda.is_available() '
+                "is False on this machine - no CUDA GPU was found. Run this service on a "
+                "GPU-equipped host, or set WHISPERX_DEVICE=cpu to explicitly opt back into "
+                "the (much slower) CPU path."
+            )
+        # Always float16 - maximum accuracy, and the natural choice now that
+        # device is pinned to CUDA (float16 is what the GPU path accelerates;
+        # the int8 default this used to fall back to existed only for CPU).
+        self.compute_type = settings.compute_type or "float16"
 
         self._lock = Lock()
         # Distinct from _lock on purpose. _lock is non-reentrant and is held by
@@ -533,11 +556,11 @@ class WhisperXService:
                 )
 
         if len(diarize_segments) == 0:
-            raise RuntimeError(
-                "Diarization produced no speaker segments. This may indicate that the audio "
-                "is too short, too quiet, or lacks sufficient speaker overlap for accurate diarization. "
-                "Try with different min_speakers/max_speakers settings, or check that you have accepted "
-                "the speaker-diarization-community-1 model terms on huggingface.co."
+            raise NoSpeakerSegments(
+                "No speech could be detected in this recording, so there are no speakers "
+                "to label. This usually means the audio is silent, too quiet, or too short. "
+                "Check that the file actually contains audible speech - if it does, try "
+                "setting min_speakers/max_speakers explicitly."
             )
 
         # The raw ground truth everything else here is derived from -
@@ -585,12 +608,18 @@ class WhisperXService:
         channel_split: bool = False,
     ) -> tuple[list[dict], str, dict, list[dict], dict[str, list[float]] | None, dict]:
         prompt_build = self.build_prompt(context_terms, context, model_name=model)
-        initial_prompt = prompt_build.prompt or self.settings.initial_prompt
         # Experimental: also boost this recording's confirmed terms through
         # hotwords, not just initial_prompt - see _build_request_hotwords.
         request_hotwords = self._build_request_hotwords(
             self._get_model(model), prompt_build.used_terms
         )
+        # initial_prompt always carries at least the same terms as
+        # `hotwords` when nothing more specific was built for this request:
+        # large-v3 and large-v3-turbo have each been observed to silently
+        # under-weight one of these two channels, so neither is left empty
+        # while the other has content - whichever channel a given model
+        # actually honours, the UI-configured terms still reach it.
+        initial_prompt = prompt_build.prompt or self.settings.initial_prompt or request_hotwords
 
         # Put the hint in range and the right way round before any diarizer sees
         # it. pyannote takes these at face value, so an inverted pair silently

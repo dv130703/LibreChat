@@ -12,6 +12,9 @@ class WordToken(BaseModel):
     speaker: str | None = None
     speaker_overlap: bool = False
     is_alignment_gap: bool = False
+    # Which VAD tier admitted this word. "borderline" means only the permissive
+    # thresholds found it: transcribed so it isn't lost, but unverified.
+    vad_confidence: Literal["high", "borderline"] | None = None
 
 
 class TranscriptSegment(BaseModel):
@@ -22,6 +25,9 @@ class TranscriptSegment(BaseModel):
     text: str
     words: list[WordToken] | None = None
     avg_confidence: float | None = None
+    # True when any word here came from the borderline tier. A line worth a
+    # reviewer's ear before the transcript is relied on.
+    vad_borderline: bool = False
 
 
 class TranscriptionDiagnostics(BaseModel):
@@ -30,7 +36,18 @@ class TranscriptionDiagnostics(BaseModel):
     low_confidence_word_count: int = 0
     diarization_backend: str = "pyannote"
     diarization_speaker_count: int = 0
+    # Share of the recording the confident tier called speech.
     vad_speech_ratio: float | None = None
+    # What the second, permissive tier recovered. Reported rather than left
+    # implicit: this is audio the old single-threshold pass would have dropped
+    # without trace, so the size of it is the number to check.
+    vad_borderline_duration_s: float = 0.0
+    vad_borderline_word_count: int = 0
+    vad_borderline_segment_count: int = 0
+    vad_onset: float | None = None
+    vad_offset: float | None = None
+    vad_borderline_onset: float | None = None
+    vad_borderline_offset: float | None = None
     # How much of the caller's supplied terminology actually reached the model.
     # Whisper's prompt window is finite, so a long list is truncated; saying so
     # beats letting the caller assume every term was applied.

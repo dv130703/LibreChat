@@ -82,6 +82,7 @@ export * from './blackBox/logger';
 export * from './transcription/corrections';
 export * from './transcription/diarizationDetail';
 export * from './transcription/docxWatermark';
+export * from './transcription/endpoint';
 export * from './transcription/evidence';
 export * from './transcription/interviewDocx';
 export * from './transcription/meetingMinutesDocx';

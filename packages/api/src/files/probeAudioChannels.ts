@@ -1,5 +1,16 @@
+import path from 'path';
 import { spawn } from 'child_process';
 import { logger } from '@librechat/data-schemas';
+
+/** Mirrors `extractAudio.ts`'s `resolveFfmpegBin`, resolving `ffprobe`
+ *  against `FFMPEG_PATH` when set. */
+function resolveFfprobeBin(): string {
+  const dir = process.env.FFMPEG_PATH;
+  if (!dir) {
+    return 'ffprobe';
+  }
+  return path.join(dir, process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
+}
 
 /**
  * Server-side replacement for the Audio Transcriber composer's client-side
@@ -19,7 +30,7 @@ import { logger } from '@librechat/data-schemas';
  */
 export function probeAudioChannels(filePath: string): Promise<number> {
   return new Promise((resolve) => {
-    const ffprobe = spawn('ffprobe', [
+    const ffprobe = spawn(resolveFfprobeBin(), [
       '-v',
       'error',
       '-select_streams',

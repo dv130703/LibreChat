@@ -516,6 +516,37 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
       expect(result.documents).toHaveLength(0);
       expect(result.files).toHaveLength(0);
     });
+
+    it('should skip document blocks for an Ollama endpoint even though it resolves to the OpenAI provider', async () => {
+      /**
+       * Ollama's OpenAI-compatible endpoint resolves to Providers.OPENAI, but it
+       * has no PDF/file content-block support - sending one gets rejected with a
+       * generic "invalid message format" 400. The extracted-text context path
+       * still carries the content; only the direct-vision block is skipped.
+       */
+      const req = createMockRequest(15) as ServerRequest;
+      const file = createMockFile(10);
+
+      const mockContent = Buffer.from('test-pdf-content').toString('base64');
+      mockedGetFileStream.mockResolvedValue({
+        file,
+        content: mockContent,
+        metadata: file,
+      });
+
+      mockedValidatePdf.mockResolvedValue({ isValid: true });
+
+      const result = await encodeAndFormatDocuments(
+        req,
+        [file],
+        { provider: Providers.OPENAI, endpoint: 'Ollama' },
+        mockStrategyFunctions,
+      );
+
+      expect(result.documents).toHaveLength(0);
+      expect(result.files).toHaveLength(0);
+      expect(mockedValidatePdf).not.toHaveBeenCalled();
+    });
   });
 
   describe('concurrency guard', () => {

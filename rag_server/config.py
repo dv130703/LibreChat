@@ -11,16 +11,56 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
 load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
+# huggingface_hub caches downloaded model files as content-addressed blobs and
+# symlinks them into the per-model snapshot directory. Creating a symlink on
+# Windows requires SeCreateSymbolicLinkPrivilege (admin, or Developer Mode
+# enabled) - without it, downloads fail with WinError 1314 ("A required
+# privilege is not held by the client") right as the snapshot is assembled.
+# Must be set before any huggingface_hub/transformers import triggers a
+# download, so it lives here at the top of config, which every entry point
+# imports first.
+if os.name == "nt":
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+# Any `subprocess` call to ffmpeg/ffprobe (ours or a dependency's) resolves
+# via PATH, so when ffmpeg isn't already installed system-wide, prepending
+# its directory here covers that. It does NOT cover torchcodec: on Windows,
+# Python 3.8+ no longer searches PATH for a loaded DLL's own dependencies
+# (avcodec-*.dll etc for torchcodec's libtorchcodec_core*.dll) - that requires
+# the explicit os.add_dll_directory() call below instead.
+_ffmpeg_dir = os.getenv("FFMPEG_PATH")
+if _ffmpeg_dir and _ffmpeg_dir not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+    if os.name == "nt" and os.path.isdir(_ffmpeg_dir):
+        os.add_dll_directory(_ffmpeg_dir)
+
 # Server
 # Deliberately RAG_-prefixed: LibreChat's .env sets HOST=0.0.0.0 and PORT=3080
 # for its own Express server, and reading the bare names would make this server
 # refuse to start (non-loopback host) or fight LibreChat for port 3080.
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 HOST = os.getenv("RAG_HOST", "127.0.0.1")
-if HOST not in LOOPBACK_HOSTS:
+
+# Loopback stays the default, so nothing is exposed by accident. Binding a
+# reachable address is allowed only when asked for explicitly, which is what
+# lets one machine act as the transcription worker for another (the client
+# side of that is TRANSCRIPTION_API_URL in LibreChat's .env).
+#
+# Every route here is authenticated - LibreChat signs a 5-minute HS256 token
+# per call (see auth.py) - so the exposure is guarded by JWT_SECRET and
+# nothing else. That makes JWT_SECRET the whole boundary the moment this is
+# switched on: leaving it at the value shipped in .env.example (a published
+# constant) lets anyone who can reach this port mint a valid token for any
+# user id. Set a real one, identical on both machines, before enabling this,
+# and keep the port on a trusted network.
+_ALLOW_REMOTE = os.getenv("RAG_ALLOW_REMOTE_HOST", "").strip().lower() in {"1", "true", "yes"}
+if HOST not in LOOPBACK_HOSTS and not _ALLOW_REMOTE:
     raise ValueError(
-        f"RAG_HOST={HOST!r} is not a loopback address. "
-        f"This server binds loopback only; use one of {sorted(LOOPBACK_HOSTS)}."
+        f"RAG_HOST={HOST!r} is not a loopback address. This server binds loopback only "
+        f"unless RAG_ALLOW_REMOTE_HOST=true is also set (do that only on a trusted "
+        f"network, and only with a non-default JWT_SECRET - it is the only thing "
+        f"authenticating callers). Otherwise use one of {sorted(LOOPBACK_HOSTS)}."
     )
 
 # Port

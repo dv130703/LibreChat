@@ -11,7 +11,8 @@ from threading import Lock
 import pandas as pd
 import torch
 import whisperx
-from whisperx.diarize import DiarizationPipeline
+from whisperx.diarize import DiarizationPipeline, Segment as SegmentX
+from whisperx.vads import Vad
 
 from ..config import Settings, get_settings
 from .diarization_merge import merge_fragmented_speakers
@@ -24,12 +25,50 @@ from .transcription_prompt import (
     normalize_hotwords,
     prompt_budget,
 )
+from .vad import PyannoteVad
+from .vad_tiers import (
+    SAMPLE_RATE,
+    VAD_CHUNK_SIZE,
+    Interval,
+    compute_tiers,
+    tag_segments,
+    total_duration,
+)
 
 logger = logging.getLogger(__name__)
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 _NEMO_SCRIPT = _BACKEND_DIR / "scripts" / "nemo_diarize.py"
 _NEMO_VENV_PYTHON = _BACKEND_DIR / ".venv-nemo" / "bin" / "python"
+
+
+class PrecomputedVad(Vad):
+    """Hands whisperx a speech mask this service has already decided on.
+
+    Left to itself, whisperx would run VAD inside transcribe() and keep only
+    what one threshold pair admitted. The mask built here already carries both
+    tiers, so the quiet speech the second tier found reaches the recogniser
+    instead of being dropped before it.
+    """
+
+    def __init__(self, intervals: list[Interval]):
+        self._segments = [SegmentX(start, end, "UNKNOWN") for start, end in intervals]
+
+    def __call__(self, audio, **kwargs):
+        return self._segments
+
+    @staticmethod
+    def preprocess_audio(audio):
+        return audio
+
+    @staticmethod
+    def merge_chunks(segments_list, chunk_size, onset: float = 0.5, offset: float | None = None):
+        # Thresholding is already done; this only groups regions into the
+        # windows whisperx decodes as a batch.
+        if not segments_list:
+            logger.warning("Neither VAD tier found speech in this recording")
+            return []
+        return Vad.merge_chunks(segments_list, chunk_size, onset, offset)
 
 
 class WhisperXService:
@@ -46,9 +85,13 @@ class WhisperXService:
         # model would deadlock. This one guards the per-request mutation of the
         # shared pipeline's options (see transcribe), and nothing else.
         self._options_lock = Lock()
+        # Likewise distinct: _get_model() asks for the VAD while holding _lock,
+        # so the VAD cannot be guarded by the same non-reentrant lock.
+        self._vad_lock = Lock()
         self._model = None
         self._align_models: dict[str, tuple] = {}
         self._diarize_model = None
+        self._vad: PyannoteVad | None = None
 
     @property
     def is_model_loaded(self) -> bool:
@@ -74,9 +117,11 @@ class WhisperXService:
         if self._model is None:
             with self._lock:
                 if self._model is None:
-                    # VAD options from settings (Tier 3a: VAD as shared stage)
+                    # Only a fallback: transcribe() swaps in a PrecomputedVad
+                    # carrying the two-tier mask before every decode, so this
+                    # configuration never actually gates the ASR pass.
                     vad_options = {
-                        "chunk_size": 30,  # standard VAD chunk size for silero
+                        "chunk_size": VAD_CHUNK_SIZE,
                         "vad_onset": self.settings.vad_onset,
                         "vad_offset": self.settings.vad_offset,
                     }
@@ -139,11 +184,24 @@ class WhisperXService:
                         language=self.settings.default_language,
                         local_files_only=self.settings.local_files_only,
                         download_root=self.settings.model_cache_dir,
-                        vad_method=self.settings.vad_method,
+                        vad_model=self._get_vad().model,
                         vad_options=vad_options,
                         asr_options=asr_options,
                     )
         return self._model
+
+    def _get_vad(self) -> PyannoteVad:
+        """The segmentation model, loaded once and shared.
+
+        The same instance serves both tiers and the pipeline's own VAD slot -
+        thresholds are applied to its scores, never baked into it, so there is
+        never a reason to hold more than one.
+        """
+        if self._vad is None:
+            with self._vad_lock:
+                if self._vad is None:
+                    self._vad = PyannoteVad(device=self.device)
+        return self._vad
 
     def _get_align_model(self, language_code: str):
         if language_code not in self._align_models:
@@ -248,16 +306,24 @@ class WhisperXService:
             budget=prompt_budget(hotwords_tokens=hotwords_tokens),
         )
 
-    def _transcribe_batched(self, model, audio, language: str | None, initial_prompt: str | None) -> dict:
-        """Run the ASR pass, optionally under a per-request initial_prompt.
+    def _transcribe_batched(
+        self,
+        model,
+        audio,
+        language: str | None,
+        initial_prompt: str | None,
+        speech: list[Interval],
+    ) -> dict:
+        """Run the ASR pass over `speech`, optionally under a per-request prompt.
 
-        WhisperX bakes ASR options into the pipeline at load time and its
-        transcribe() takes no prompt argument, so a per-recording prompt has to
-        be swapped onto the shared pipeline around the call. That is exactly
-        what WhisperX does to itself for suppress_numerals (whisperx/asr.py:262),
-        and it is safe only while one request owns the pipeline - hence the lock,
-        which serialises ASR. That costs nothing today: this is a single model on
-        a single device, and the call already blocks the caller.
+        WhisperX bakes both the ASR options and the VAD into the pipeline at
+        load time, and its transcribe() takes neither a prompt nor a speech mask
+        as an argument, so both have to be swapped onto the shared pipeline
+        around the call. That is exactly what WhisperX does to itself for
+        suppress_numerals (whisperx/asr.py:262), and it is safe only while one
+        request owns the pipeline - hence the lock, which serialises ASR. That
+        costs nothing today: this is a single model on a single device, and the
+        call already blocks the caller.
 
         The prompt reaches every chunk, not just the first: the batched decoder
         prepends it inside generate_segment_batched (whisperx/asr.py:47-50).
@@ -265,18 +331,20 @@ class WhisperXService:
         effective_batch_size = self._calculate_batch_size()
         resolved_language = language or self.settings.default_language
 
-        if not initial_prompt:
-            return model.transcribe(audio, batch_size=effective_batch_size, language=resolved_language)
-
         with self._options_lock:
             previous_options = model.options
-            model.options = replace(previous_options, initial_prompt=initial_prompt)
+            previous_vad = model.vad_model
+            if initial_prompt:
+                model.options = replace(previous_options, initial_prompt=initial_prompt)
+            model.vad_model = PrecomputedVad(speech)
             try:
                 return model.transcribe(audio, batch_size=effective_batch_size, language=resolved_language)
             finally:
                 # Restored even on failure - a leaked prompt would silently
-                # condition every later recording on this one's terminology.
+                # condition every later recording on this one's terminology,
+                # and a leaked mask would gate it on this one's speech regions.
                 model.options = previous_options
+                model.vad_model = previous_vad
 
     def transcribe(
         self,
@@ -302,8 +370,15 @@ class WhisperXService:
         # Load and resample audio to 16kHz (WhisperX standard)
         # whisperx.load_audio() automatically resamples to 16kHz using librosa
         audio = whisperx.load_audio(audio_path)
+        audio_duration_s = len(audio) / SAMPLE_RATE
 
-        result = self._transcribe_batched(model, audio, language, initial_prompt)
+        # Both tiers, before the recogniser sees anything. The borderline band
+        # is transcribed alongside the confident one precisely so that quiet
+        # speech is never silently discarded; what it is worth is decided after
+        # the fact, by tagging, not by dropping it here.
+        tiers = compute_tiers(audio, self.settings, self._get_vad())
+
+        result = self._transcribe_batched(model, audio, language, initial_prompt, tiers.union)
         language_code = result["language"]
 
         # Alignment-gap counting (Tier 3b)
@@ -326,6 +401,8 @@ class WhisperXService:
         except Exception:
             # No alignment model for this language; fall back to the unaligned segments.
             pass
+
+        borderline_word_count, borderline_segment_count = tag_segments(result["segments"], tiers)
 
         diarization_speaker_count = 0
         diarization_backend = self.settings.diarization_backend or "pyannote"
@@ -398,17 +475,17 @@ class WhisperXService:
             if merge_pairs:
                 logger.info(f"Merged {len(merge_pairs)} fragmented speaker pairs")
 
-            # Tier 3d: VAD-masked, duration-weighted reconciliation
-            # Note: Would use cached VAD timeline here if available
             result = whisperx.assign_word_speakers(diarize_segments, result)
 
-            # TODO: Integrate reconciliation when word-level embeddings are available
-            # For now, rely on improved diarization from centroid-merge
-            # reconciled_segments = reconcile_word_speakers(
-            #     result["segments"],
-            #     diarize_segments,
-            #     vad_timeline=vad_timeline_from_cache,
-            # )
+            # Duration-weighted reconciliation over the speech mask. Masking on
+            # the union rather than the confident tier is deliberate: masking on
+            # confident would strip the speaker off exactly the borderline words
+            # the two-tier pass set out to keep.
+            result["segments"] = reconcile_word_speakers(
+                result["segments"],
+                diarize_segments.to_dict("records"),
+                vad_timeline=tiers.union,
+            )
 
             diarization_speaker_count = int(diarize_segments["speaker"].nunique()) if "speaker" in diarize_segments else 0
 
@@ -433,6 +510,7 @@ class WhisperXService:
                     "end": round(float(segment["end"]), 2),
                     "speaker": self._speaker_label(raw_speaker, speaker_numbers),
                     "text": segment["text"].strip(),
+                    "vad_borderline": bool(segment.get("vad_borderline")),
                 }
             )
 
@@ -443,7 +521,22 @@ class WhisperXService:
             "low_confidence_word_count": 0,  # TODO: Tier 3b - count words with confidence < threshold
             "diarization_backend": diarization_backend,
             "diarization_speaker_count": diarization_speaker_count,
-            "vad_speech_ratio": 0.0,  # TODO: Tier 3a - calculate from VAD timeline
+            # What each VAD tier accounted for. The borderline figures are the
+            # ones to watch: that audio would have been dropped without trace
+            # under a single threshold, so its size is the measure of what the
+            # old behaviour was costing.
+            "vad_speech_ratio": (
+                round(total_duration(tiers.confident) / audio_duration_s, 4)
+                if audio_duration_s
+                else 0.0
+            ),
+            "vad_borderline_duration_s": round(total_duration(tiers.borderline), 2),
+            "vad_borderline_word_count": borderline_word_count,
+            "vad_borderline_segment_count": borderline_segment_count,
+            "vad_onset": self.settings.vad_onset,
+            "vad_offset": self.settings.vad_offset,
+            "vad_borderline_onset": self.settings.vad_borderline_onset,
+            "vad_borderline_offset": self.settings.vad_borderline_offset,
             # What the prompt window actually took. Reported rather than
             # guessed at: a term the user typed and that never reached the
             # model is worth saying out loud.

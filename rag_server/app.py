@@ -54,7 +54,7 @@ from transcription.config import get_settings
 from transcription.speaker_bounds import MAX_ALLOWED_SPEAKERS
 from transcription.vocabulary import SUGGESTED_TERMS
 from transcription.schemas import TranscriptionConfig, TranscriptionResponse
-from transcription.whisperx_service import get_whisperx_service
+from transcription.whisperx_service import NoSpeakerSegments, get_whisperx_service
 
 logs.configure()
 logger = logging.getLogger("rag_server")
@@ -413,6 +413,12 @@ async def transcribe_audio(
                 channel_split=channel_split,
             )
         )
+    except NoSpeakerSegments as error:
+        # Not a server fault - the uploaded recording has no speech to label.
+        # Logged at warning (no traceback): nothing here needs debugging, and
+        # a 500-style stack trace for an ordinary silent file is just noise.
+        logger.warning("No speech detected in %s: %s", file.filename, error)
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         logger.exception("Transcription failed for %s", file.filename)
         raise HTTPException(status_code=500, detail=str(error)) from error

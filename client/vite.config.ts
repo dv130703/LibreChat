@@ -51,6 +51,17 @@ export default defineConfig(({ command }) => ({
     host: process.env.HOST || '0.0.0.0',
     port: (process.env.FRONTEND_PORT && Number(process.env.FRONTEND_PORT)) || 3090,
     strictPort: false,
+    watch: {
+      // `public/images/<userId>/...` is where the local file storage
+      // strategy writes runtime user uploads (avatars, extracted
+      // transcription audio, etc.) - not source, and never something HMR
+      // should react to. Worse than pointless: a file there mid-write when
+      // the watcher tries to add it can throw EBUSY, and that error is
+      // unhandled deep inside chokidar/Vite - it crashes the entire dev
+      // server, not just this file's watch, taking down every other
+      // in-flight request with it.
+      ignored: ['**/public/images/**'],
+    },
     proxy: {
       '/api': {
         target: backendURL,

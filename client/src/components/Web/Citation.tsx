@@ -25,6 +25,11 @@ interface FileCitationSource {
   relevance?: number;
   snippet?: string;
   title?: string;
+  /** The retrieved chunk's own text (`useSearchResultsByTurn.ts`'s `content`,
+   *  distinct from `snippet` which is just a page-number label) - handed to
+   *  `FilePreviewDialog` so it can scroll to and highlight the exact passage
+   *  this citation refers to. */
+  content?: string;
 }
 
 function getFileCitationData(source?: FileCitationSource) {
@@ -38,6 +43,7 @@ function getFileCitationData(source?: FileCitationSource) {
     filePages: isFileType ? source.pages : undefined,
     fileRelevance: isFileType ? source.relevance : undefined,
     filePageRelevance: isFileType ? source.pageRelevance : undefined,
+    fileContent: isFileType ? source.content : undefined,
   };
 }
 
@@ -103,8 +109,16 @@ export function CompositeCitation(props: CompositeCitationProps) {
   };
 
   const currentSource = sources[currentPage] as FileCitationSource;
-  const { isFileType, fileId, fileMeta, fileName, filePages, fileRelevance, filePageRelevance } =
-    getFileCitationData(currentSource);
+  const {
+    isFileType,
+    fileId,
+    fileMeta,
+    fileName,
+    filePages,
+    fileRelevance,
+    filePageRelevance,
+    fileContent,
+  } = getFileCitationData(currentSource);
 
   const handleFileClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -283,6 +297,7 @@ export function CompositeCitation(props: CompositeCitationProps) {
           pageRelevance={filePageRelevance}
           fileType={fileMeta?.fileType}
           fileSize={fileMeta?.fileBytes}
+          highlightText={fileContent}
         />
       )}
     </>
@@ -307,7 +322,16 @@ export function Citation(props: CitationComponentProps) {
     index: citation?.index || 0,
   }) as FileCitationSource | undefined;
 
-  const { isFileType, fileId, fileMeta, fileName, filePages, fileRelevance, filePageRelevance } =
+  const {
+    isFileType,
+    fileId,
+    fileMeta,
+    fileName,
+    filePages,
+    fileRelevance,
+    filePageRelevance,
+    fileContent,
+  } =
     getFileCitationData(refData);
 
   const [showPreview, setShowPreview] = useState(false);
@@ -359,6 +383,7 @@ export function Citation(props: CitationComponentProps) {
           pageRelevance={filePageRelevance}
           fileType={fileMeta?.fileType}
           fileSize={fileMeta?.fileBytes}
+          highlightText={fileContent}
         />
       )}
     </>

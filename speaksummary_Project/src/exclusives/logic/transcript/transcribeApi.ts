@@ -32,6 +32,13 @@ export interface TranscribeDiagnostics {
   speaker_hint_adjustments?: string[]
   /** Null when there was no hint to measure the result against. */
   speaker_count_within_hint?: boolean | null
+  /** Share of the recording the confident VAD tier called speech. */
+  vad_speech_ratio?: number | null
+  /** Speech only the permissive tier found - audio a single threshold would
+   *  have discarded without trace. */
+  vad_borderline_duration_s?: number
+  vad_borderline_word_count?: number
+  vad_borderline_segment_count?: number
 }
 
 export interface TranscribeResult {

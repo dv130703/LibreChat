@@ -181,9 +181,9 @@ const SetKeyDialog = ({
       expiresAt = Date.now() + (selectedOption ? selectedOption.value : 0);
     }
 
-    const saveKey = (key: string) => {
+    const saveKey = async (key: string) => {
       try {
-        saveUserKey(key, expiresAt);
+        await saveUserKey(key, expiresAt);
         showToast({
           message: localize('com_ui_save_key_success'),
           status: NotificationSeverity.SUCCESS,

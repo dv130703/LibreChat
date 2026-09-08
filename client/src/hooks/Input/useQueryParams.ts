@@ -25,6 +25,15 @@ import store from '~/store';
 
 const PROJECT_ID_SEARCH_PARAM = 'projectId';
 
+/** Search params owned by other features that this hook must hand back
+ *  untouched when it strips the settings/prompt params it consumed.
+ *  `panel`/`file` drive `ChatPanelHost`'s open side panel: the transcribe
+ *  flow opens the transcript pane the instant a recording is attached, and
+ *  wiping these mid-upload closed that pane out from under a running job
+ *  (the layout visibly jumped from split-pane back to full-width chat as
+ *  "Processing" handed off to "Transcribing"). */
+const EXTERNAL_SEARCH_PARAMS = [PROJECT_ID_SEARCH_PARAM, 'panel', 'file'] as const;
+
 const injectAgentIntoAgentsMap = (queryClient: QueryClient, agent: any) => {
   const editCacheKey = [QueryKeys.agents, { requiredPermission: PermissionBits.EDIT }];
   const editCache = queryClient.getQueryData<AgentListResponse>(editCacheKey);
@@ -76,9 +85,11 @@ export default function useQueryParams({
 
   const getPreservedSearchParams = useCallback(() => {
     const preservedParams = new URLSearchParams();
-    const projectId = searchParams.get(PROJECT_ID_SEARCH_PARAM);
-    if (projectId) {
-      preservedParams.set(PROJECT_ID_SEARCH_PARAM, projectId);
+    for (const key of EXTERNAL_SEARCH_PARAMS) {
+      const value = searchParams.get(key);
+      if (value) {
+        preservedParams.set(key, value);
+      }
     }
     return preservedParams;
   }, [searchParams]);

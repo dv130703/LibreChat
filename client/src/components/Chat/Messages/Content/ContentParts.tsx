@@ -312,6 +312,24 @@ const ContentParts = memo(function ContentParts({
         result.push({ part, idx });
       }
     });
+
+    /**
+     * Ollama's OpenAI-compatible stream occasionally registers the
+     * "thinking" run step's index slightly after the answer's run step
+     * (a race upstream in step handling), landing the THINK part after the
+     * TEXT part it explains. For the common single-turn shape - exactly one
+     * text part and one think part, nothing else (no tool calls or other
+     * phases) - swap them back so Thoughts always reads above the answer.
+     * Any other shape (multi-step, tool calls) is left untouched since that
+     * ordering is meaningful, not a race.
+     */
+    if (
+      result.length === 2 &&
+      result[0].part.type === ContentTypes.TEXT &&
+      result[1].part.type === ContentTypes.THINK
+    ) {
+      return [result[1], result[0]];
+    }
     return result;
   }, [content]);
 

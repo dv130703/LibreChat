@@ -316,6 +316,7 @@ const Part = memo(function Part({
               initialProgress={toolCall.progress ?? 0.1}
               isSubmitting={isSubmitting}
               output={toolCall.output ?? undefined}
+              args={toolCall.args}
               attachments={attachments}
               onExpand={onToolExpand}
             />

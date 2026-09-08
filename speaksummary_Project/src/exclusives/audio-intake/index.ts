@@ -31,7 +31,7 @@ export {
   suggestTerms,
   containsTerm,
 } from './transcript-options'
-export type { TranscriptionOptions, PromptReport, SpeakerReport } from './transcript-options'
+export type { TranscriptionOptions, PromptReport, SpeakerReport, VadReport } from './transcript-options'
 
 export { AudioPlayer } from './audio-player'
 export type { AudioPlayerHandle } from './audio-player'

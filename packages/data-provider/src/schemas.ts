@@ -693,7 +693,13 @@ export const tConversationSchema = z.object({
   transcription: z
     .object({
       model: z.string().optional(),
-      requestedModel: z.string().optional(),
+      // Nullable, not just optional: the RAG server reports this as JSON
+      // `null` (not an absent key) whenever a request left the model on
+      // "auto", and conversations transcribed before that was normalized to
+      // `undefined` on write (see `buildTranscriptionMeta`) already have the
+      // literal `null` persisted - tolerating it here is what keeps reading
+      // those older conversations from throwing, not just new ones.
+      requestedModel: z.string().nullable().optional(),
       language: z.string().optional(),
       diarize: z.boolean().optional(),
       minSpeakers: z.number().optional(),

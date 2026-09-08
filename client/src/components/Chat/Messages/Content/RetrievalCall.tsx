@@ -238,6 +238,24 @@ function parseRetrievalOutput(raw: string): ParsedResult[] {
   return results;
 }
 
+/** `args` mirrors `ToolCall.tsx`'s own dual shape (`Agents.ToolCall['args']`):
+ *  a JSON string while the call is still streaming (possibly a truncated
+ *  partial substring, per that type's own doc comment - `JSON.parse`
+ *  throwing on that is expected, not a bug, and just means the query isn't
+ *  shown yet), or an already-parsed object once complete. */
+function extractQuery(args?: string | Record<string, unknown>): string | undefined {
+  if (args == null) {
+    return undefined;
+  }
+  try {
+    const parsed = typeof args === 'string' ? JSON.parse(args) : args;
+    const query = (parsed as { query?: unknown } | null)?.query;
+    return typeof query === 'string' && query.trim().length > 0 ? query.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getFileIcon(mimeType?: string): React.ComponentType<{ className?: string }> {
   if (!mimeType) {
     return FileText;
@@ -325,23 +343,31 @@ export default function RetrievalCall({
   initialProgress = 0.1,
   isSubmitting,
   output,
+  args,
   attachments,
   onExpand,
 }: {
   initialProgress: number;
   isSubmitting: boolean;
   output?: string;
+  args?: string | Record<string, unknown>;
   attachments?: TAttachment[];
   onExpand?: () => void;
 }) {
   const progress = useProgress(initialProgress);
   const localize = useLocalize();
+  const query = useMemo(() => extractQuery(args), [args]);
 
   const errorState = typeof output === 'string' && isError(output);
   const cancelled = !isSubmitting && initialProgress < 1 && !errorState;
   const hasOutput = !!output && !isError(output);
+  // The query is known the instant the tool call starts, well before its
+  // output does - letting the dropdown open on that alone means a user can
+  // see what it's searching for while the search is still running, not just
+  // after it finishes.
+  const canExpand = hasOutput || !!query;
   const autoExpand = useRecoilValue(store.autoExpandTools);
-  const [showOutput, setShowOutput] = useState(() => autoExpand && hasOutput);
+  const [showOutput, setShowOutput] = useState(() => autoExpand && canExpand);
   const { style: expandStyle, ref: expandRef } = useExpandCollapse(showOutput);
 
   const fileSources = useMemo(() => extractFileSources(attachments), [attachments]);
@@ -393,14 +419,18 @@ export default function RetrievalCall({
       pages: result.pages,
       pageRelevance: result.pageRelevance,
       fileType: result.fileType,
+      // The exact chunk text this file was retrieved for - lets
+      // `FilePreviewDialog` scroll to and highlight the passage instead of
+      // just opening the file at the top.
+      highlightText: result.content,
     };
   }, [displayResults, previewIndex]);
 
   useEffect(() => {
-    if (autoExpand && hasOutput) {
+    if (autoExpand && canExpand) {
       setShowOutput(true);
     }
-  }, [autoExpand, hasOutput]);
+  }, [autoExpand, canExpand]);
 
   const handleToggleOutput = useCallback(() => {
     setShowOutput((prev) => {
@@ -428,20 +458,28 @@ export default function RetrievalCall({
       <div className="relative my-1 flex h-5 shrink-0 items-center gap-2.5">
         <ProgressText
           progress={progress}
-          onClick={hasOutput ? handleToggleOutput : undefined}
+          onClick={canExpand ? handleToggleOutput : undefined}
           inProgressText={localize('com_ui_searching_files')}
           finishedText={localize('com_ui_retrieved_files')}
           errorSuffix={errorState && !cancelled ? localize('com_ui_tool_failed') : undefined}
           icon={
             <ToolIcon type="file_search" isAnimating={progress < 1 && !cancelled && !errorState} />
           }
-          hasInput={hasOutput}
+          hasInput={canExpand}
           isExpanded={showOutput}
           error={cancelled}
         />
       </div>
       <div style={expandStyle}>
         <div className="overflow-hidden" ref={expandRef}>
+          {query && (
+            <div className="my-2 text-xs text-text-secondary">
+              <span className="font-medium text-text-primary">
+                {localize('com_ui_file_search_query_label')}
+              </span>{' '}
+              <span className="italic">&ldquo;{query}&rdquo;</span>
+            </div>
+          )}
           {hasOutput && hasResults && (
             <div className="my-2 flex flex-col gap-2">
               {displayResults.map((item, i) => {

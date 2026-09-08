@@ -11,6 +11,8 @@ export interface WordToken {
   speaker?: string | null
   speaker_overlap?: boolean
   is_alignment_gap?: boolean
+  /** Which VAD tier admitted this word. */
+  vad_confidence?: 'high' | 'borderline' | null
 }
 
 export interface TranscriptSegment {
@@ -21,6 +23,8 @@ export interface TranscriptSegment {
   text: string
   words?: WordToken[] | null
   avg_confidence?: number | null
+  /** True when any word here came from the borderline tier. */
+  vad_borderline?: boolean
 }
 
 export interface TranscriptionDiagnostics {
@@ -30,6 +34,13 @@ export interface TranscriptionDiagnostics {
   diarization_backend: string
   diarization_speaker_count: number
   vad_speech_ratio: number
+  vad_borderline_duration_s?: number
+  vad_borderline_word_count?: number
+  vad_borderline_segment_count?: number
+  vad_onset?: number | null
+  vad_offset?: number | null
+  vad_borderline_onset?: number | null
+  vad_borderline_offset?: number | null
 }
 
 export interface TranscriptionProvenance {

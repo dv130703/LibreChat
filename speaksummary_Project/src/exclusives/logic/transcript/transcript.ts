@@ -4,6 +4,9 @@ export interface TranscriptSegment {
   end: number
   speaker: string
   text: string
+  /** Set when the line holds speech only the permissive VAD tier found. It was
+   *  transcribed rather than dropped, but it hasn't been verified. */
+  vad_borderline?: boolean
 }
 
 export function formatTimestamp(totalSeconds: number): string {

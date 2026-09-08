@@ -4,7 +4,7 @@ import { useRecoilValue } from 'recoil';
 import { Download } from 'lucide-react';
 import { OGDialog, OGDialogContent, OGDialogTitle, OGDialogDescription } from '@librechat/client';
 import { useFileDownload, useSharedFileDownload } from '~/data-provider';
-import { logger, sortPagesByRelevance, triggerDownload } from '~/utils';
+import { logger, sortPagesByRelevance, triggerDownload, findPassage } from '~/utils';
 import CopyButton from '~/components/Messages/Content/CopyButton';
 import { useShareContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
@@ -21,6 +21,13 @@ interface FilePreviewDialogProps {
   pageRelevance?: Record<number, number>;
   fileType?: string;
   fileSize?: number;
+  /** The exact retrieved chunk text this preview was opened for (a citation
+   *  click, or the file_search tool call's own "view source" button) - used
+   *  to scroll to and highlight the passage in a text preview, and to show
+   *  the passage as a labelled excerpt alongside a PDF preview, which has no
+   *  scripting access into the browser's native PDF renderer to highlight
+   *  inside. */
+  highlightText?: string;
 }
 
 function getFileExtension(filename: string): string {
@@ -136,6 +143,7 @@ export default function FilePreviewDialog({
   pageRelevance,
   fileType,
   fileSize,
+  highlightText,
 }: FilePreviewDialogProps) {
   const localize = useLocalize();
   const user = useRecoilValue(store.user);
@@ -153,6 +161,7 @@ export default function FilePreviewDialog({
   const [previewError, setPreviewError] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const loadingRef = useRef(false);
+  const highlightRef = useRef<HTMLElement | null>(null);
 
   const previewKind = canPreviewByMime(fileType) || canPreviewByExt(fileName);
 
@@ -256,6 +265,38 @@ export default function FilePreviewDialog({
     [pages, pageRelevance],
   );
 
+  // Only meaningful for the text-preview path - `fileContent` is null for a
+  // PDF, so this is a no-op there (the PDF path shows `highlightText` as its
+  // own excerpt block instead, further down).
+  const passageMatch = useMemo(
+    () => (fileContent && highlightText ? findPassage(fileContent, highlightText) : null),
+    [fileContent, highlightText],
+  );
+
+  // Native PDF viewers (Chromium's PDFium, Firefox's pdf.js) honor the
+  // `#page=N` fragment as an "open at this page" instruction - the one thing
+  // scriptable about an iframe pointed at a blob URL, since there is no API
+  // into the viewer itself to scroll or highlight beyond that. Falls back to
+  // the plain blob URL when no page is known, rather than fabricating one.
+  const pdfSrc = useMemo(() => {
+    if (!fileBlobUrl) {
+      return null;
+    }
+    const page = sortedPages?.[0];
+    return page ? `${fileBlobUrl}#page=${page}` : fileBlobUrl;
+  }, [fileBlobUrl, sortedPages]);
+
+  // Runs once per successful match, not on every render - `highlightRef`
+  // itself can't be a dependency (refs don't trigger re-renders), so this
+  // keys off the match's own boundaries instead, which only change when a
+  // genuinely different passage is found.
+  useEffect(() => {
+    if (!passageMatch) {
+      return;
+    }
+    highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [passageMatch?.start, passageMatch?.end]);
+
   const metaParts: string[] = [displayType];
   if (relevance != null && relevance > 0) {
     metaParts.push(`${localize('com_ui_relevance')}: ${Math.round(relevance * 100)}%`);
@@ -309,11 +350,29 @@ export default function FilePreviewDialog({
             </div>
           )}
           {fileBlobUrl && (
-            <iframe
-              src={fileBlobUrl}
-              title={`${localize('com_ui_preview')}: ${fileName}`}
-              className="h-[70vh] w-full rounded-lg border border-border-light"
-            />
+            <>
+              {/* The rendered PDF itself can't be highlighted - a raw
+                  iframe into the browser's native viewer has no scripting
+                  surface beyond the `#page=N` fragment already applied to
+                  `pdfSrc`. Showing the exact retrieved text here is the
+                  substitute: the passage the model actually cited, even
+                  though it isn't highlighted in place. */}
+              {highlightText && (
+                <div className="mb-3 rounded-lg border border-border-medium bg-surface-secondary p-3">
+                  <div className="mb-1 text-xs font-medium text-text-secondary">
+                    {localize('com_ui_retrieved_passage')}
+                  </div>
+                  <p className="whitespace-pre-wrap break-words text-sm leading-6 text-text-primary">
+                    {highlightText}
+                  </p>
+                </div>
+              )}
+              <iframe
+                src={pdfSrc ?? undefined}
+                title={`${localize('com_ui_preview')}: ${fileName}`}
+                className="h-[70vh] w-full rounded-lg border border-border-light"
+              />
+            </>
           )}
           {fileContent && (
             <>
@@ -328,7 +387,20 @@ export default function FilePreviewDialog({
               </div>
               <div className="-mt-8 rounded-lg bg-surface-secondary p-4">
                 <pre className="whitespace-pre-wrap break-words pr-8 font-mono text-sm leading-6 text-text-primary">
-                  {fileContent}
+                  {passageMatch ? (
+                    <>
+                      {fileContent.slice(0, passageMatch.start)}
+                      <mark
+                        ref={highlightRef}
+                        className="rounded bg-yellow-200 text-text-primary dark:bg-yellow-500/40"
+                      >
+                        {fileContent.slice(passageMatch.start, passageMatch.end)}
+                      </mark>
+                      {fileContent.slice(passageMatch.end)}
+                    </>
+                  ) : (
+                    fileContent
+                  )}
                 </pre>
               </div>
             </>

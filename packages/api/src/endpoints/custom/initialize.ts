@@ -1,4 +1,9 @@
-import { ErrorTypes, envVarRegex, extractEnvVariable } from 'librechat-data-provider';
+import {
+  ErrorTypes,
+  envVarRegex,
+  extractEnvVariable,
+  normalizeEndpointName,
+} from 'librechat-data-provider';
 import type { TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { BaseInitializeParams, InitializeResultBase, EndpointTokenConfig } from '~/types';
@@ -148,16 +153,24 @@ export async function initializeCustom({
   const userProvidesKey = isUserProvided(CUSTOM_API_KEY);
   const userProvidesURL = isUserProvided(CUSTOM_BASE_URL);
 
+  /**
+   * The client saves/reads user-provided keys under the normalized endpoint
+   * name (e.g. 'ollama'), but `endpoint` here can be the exact-case name from
+   * librechat.yaml (e.g. 'Ollama') when resolved via the agents flow. Mongo
+   * key lookups are case-sensitive, so normalize to match what was saved.
+   */
+  const userKeyName = normalizeEndpointName(endpoint);
+
   // Expiry is only checked when present: the Agents API sends an OpenAI-compatible
   // request body that does not include `key` (the expiry timestamp), so expiresAt
   // will be undefined in that flow. The key is still fetched regardless.
   if (expiresAt && (userProvidesKey || userProvidesURL)) {
-    checkUserKeyExpiry(expiresAt, endpoint);
+    checkUserKeyExpiry(expiresAt, userKeyName);
   }
 
   let userValues = null;
   if (userProvidesKey || userProvidesURL) {
-    userValues = await db.getUserKeyValues({ userId: req.user?.id ?? '', name: endpoint });
+    userValues = await db.getUserKeyValues({ userId: req.user?.id ?? '', name: userKeyName });
   }
 
   const apiKey = userProvidesKey || userProvidesURL ? userValues?.apiKey : CUSTOM_API_KEY;

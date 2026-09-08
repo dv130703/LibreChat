@@ -7,6 +7,14 @@ jest.mock('@librechat/data-schemas', () => ({
 jest.mock('@librechat/api', () => ({
   generateShortLivedToken: jest.fn(() => 'fake-jwt'),
   logAxiosError: jest.fn(),
+  // Mirrors the real resolver (packages/api/src/transcription/endpoint.ts),
+  // whose own precedence/trimming rules are covered by `endpoint.spec.ts`.
+  // Restated here rather than `requireActual`'d because this file mocks `fs`
+  // down to a single function, which the real package cannot load against.
+  getTranscriptionApiUrl: () => {
+    const url = process.env.TRANSCRIPTION_API_URL || process.env.RAG_API_URL;
+    return url ? url.replace(/\/+$/, '') : undefined;
+  },
 }));
 jest.mock('fs', () => ({
   createReadStream: jest.fn(() => require('stream').Readable.from(['fake-audio-bytes'])),
@@ -79,14 +87,28 @@ describe('transcribeAndEmbed', () => {
 
   afterEach(() => {
     delete process.env.RAG_API_URL;
+    delete process.env.TRANSCRIPTION_API_URL;
     jest.clearAllMocks();
   });
 
-  it('throws when RAG_API_URL is not configured', async () => {
+  it('throws when no transcription endpoint is configured', async () => {
     delete process.env.RAG_API_URL;
     await expect(
       transcribeAndEmbed({ req, file: multerFile, sourceFileId: 'source-1' }),
-    ).rejects.toThrow('RAG_API_URL is not set');
+    ).rejects.toThrow('neither TRANSCRIPTION_API_URL nor RAG_API_URL is set');
+  });
+
+  /** Offloading ASR to a second machine must move only the HTTP call - the
+   *  transcript still comes back here to be embedded and stored, so
+   *  `uploadVectors` keeps running against the local RAG server. */
+  it('posts to TRANSCRIPTION_API_URL when set, still embedding locally', async () => {
+    process.env.TRANSCRIPTION_API_URL = 'http://192.168.1.123:1234';
+
+    await transcribeAndEmbed({ req, file: multerFile, sourceFileId: 'source-1' });
+
+    const [url] = axios.post.mock.calls[0];
+    expect(url).toBe('http://192.168.1.123:1234/transcribe');
+    expect(uploadVectors).toHaveBeenCalled();
   });
 
   it('posts diarize/min/max speakers from options, reading from the multer file path', async () => {

@@ -1,6 +1,6 @@
 export { TranscriptionOptionsPanel } from './TranscriptionOptionsPanel'
 export { TranscriptActions } from './TranscriptActions'
-export type { PromptReport, SpeakerReport } from './TranscriptActions'
+export type { PromptReport, SpeakerReport, VadReport } from './TranscriptActions'
 export {
   DEFAULT_TRANSCRIPTION_OPTIONS,
   describeTranscriptionOptions,

@@ -10,16 +10,32 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # (package.json's "rag" script). Any other way of starting it (a different
 # working directory, a container, a systemd unit) would silently start with
 # no .env at all, with WHISPERX_HF_TOKEN unset and no indication why.
-_ENV_FILE = Path(__file__).resolve().parent.parent / "rag_server" / ".env"
+#
+# Both files are read, root first, so every WHISPERX_* knob below is settable
+# from LibreChat's own root .env - the one file an operator actually edits,
+# and where the rest of this deployment (OLLAMA_BASE_URL, RAG_API_URL,
+# FFMPEG_PATH) already lives. rag_server/.env stays supported and, being
+# listed second, still wins for anything defined in both; it is optional, and
+# pointing at it alone is why these settings previously looked inert when it
+# did not exist. Mirrors the same root-then-local ordering `rag_server/
+# config.py` applies with load_dotenv.
+_ROOT_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = (_ROOT_DIR / ".env", _ROOT_DIR / "rag_server" / ".env")
 
 
 class Settings(BaseSettings):
     # Any faster-whisper size works: tiny, base, small, medium, large-v2, large-v3,
     # large-v3-turbo.
     whisper_model: str = "large-v3-turbo"
-    # "cuda" or "cpu"; auto-detected when left unset.
+    # Pinned to "cuda" by WhisperXService.__init__ when left unset - this
+    # deployment requires a GPU and raises at startup rather than silently
+    # falling back to CPU. Set WHISPERX_DEVICE=cpu explicitly to opt back
+    # into the (much slower) CPU path.
     device: str | None = None
-    # "float16"/"int8_float16" on GPU, "int8" on CPU; auto-picked when left unset.
+    # Forced to "float16" by WhisperXService.__init__ when left unset -
+    # maximum accuracy, and the natural fit now that device is pinned to
+    # CUDA. Set this explicitly (e.g. "int8") to opt back into the CPU-era
+    # default.
     compute_type: str | None = None
     # Required for diarization: a Hugging Face token that has accepted the
     # gated model terms for whichever diarization_model below is configured.
@@ -44,8 +60,10 @@ class Settings(BaseSettings):
     # here - it needs its own terms acceptance on huggingface.co - but it is a
     # downgrade, not a safer choice.
     diarization_model: str | None = None
-    # None lets whisperx auto-detect the spoken language.
-    default_language: str | None = None
+    # Forced to English by default rather than auto-detecting - still
+    # overridable per recording from the transcribe options dialog's
+    # language picker, and by WHISPERX_DEFAULT_LANGUAGE.
+    default_language: str = "en"
     # Batch size for transcription. Auto-reduced when using beam search to prevent OOM.
     batch_size: int = 16
     # Beam search width. Higher values improve accuracy but increase latency.

@@ -15,6 +15,7 @@ import {
   speakerBound,
   type PromptReport,
   type SpeakerReport,
+  type VadReport,
   type TranscriptionOptions,
 } from '../audio-intake'
 import { SpeakerLabel } from '../speaker-label'
@@ -94,6 +95,9 @@ export function TranscriptPanel({
   // Whether the speaker-count hint reached a diarizer, and whether the result
   // landed inside it. A hint is a hint - clustering can still come out elsewhere.
   const [speakerReport, setSpeakerReport] = useState<SpeakerReport | null>(null)
+  // How much quiet speech the permissive VAD tier recovered. Audio a single
+  // threshold would have discarded silently, so its size is worth saying.
+  const [vadReport, setVadReport] = useState<VadReport | null>(null)
   // Custom speaker names, remembered by speaking order (who talks first, second, ...)
   // so a rename survives "Regenerate transcript" instead of resetting to "Speaker 1/2".
   const [speakerNamesByOrder, setSpeakerNamesByOrder] = useState<string[]>([])
@@ -187,6 +191,11 @@ export function TranscriptPanel({
         hintApplied: diagnostics?.speaker_hint_applied ?? false,
         adjustments: diagnostics?.speaker_hint_adjustments ?? [],
         withinHint: diagnostics?.speaker_count_within_hint ?? null,
+      })
+      setVadReport({
+        borderlineSeconds: diagnostics?.vad_borderline_duration_s ?? 0,
+        borderlineLines: diagnostics?.vad_borderline_segment_count ?? 0,
+        speechRatio: diagnostics?.vad_speech_ratio ?? null,
       })
 
       const speakingOrder = Array.from(new Set(result.segments.map((segment) => segment.speaker)))
@@ -348,6 +357,7 @@ export function TranscriptPanel({
           error={error}
           promptReport={promptReport}
           speakerReport={speakerReport}
+          vadReport={vadReport}
           onGenerate={handleGenerate}
           onCancel={handleCancelGenerate}
           reassurance={reassurance}
