@@ -335,8 +335,13 @@ export default function TranscribeOptionsDialog({
   const [termDraft, setTermDraft] = useState('');
   const [emitNumerals, setEmitNumerals] = useState(false);
   const seededRef = useRef(false);
+  // Set once the user works the language picker themselves, so a late-arriving
+  // config can't overwrite a choice they already made - including a deliberate
+  // "auto", which is indistinguishable from the unset default by value alone.
+  const languageTouchedRef = useRef(false);
   const { data: transcribeConfig } = useTranscribeConfigQuery();
   const serverSuppressesNumerals = transcribeConfig?.default_suppress_numerals ?? true;
+  const defaultLanguage = transcribeConfig?.default_language ?? '';
   // Falls back to the pyannote-accuracy-driven default the server itself
   // clamps to (see MAX_ALLOWED_SPEAKERS in speaker_bounds.py) - only used
   // before the config has loaded, so the input is never briefly unbounded.
@@ -346,7 +351,8 @@ export default function TranscribeOptionsDialog({
     if (open) {
       setStep(1);
       setModel(initialOptions?.model ?? '');
-      setLanguage(initialOptions?.language ?? '');
+      setLanguage(initialOptions?.language ?? defaultLanguage);
+      languageTouchedRef.current = initialOptions?.language != null;
       setIncludeTimestamps(initialOptions?.includeTimestamps ?? DEFAULT_OPTIONS.includeTimestamps);
       setDiarize(initialOptions?.diarize ?? DEFAULT_OPTIONS.diarize);
       setSpeakerRange({ min: initialOptions?.minSpeakers, max: initialOptions?.maxSpeakers });
@@ -361,6 +367,11 @@ export default function TranscribeOptionsDialog({
       );
     }
     onOpenChange(open);
+  };
+
+  const handleLanguageChange = (value: string) => {
+    languageTouchedRef.current = true;
+    setLanguage(value);
   };
 
   const handleSpeakerCountChange = (raw: string) => {
@@ -385,6 +396,17 @@ export default function TranscribeOptionsDialog({
     seededRef.current = true;
     setTermTags((current) => (current.length === 0 ? suggestedTerms : current));
   }, [isOpen, suggestedTerms]);
+
+  // The config query can resolve after the dialog is already open, which is how
+  // the picker ended up showing "auto" on a deployment that had been set to a
+  // language. Seeding again when it lands is what keeps the dialog honest about
+  // what will actually run.
+  useEffect(() => {
+    if (!isOpen || languageTouchedRef.current) {
+      return;
+    }
+    setLanguage(defaultLanguage);
+  }, [isOpen, defaultLanguage]);
 
   const addSuggestion = (term: string) => {
     setTermTags((current) =>
@@ -449,11 +471,24 @@ export default function TranscribeOptionsDialog({
       })),
     [localize, transcribeConfig?.default_model],
   );
-  const languageOptions = useMemo<MenuOption[]>(
-    () =>
-      LANGUAGE_OPTIONS.map((option) => ({ value: option.value, label: localize(option.labelKey) })),
-    [localize],
-  );
+  // "Auto-detect" is a misnomer whenever the server carries a default language:
+  // sending no language makes it apply that default, not detect one. Naming the
+  // language it resolves to is the same treatment the model picker already gets.
+  const languageOptions = useMemo<MenuOption[]>(() => {
+    const resolvedLabelKey = LANGUAGE_OPTIONS.find(
+      (option) => option.value !== '' && option.value === defaultLanguage,
+    )?.labelKey;
+
+    return LANGUAGE_OPTIONS.map((option) => ({
+      value: option.value,
+      label:
+        option.value === '' && resolvedLabelKey != null
+          ? localize('com_ui_transcribe_language_auto_resolved', {
+              0: localize(resolvedLabelKey),
+            })
+          : localize(option.labelKey),
+    }));
+  }, [localize, defaultLanguage]);
   const groupingOptions = useMemo<MenuOption[]>(
     () =>
       SPEAKER_GROUPING_OPTIONS.map((option) => ({
@@ -499,7 +534,7 @@ export default function TranscribeOptionsDialog({
                     ariaLabel={localize('com_ui_transcribe_options_language_label')}
                     value={language}
                     options={languageOptions}
-                    onChange={setLanguage}
+                    onChange={handleLanguageChange}
                   />
                 </div>
 

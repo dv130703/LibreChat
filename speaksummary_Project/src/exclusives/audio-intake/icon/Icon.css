@@ -1,7 +1,0 @@
-/* Icons take their colour from the text they sit with, and never stretch or
-   collapse when a flex row runs short of room. */
-.icon {
-  flex: none;
-  display: block;
-  color: inherit;
-}

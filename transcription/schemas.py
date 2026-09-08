@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +24,9 @@ class WordSpan(BaseModel):
     # "channel_split"/"none" (not applicable), a real gap for "nearest"/
     # "unknown". See MAX_NEAREST_FALLBACK_DISTANCE_S in whisperx_service.py.
     assignment_distance_s: float | None = None
+    # Which VAD tier admitted this word. "borderline" means only the permissive
+    # thresholds found it: transcribed so it isn't lost, but unverified.
+    vad_confidence: Literal["high", "borderline"] | None = None
 
 
 class DiarizationTurn(BaseModel):
@@ -54,6 +59,9 @@ class TranscriptSegment(BaseModel):
     # Per-word detail, including each word's own independently-computed
     # speaker - see WordSpan.
     words: list[WordSpan] = Field(default_factory=list)
+    # True when any word here came from the borderline tier. A line worth a
+    # reviewer's ear before the transcript is relied on.
+    vad_borderline: bool = False
 
 
 class TranscriptionDiagnostics(BaseModel):
@@ -109,6 +117,18 @@ class TranscriptionDiagnostics(BaseModel):
     diarization_retry_threshold: float | None = None
     diarization_original_suspicious_ratio: float | None = None
     diarization_retry_suspicious_ratio: float | None = None
+    # Share of the recording the confident tier called speech.
+    vad_speech_ratio: float | None = None
+    # What the second, permissive tier recovered. Reported rather than left
+    # implicit: this is audio a single-threshold VAD would have dropped
+    # without trace, so the size of it is the number to check.
+    vad_borderline_duration_s: float = 0.0
+    vad_borderline_word_count: int = 0
+    vad_borderline_segment_count: int = 0
+    vad_onset: float | None = None
+    vad_offset: float | None = None
+    vad_borderline_onset: float | None = None
+    vad_borderline_offset: float | None = None
 
 
 class RecordingProfile(BaseModel):

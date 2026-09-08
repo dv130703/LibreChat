@@ -118,12 +118,19 @@ class Settings(BaseSettings):
     model_cache_dir: str | None = None
 
     # --- Voice Activity Detection (VAD) tuning ---
-    # VAD onset threshold (lower = catches quieter speech, raises hallucination risk)
+    # The confident tier: speech these thresholds find is transcribed unflagged.
+    # Onset starts a speech region, offset ends one - real hysteresis under the
+    # pyannote VAD this service always runs (see vad.py), so a region survives
+    # dips that would never have been enough to start one.
     vad_onset: float = 0.500
-    # VAD offset threshold (raise = trims trailing silence, reduces end-of-segment hallucination)
     vad_offset: float = 0.363
-    # VAD method: "silero" or "pyannote"
-    vad_method: str = "silero"
+    # The permissive tier, which decides how much quiet speech is worth
+    # recovering. Anything only this pair finds is still transcribed, but marked
+    # borderline for review rather than trusted - see vad_tiers.py. Setting
+    # these equal to the pair above empties the borderline tier, which is how a
+    # deployment opts out of the second pass.
+    vad_borderline_onset: float = 0.350
+    vad_borderline_offset: float = 0.250
 
     # --- Diarization tuning ---
     # Clustering threshold for speaker merging. None uses pipeline default

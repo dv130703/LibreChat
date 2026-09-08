@@ -1,1 +1,0 @@
-export { UploadIntake } from './UploadIntake'
