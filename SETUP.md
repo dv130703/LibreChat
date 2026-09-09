@@ -50,9 +50,7 @@ openssl rand -hex 16   # -> CREDS_IV
 
 Set `MONGO_URI` to point at your MongoDB instance (default:
 `mongodb://127.0.0.1:27017/LibreChat`, i.e. a local Mongo on the default
-port). At minimum you need at least one model provider key set (e.g.
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) or a local `OLLAMA_BASE_URL` — see
-step 6.
+port). See step 6 for wiring up a model provider (e.g. local Ollama).
 
 ## 4. MongoDB
 
