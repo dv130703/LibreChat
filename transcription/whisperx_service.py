@@ -101,6 +101,29 @@ def _preview_label(segments: list[dict]) -> list[dict]:
     return preview
 
 
+def _split_oversized(segments: list[SegmentX], chunk_size: float) -> list[SegmentX]:
+    """Break any region longer than chunk_size into consecutive pieces.
+
+    whisperx's own merge_chunks only closes a chunk before adding a segment
+    that would overflow it, and skips that check for the first segment of a
+    new chunk - so a single region already longer than chunk_size (which the
+    two-tier union in vad_tiers.merge_intervals can produce, unlike a plain
+    VAD pass) sails through untouched. That oversized chunk then hits
+    asr.py's preprocess(), whose padding is `N_SAMPLES - audio.shape[0]` -
+    negative past 30s, so nothing pads or trims it and its mel-spectrogram
+    ends up a different frame count than the rest of the batch, which
+    torch.stack rejects.
+    """
+    split_segments = []
+    for seg in segments:
+        start = seg.start
+        while seg.end - start > chunk_size:
+            split_segments.append(SegmentX(start, start + chunk_size, seg.speaker))
+            start += chunk_size
+        split_segments.append(SegmentX(start, seg.end, seg.speaker))
+    return split_segments
+
+
 class PrecomputedVad(Vad):
     """Hands whisperx a speech mask this service has already decided on.
 
@@ -127,7 +150,7 @@ class PrecomputedVad(Vad):
         if not segments_list:
             logger.warning("Neither VAD tier found speech in this recording")
             return []
-        return Vad.merge_chunks(segments_list, chunk_size, onset, offset)
+        return Vad.merge_chunks(_split_oversized(segments_list, chunk_size), chunk_size, onset, offset)
 
 
 class WhisperXService:

@@ -1,5 +1,12 @@
 const sharp = require('sharp');
 
+/** sharp defaults to `failOn: 'warning'`, which aborts on libvips/libpng
+ * warnings that browsers and OS screenshot tools happily ignore (e.g. minor
+ * chunk/CRC nonconformance) - real, renderable screenshots then 500 here
+ * instead of being resized. Matches the tolerance a browser already gives
+ * these files. */
+const INPUT_OPTIONS = { failOn: 'none' };
+
 /**
  * Resizes an image from a given buffer based on the specified resolution.
  *
@@ -30,7 +37,7 @@ async function resizeImageBuffer(inputBuffer, resolution) {
 
   if (customPercent != null || customPx != null) {
     // percentage-based resize
-    const metadata = await sharp(inputBuffer).metadata();
+    const metadata = await sharp(inputBuffer, INPUT_OPTIONS).metadata();
     if (customPercent != null) {
       newWidth = Math.round(metadata.width * (customPercent / 100));
       newHeight = Math.round(metadata.height * (customPercent / 100));
@@ -45,7 +52,7 @@ async function resizeImageBuffer(inputBuffer, resolution) {
     resizeOptions.width = maxLowRes;
     resizeOptions.height = maxLowRes;
   } else if (resolution === 'high') {
-    const metadata = await sharp(inputBuffer).metadata();
+    const metadata = await sharp(inputBuffer, INPUT_OPTIONS).metadata();
     const isWidthShorter = metadata.width < metadata.height;
 
     if (isWidthShorter) {
@@ -76,7 +83,10 @@ async function resizeImageBuffer(inputBuffer, resolution) {
     throw new Error('Invalid resolution parameter');
   }
 
-  const resizedBuffer = await sharp(inputBuffer).rotate().resize(resizeOptions).toBuffer();
+  const resizedBuffer = await sharp(inputBuffer, INPUT_OPTIONS)
+    .rotate()
+    .resize(resizeOptions)
+    .toBuffer();
 
   const resizedMetadata = await sharp(resizedBuffer).metadata();
   return {
@@ -98,7 +108,7 @@ async function resizeImageBuffer(inputBuffer, resolution) {
  * @throws Will throw an error if the resolution or format parameters are invalid.
  */
 async function resizeAndConvert({ inputBuffer, desiredFormat, width = 150 }) {
-  const resizedBuffer = await sharp(inputBuffer)
+  const resizedBuffer = await sharp(inputBuffer, INPUT_OPTIONS)
     .resize({ width })
     .toFormat(desiredFormat)
     .toBuffer();

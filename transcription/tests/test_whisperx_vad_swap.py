@@ -102,3 +102,15 @@ def test_regions_are_grouped_into_decode_windows_without_rethresholding():
 
 def test_silence_all_the_way_through_yields_no_chunks():
     assert PrecomputedVad.merge_chunks([], chunk_size=30) == []
+
+
+def test_a_single_region_past_chunk_size_is_split_before_merging():
+    # A continuous stretch longer than chunk_size (e.g. from unioning the
+    # confident and borderline tiers across what would otherwise be a gap)
+    # must come out in <= chunk_size pieces - whisperx's own merge_chunks
+    # never splits a region that is already oversized on its own, and an
+    # oversized chunk crashes torch.stack downstream in asr.py's batching.
+    vad = PrecomputedVad([(5.0, 41.0)])
+    chunks = PrecomputedVad.merge_chunks(vad(audio=None), chunk_size=30)
+    assert [(chunk["start"], chunk["end"]) for chunk in chunks] == [(5.0, 35.0), (35.0, 41.0)]
+    assert all(end - start <= 30 for start, end in ((c["start"], c["end"]) for c in chunks))
