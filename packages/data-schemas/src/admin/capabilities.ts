@@ -39,9 +39,6 @@ export const SystemCapabilities = {
   MANAGE_SKILLS: 'manage:skills',
   READ_SHARED_LINKS: 'read:sharedlinks',
   MANAGE_SHARED_LINKS: 'manage:sharedlinks',
-  /** Reserved — not yet enforced by any middleware. */
-  READ_ASSISTANTS: 'read:assistants',
-  MANAGE_ASSISTANTS: 'manage:assistants',
   /**
    * Required to list, view, and CSV-export the SystemGrant audit log. Append-only
    * by design, so there is no MANAGE counterpart — modifying historical entries
@@ -64,7 +61,6 @@ export const CapabilityImplications: Partial<Record<BaseSystemCapability, BaseSy
     [SystemCapabilities.MANAGE_PROMPTS]: [SystemCapabilities.READ_PROMPTS],
     [SystemCapabilities.MANAGE_SKILLS]: [SystemCapabilities.READ_SKILLS],
     [SystemCapabilities.MANAGE_SHARED_LINKS]: [SystemCapabilities.READ_SHARED_LINKS],
-    [SystemCapabilities.MANAGE_ASSISTANTS]: [SystemCapabilities.READ_ASSISTANTS],
   };
 
 // ---------------------------------------------------------------------------
@@ -220,8 +216,6 @@ export const CAPABILITY_CATEGORIES: CapabilityCategory[] = [
       SystemCapabilities.READ_PROMPTS,
       SystemCapabilities.MANAGE_SKILLS,
       SystemCapabilities.READ_SKILLS,
-      SystemCapabilities.MANAGE_ASSISTANTS,
-      SystemCapabilities.READ_ASSISTANTS,
       SystemCapabilities.MANAGE_MCP_SERVERS,
       SystemCapabilities.MANAGE_SHARED_LINKS,
       SystemCapabilities.READ_SHARED_LINKS,

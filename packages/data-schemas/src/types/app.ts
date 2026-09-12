@@ -2,16 +2,12 @@ import type {
   TEndpoint,
   FileStorage,
   TFileConfig,
-  TAzureConfig,
   TCustomConfig,
   TMemoryConfig,
   EModelEndpoint,
-  TVertexAIConfig,
   TAgentsEndpoint,
   CloudFrontConfig,
   TCustomEndpoints,
-  TAssistantEndpoint,
-  TAnthropicEndpoint,
   SummarizationConfig,
   SkillSyncConfig,
 } from 'librechat-data-provider';
@@ -110,23 +106,6 @@ export interface AppConfig {
   endpoints?: {
     /** Admin exemption list of host:port pairs that bypass the SSRF private-IP block */
     allowedAddresses?: string[];
-    /** OpenAI endpoint configuration */
-    openAI?: Partial<TEndpoint>;
-    /** Google endpoint configuration */
-    google?: Partial<TEndpoint>;
-    /** Bedrock endpoint configuration */
-    bedrock?: Partial<TEndpoint>;
-    /** Anthropic endpoint configuration with optional Vertex AI support */
-    anthropic?: Partial<TAnthropicEndpoint> & {
-      /** Validated Vertex AI configuration */
-      vertexConfig?: TVertexAIConfig;
-    };
-    /** Azure OpenAI endpoint configuration */
-    azureOpenAI?: TAzureConfig;
-    /** Assistants endpoint configuration */
-    assistants?: Partial<TAssistantEndpoint>;
-    /** Azure assistants endpoint configuration */
-    azureAssistants?: Partial<TAssistantEndpoint>;
     /** Agents endpoint configuration */
     [EModelEndpoint.agents]?: Partial<TAgentsEndpoint>;
     /** Custom endpoints configuration */
