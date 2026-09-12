@@ -1,6 +1,7 @@
 import type { Redis, Cluster } from 'ioredis';
 import { logger } from '@librechat/data-schemas';
 import type { IJobStore, IEventTransport } from './interfaces/IJobStore';
+import type { RedisJobStoreOptions } from './implementations/RedisJobStore';
 import { InMemoryJobStore } from './implementations/InMemoryJobStore';
 import { InMemoryEventTransport } from './implementations/InMemoryEventTransport';
 import { RedisJobStore } from './implementations/RedisJobStore';
@@ -36,6 +37,23 @@ export interface StreamServicesConfig {
     maxJobs?: number;
     staleJobTimeout?: number;
   };
+
+  /**
+   * Options for the Redis job store (used only when Redis-backed).
+   */
+  redisOptions?: RedisJobStoreOptions;
+
+  /**
+   * Failsafe timeout, in ms, for a job stuck in "running" status with no
+   * emitted activity (a crashed/hung generation) - not a cap on total stream
+   * duration, since activity is refreshed on every emitted chunk. Applies to
+   * whichever store backs this deployment: overrides
+   * `inMemoryOptions.staleJobTimeout` and `redisOptions.runningTtl` (converted
+   * to seconds) unless those are set explicitly. Raise this for deployments
+   * that run reasoning models slow enough to go quiet between tokens for
+   * longer than the 20-minute default (e.g. local/CPU-bound Ollama).
+   */
+  staleJobTimeoutMs?: number;
 }
 
 /**
@@ -72,7 +90,7 @@ export function createStreamServices(config: StreamServicesConfig = {}): StreamS
   // Use provided config or fall back to cache config (USE_REDIS_STREAMS for stream-specific override)
   const useRedis = config.useRedis ?? cacheConfig.USE_REDIS_STREAMS;
   const redisClient = config.redisClient ?? ioredisClient;
-  const { redisSubscriber, inMemoryOptions } = config;
+  const { redisSubscriber, inMemoryOptions, redisOptions, staleJobTimeoutMs } = config;
 
   // Check if we should and can use Redis
   if (useRedis && redisClient) {
@@ -88,10 +106,15 @@ export function createStreamServices(config: StreamServicesConfig = {}): StreamS
 
       if (!subscriber) {
         logger.warn('[StreamServices] No subscriber client available, falling back to in-memory');
-        return createInMemoryServices(inMemoryOptions);
+        return createInMemoryServices(inMemoryOptions, staleJobTimeoutMs);
       }
 
-      const jobStore = new RedisJobStore(redisClient);
+      const jobStore = new RedisJobStore(redisClient, {
+        ...redisOptions,
+        runningTtl:
+          redisOptions?.runningTtl ??
+          (staleJobTimeoutMs != null ? Math.round(staleJobTimeoutMs / 1000) : undefined),
+      });
       const eventTransport = new RedisEventTransport(redisClient, subscriber);
 
       logger.info('[StreamServices] Created Redis-backed stream services');
@@ -106,22 +129,25 @@ export function createStreamServices(config: StreamServicesConfig = {}): StreamS
         '[StreamServices] Failed to create Redis services, falling back to in-memory:',
         err,
       );
-      return createInMemoryServices(inMemoryOptions);
+      return createInMemoryServices(inMemoryOptions, staleJobTimeoutMs);
     }
   }
 
-  return createInMemoryServices(inMemoryOptions);
+  return createInMemoryServices(inMemoryOptions, staleJobTimeoutMs);
 }
 
 /**
  * Create in-memory stream services
  */
-function createInMemoryServices(options?: StreamServicesConfig['inMemoryOptions']): StreamServices {
+function createInMemoryServices(
+  options?: StreamServicesConfig['inMemoryOptions'],
+  staleJobTimeoutMs?: number,
+): StreamServices {
   const jobStore = new InMemoryJobStore({
     ttlAfterComplete: options?.ttlAfterComplete ?? 300000, // 5 minutes
     maxJobs: options?.maxJobs ?? 1000,
     // Failsafe for crashed/hung generations (mirrors RedisJobStore's running-job TTL).
-    staleJobTimeout: options?.staleJobTimeout ?? 1_200_000, // 20 minutes
+    staleJobTimeout: options?.staleJobTimeout ?? staleJobTimeoutMs ?? 1_200_000, // 20 minutes
   });
 
   const eventTransport = new InMemoryEventTransport();

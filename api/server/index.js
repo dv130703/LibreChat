@@ -54,7 +54,23 @@ const staticCache = require('./utils/staticCache');
 const noIndex = require('./middleware/noIndex');
 const routes = require('./routes');
 
-const { PORT, HOST, ALLOW_SOCIAL_LOGIN, DISABLE_COMPRESSION, TRUST_PROXY } = process.env ?? {};
+const {
+  PORT,
+  HOST,
+  ALLOW_SOCIAL_LOGIN,
+  DISABLE_COMPRESSION,
+  TRUST_PROXY,
+  STREAM_STALE_JOB_TIMEOUT_MS,
+} = process.env ?? {};
+
+// Failsafe timeout for a "running" generation job with no emitted activity (a
+// crashed/hung generation) - not a total-duration cap, since it's refreshed on
+// every emitted chunk. Defaults to 20 minutes; raise it for deployments where a
+// reasoning model can legitimately go quiet between tokens longer than that
+// (e.g. local/CPU-bound Ollama).
+const streamStaleJobTimeoutMs = Number(STREAM_STALE_JOB_TIMEOUT_MS);
+const hasStreamStaleJobTimeoutOverride =
+  Number.isFinite(streamStaleJobTimeoutMs) && streamStaleJobTimeoutMs > 0;
 
 // Allow PORT=0 to be used for automatic free port assignment
 const port = isNaN(Number(PORT)) ? 3080 : Number(PORT);
@@ -80,7 +96,9 @@ const rejectChatStartsUntilReady = (req, res, next) => {
 };
 
 const configureGenerationStreams = () => {
-  const streamServices = createStreamServices();
+  const streamServices = createStreamServices(
+    hasStreamStaleJobTimeoutOverride ? { staleJobTimeoutMs: streamStaleJobTimeoutMs } : undefined,
+  );
   GenerationJobManager.configure({
     ...streamServices,
     cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS),
