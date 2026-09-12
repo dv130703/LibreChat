@@ -114,10 +114,3 @@ def delete_files(user_id: str, file_ids: list[str]) -> int:
         before = table.count_rows()
         table.delete(condition)
         return before - table.count_rows()
-
-
-def file_exists(user_id: str, file_id: str) -> bool:
-    table = _table()
-    if table.count_rows() == 0:
-        return False
-    return len(table.search().where(_scope(user_id, file_id)).limit(1).to_list()) > 0
