@@ -1,5 +1,10 @@
 const axios = require('axios');
-const { isEnabled, generateShortLivedToken, logAxiosError } = require('@librechat/api');
+const {
+  isEnabled,
+  logAxiosError,
+  isNeverInlinedFileContext,
+  generateShortLivedToken,
+} = require('@librechat/api');
 
 const footer = `Use the context as your learned knowledge to better answer the user.
 
@@ -19,9 +24,16 @@ function createContextHandlers(req, userMessageContent) {
   const processedIds = new Set();
   const jwtToken = generateShortLivedToken(req.user.id);
   const useFullContext = isEnabled(process.env.RAG_USE_FULL_CONTEXT);
+  // A transcript's full reassembled text must never ride along in a prompt
+  // unmediated (see `isNeverInlinedFileContext`) - even when the admin has
+  // opted every other embedded file into RAG_USE_FULL_CONTEXT, a transcript
+  // still falls back to chunk-level `/query` search instead of the whole-
+  // document GET below. Both call sites below share this one check so they
+  // can't drift out of sync with each other.
+  const usesFullContext = (file) => useFullContext && !isNeverInlinedFileContext(file.context);
 
   const query = async (file) => {
-    if (useFullContext) {
+    if (usesFullContext(file)) {
       return axios.get(`${process.env.RAG_API_URL}/documents/${file.file_id}/context`, {
         headers: {
           Authorization: `Bearer ${jwtToken}`,
@@ -107,7 +119,7 @@ function createContextHandlers(req, userMessageContent) {
             </context>
           </file>`;
 
-                if (useFullContext) {
+                if (usesFullContext(file)) {
                   return generateContext(`\n${contextItems}`);
                 }
 
