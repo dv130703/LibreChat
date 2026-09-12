@@ -11,17 +11,7 @@ import type {
   TDeleteSkillFileResponse,
   TSkillListResponse,
 } from './skills';
-import {
-  Tools,
-  Assistant,
-  AssistantCreateParams,
-  AssistantUpdateParams,
-  FunctionTool,
-  AssistantDocument,
-  Agent,
-  AgentCreateParams,
-  AgentUpdateParams,
-} from './assistants';
+import { Tools, FunctionTool, Agent, AgentCreateParams, AgentUpdateParams } from './assistants';
 import { Action, ActionMetadata } from './agents';
 import * as p from '../permissions';
 import * as types from '../types';
@@ -61,61 +51,6 @@ export type PresetDeleteResponse = {
 export type UpdatePresetOptions = MutationOptions<types.TPreset, types.TPreset>;
 
 export type DeletePresetOptions = MutationOptions<PresetDeleteResponse, types.TPreset | undefined>;
-
-/* Assistant mutations */
-
-export type AssistantAvatarVariables = {
-  assistant_id: string;
-  model: string;
-  formData: FormData;
-  postCreation?: boolean;
-  endpoint: types.AssistantsEndpoint;
-  version: number | string;
-};
-
-export type UpdateActionVariables = {
-  assistant_id: string;
-  functions: FunctionTool[];
-  metadata: ActionMetadata;
-  action_id?: string;
-  model: string;
-  endpoint: types.AssistantsEndpoint;
-  version: number | string;
-};
-
-export type UploadAssistantAvatarOptions = MutationOptions<Assistant, AssistantAvatarVariables>;
-
-export type CreateAssistantMutationOptions = MutationOptions<Assistant, AssistantCreateParams>;
-
-export type UpdateAssistantVariables = {
-  assistant_id: string;
-  data: AssistantUpdateParams;
-};
-
-export type UpdateAssistantMutationOptions = MutationOptions<Assistant, UpdateAssistantVariables>;
-
-export type DeleteAssistantBody = {
-  assistant_id: string;
-  model: string;
-  endpoint: types.AssistantsEndpoint;
-};
-
-export type DeleteAssistantMutationOptions = MutationOptions<
-  void,
-  Pick<DeleteAssistantBody, 'assistant_id'>
->;
-
-export type UpdateActionResponse = [AssistantDocument, Assistant, Action];
-export type UpdateActionOptions = MutationOptions<UpdateActionResponse, UpdateActionVariables>;
-
-export type DeleteActionVariables = {
-  endpoint: types.AssistantsEndpoint;
-  assistant_id: string;
-  action_id: string;
-  model: string;
-};
-
-export type DeleteActionOptions = MutationOptions<void, DeleteActionVariables>;
 
 /* Agent mutations */
 
@@ -506,11 +441,6 @@ export type TLogoutResponse = {
 };
 
 export type LogoutOptions = MutationOptions<TLogoutResponse, undefined>;
-
-export interface AssistantInitialize {
-  message: string;
-  error?: string;
-}
 
 export interface CancelMCPOAuthResponse {
   success: boolean;

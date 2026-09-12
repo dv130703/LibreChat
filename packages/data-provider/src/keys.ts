@@ -19,6 +19,11 @@ export enum QueryKeys {
   tokenCount = 'tokenCount',
   availablePlugins = 'availablePlugins',
   startupConfig = 'startupConfig',
+  /** @deprecated Assistants API (OpenAI/Azure) support was removed. Both keys
+   *  are still consumed - `assistants` by client/src/data-provider/Files/
+   *  mutations.ts, `assistant` by react-query-service.ts's
+   *  useRevokeUserKeyMutation/useRevokeAllUserKeysMutation - deferred to the
+   *  final cleanup phase alongside `isAssistantsEndpoint`. */
   assistants = 'assistants',
   assistant = 'assistant',
   agents = 'agents',
@@ -122,11 +127,8 @@ export enum MutationKeys {
   avatarUpload = 'avatarUpload',
   speechToText = 'speechToText',
   textToSpeech = 'textToSpeech',
-  assistantAvatarUpload = 'assistantAvatarUpload',
   agentAvatarUpload = 'agentAvatarUpload',
-  updateAction = 'updateAction',
   updateAgentAction = 'updateAgentAction',
-  deleteAction = 'deleteAction',
   deleteAgentAction = 'deleteAgentAction',
   revertAgentVersion = 'revertAgentVersion',
   deleteUser = 'deleteUser',

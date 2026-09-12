@@ -267,76 +267,6 @@ export const getModels = async (): Promise<t.TModelsConfig> => {
 
 /* Assistants */
 
-export const createAssistant = ({
-  version,
-  ...data
-}: a.AssistantCreateParams): Promise<a.Assistant> => {
-  return request.post(endpoints.assistants({ version }), data);
-};
-
-export const getAssistantById = ({
-  endpoint,
-  assistant_id,
-  version,
-}: {
-  endpoint: s.AssistantsEndpoint;
-  assistant_id: string;
-  version: number | string | number;
-}): Promise<a.Assistant> => {
-  return request.get(
-    endpoints.assistants({
-      path: assistant_id,
-      endpoint,
-      version,
-    }),
-  );
-};
-
-export const updateAssistant = ({
-  assistant_id,
-  data,
-  version,
-}: {
-  assistant_id: string;
-  data: a.AssistantUpdateParams;
-  version: number | string;
-}): Promise<a.Assistant> => {
-  return request.patch(
-    endpoints.assistants({
-      path: assistant_id,
-      version,
-    }),
-    data,
-  );
-};
-
-export const deleteAssistant = ({
-  assistant_id,
-  model,
-  endpoint,
-  version,
-}: m.DeleteAssistantBody & { version: number | string }): Promise<void> => {
-  return request.delete(
-    endpoints.assistants({
-      path: assistant_id,
-      options: { model, endpoint },
-      version,
-    }),
-  );
-};
-
-export const listAssistants = (
-  params: a.AssistantListParams,
-  version: number | string,
-): Promise<a.AssistantListResponse> => {
-  return request.get(
-    endpoints.assistants({
-      version,
-      options: params,
-    }),
-  );
-};
-
 /** @deprecated Assistants API (OpenAI/Azure) support was removed. */
 export function getAssistantDocs(_params: {
   endpoint: s.AssistantsEndpoint | string;
@@ -627,17 +557,6 @@ export const markFilesUsage = (body: f.TFilesUsageBody): Promise<f.TFilesUsageRe
 
 /* actions */
 
-export const updateAction = (data: m.UpdateActionVariables): Promise<m.UpdateActionResponse> => {
-  const { assistant_id, version, ...body } = data;
-  return request.post(
-    endpoints.assistants({
-      path: `actions/${assistant_id}`,
-      version,
-    }),
-    body,
-  );
-};
-
 export function getActions(): Promise<ag.Action[]> {
   return request.get(
     endpoints.agents({
@@ -645,21 +564,6 @@ export function getActions(): Promise<ag.Action[]> {
     }),
   );
 }
-
-export const deleteAction = async ({
-  assistant_id,
-  action_id,
-  model,
-  version,
-  endpoint,
-}: m.DeleteActionVariables & { version: number | string }): Promise<void> =>
-  request.delete(
-    endpoints.assistants({
-      path: `actions/${assistant_id}/${action_id}/${model}`,
-      version,
-      endpoint,
-    }),
-  );
 
 /**
  * Agents
@@ -861,18 +765,6 @@ export const importConversationsFile = (data: FormData): Promise<t.TImportRespon
 
 export const uploadAvatar = (data: FormData): Promise<f.AvatarUploadResponse> => {
   return request.postMultiPart(endpoints.avatar(), data);
-};
-
-export const uploadAssistantAvatar = (data: m.AssistantAvatarVariables): Promise<a.Assistant> => {
-  return request.postMultiPart(
-    endpoints.assistants({
-      isAvatar: true,
-      path: `${data.assistant_id}/avatar`,
-      options: { model: data.model, endpoint: data.endpoint },
-      version: data.version,
-    }),
-    data.formData,
-  );
 };
 
 export const uploadAgentAvatar = (data: m.AgentAvatarVariables): Promise<a.Agent> => {

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { ZodError } from 'zod';
 import type { TEndpointsConfig, TModelsConfig, TConfig } from './types';
 import {
   EModelEndpoint,
@@ -20,29 +19,6 @@ export { MAX_SUBAGENTS } from './limits';
 export const defaultSocialLogins = ['google', 'facebook', 'openid', 'github', 'discord', 'saml'];
 
 export const BASE_ONLY_CONFIG_SECTIONS = [] as const;
-
-export const defaultRetrievalModels = [
-  'gpt-4o',
-  'o1-preview-2024-09-12',
-  'o1-preview',
-  'o1-mini-2024-09-12',
-  'o1-mini',
-  'o3-mini',
-  'chatgpt-4o-latest',
-  'gpt-4o-2024-05-13',
-  'gpt-4o-2024-08-06',
-  'gpt-4o-mini',
-  'gpt-4o-mini-2024-07-18',
-  'gpt-4-turbo-preview',
-  'gpt-3.5-turbo-0125',
-  'gpt-4-0125-preview',
-  'gpt-4-1106-preview',
-  'gpt-3.5-turbo-1106',
-  'gpt-3.5-turbo-0125',
-  'gpt-4-turbo',
-  'gpt-4-0125',
-  'gpt-4-1106',
-];
 
 export const excludedKeys = new Set([
   'conversationId',
@@ -465,16 +441,6 @@ export function getSchemaDefaults<Schema extends z.AnyZodObject>(
   return Object.fromEntries(entries) as ExtractDefaults<SchemaShape<Schema>>;
 }
 
-export const modelConfigSchema = z
-  .object({
-    deploymentName: z.string().optional(),
-    version: z.string().optional(),
-    assistants: z.boolean().optional(),
-  })
-  .or(z.boolean());
-
-export type TAzureModelConfig = z.infer<typeof modelConfigSchema>;
-
 const paramValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
     z.string(),
@@ -500,65 +466,6 @@ const addParamsSchema: z.ZodType<Record<string, unknown>> = z
       message: '`web_search` must be a boolean in addParams',
     });
   });
-
-export const azureBaseSchema = z.object({
-  apiKey: z.string(),
-  serverless: z.boolean().optional(),
-  instanceName: z.string().optional(),
-  deploymentName: z.string().optional(),
-  assistants: z.boolean().optional(),
-  addParams: addParamsSchema.optional(),
-  dropParams: z.array(z.string()).optional(),
-  version: z.string().optional(),
-  baseURL: z.string().optional(),
-  additionalHeaders: z.record(z.string()).optional(),
-});
-
-export type TAzureBaseSchema = z.infer<typeof azureBaseSchema>;
-
-export const azureGroupSchema = z
-  .object({
-    group: z.string(),
-    models: z.record(z.string(), modelConfigSchema),
-  })
-  .required()
-  .and(azureBaseSchema);
-
-export const azureGroupConfigsSchema = z.array(azureGroupSchema).min(1);
-export type TAzureGroup = z.infer<typeof azureGroupSchema>;
-export type TAzureGroups = z.infer<typeof azureGroupConfigsSchema>;
-export type TAzureModelMapSchema = {
-  // deploymentName?: string;
-  // version?: string;
-  group: string;
-};
-
-export type TAzureModelGroupMap = Record<string, TAzureModelMapSchema | undefined>;
-export type TAzureGroupMap = Record<
-  string,
-  (TAzureBaseSchema & { models: Record<string, TAzureModelConfig | undefined> }) | undefined
->;
-
-export type TValidatedAzureConfig = {
-  modelNames: string[];
-  groupMap: TAzureGroupMap;
-  assistantModels?: string[];
-  assistantGroups?: string[];
-  modelGroupMap: TAzureModelGroupMap;
-};
-
-export type TAzureConfigValidationResult = TValidatedAzureConfig & {
-  isValid: boolean;
-  errors: (ZodError | string)[];
-};
-
-export enum Capabilities {
-  code_interpreter = 'code_interpreter',
-  image_vision = 'image_vision',
-  retrieval = 'retrieval',
-  actions = 'actions',
-  tools = 'tools',
-}
 
 export enum AgentCapabilities {
   hide_sequential_outputs = 'hide_sequential_outputs',
@@ -615,22 +522,6 @@ export const baseEndpointSchema = z.object({
 
 export type TBaseEndpoint = z.infer<typeof baseEndpointSchema>;
 
-export const bedrockGuardrailConfigSchema = z.object({
-  guardrailIdentifier: z.string(),
-  guardrailVersion: z.string(),
-  trace: z.enum(['enabled', 'disabled', 'enabled_full']).optional(),
-  streamProcessingMode: z.enum(['sync', 'async']).optional(),
-});
-
-export const bedrockEndpointSchema = baseEndpointSchema.merge(
-  z.object({
-    availableRegions: z.array(z.string()).optional(),
-    models: z.array(z.string()).optional(),
-    guardrailConfig: bedrockGuardrailConfigSchema.optional(),
-    inferenceProfiles: z.record(z.string(), z.string()).optional(),
-  }),
-);
-
 const modelItemSchema = z.union([
   z.string(),
   z.object({
@@ -638,42 +529,6 @@ const modelItemSchema = z.union([
     description: z.string().optional(),
   }),
 ]);
-
-export const assistantEndpointSchema = baseEndpointSchema.merge(
-  z.object({
-    /* assistants specific */
-    disableBuilder: z.boolean().optional(),
-    pollIntervalMs: z.number().optional(),
-    timeoutMs: z.number().optional(),
-    version: z.union([z.string(), z.number()]).default(2),
-    supportedIds: z.array(z.string()).min(1).optional(),
-    excludedIds: z.array(z.string()).min(1).optional(),
-    privateAssistants: z.boolean().optional(),
-    retrievalModels: z.array(z.string()).min(1).optional().default(defaultRetrievalModels),
-    capabilities: z
-      .array(z.nativeEnum(Capabilities))
-      .optional()
-      .default([
-        Capabilities.code_interpreter,
-        Capabilities.image_vision,
-        Capabilities.retrieval,
-        Capabilities.actions,
-        Capabilities.tools,
-      ]),
-    /* general */
-    apiKey: z.string().optional(),
-    models: z
-      .object({
-        default: z.array(modelItemSchema).min(1),
-        fetch: z.boolean().optional(),
-        userIdQuery: z.boolean().optional(),
-      })
-      .optional(),
-    headers: z.record(z.string()).optional(),
-  }),
-);
-
-export type TAssistantEndpoint = z.infer<typeof assistantEndpointSchema>;
 
 export const defaultAgentCapabilities = [
   // Commented as requires latest Code Interpreter API
@@ -1001,122 +856,6 @@ export const endpointSchema = baseEndpointSchema.merge(
 
 export type TEndpoint = z.infer<typeof endpointSchema>;
 
-export const azureEndpointSchema = z
-  .object({
-    groups: azureGroupConfigsSchema,
-    assistants: z.boolean().optional(),
-  })
-  .and(
-    endpointSchema
-      .pick({
-        streamRate: true,
-        titleConvo: true,
-        titleMethod: true,
-        titleModel: true,
-        titlePrompt: true,
-        titleTiming: true,
-        titlePromptTemplate: true,
-      })
-      .partial(),
-  );
-
-export type TAzureConfig = Omit<z.infer<typeof azureEndpointSchema>, 'groups'> &
-  TAzureConfigValidationResult;
-
-/**
- * Vertex AI model configuration - similar to Azure model config
- * Allows specifying deployment name for each model
- */
-export const vertexModelConfigSchema = z
-  .object({
-    /** The actual model ID/deployment name used by Vertex AI API */
-    deploymentName: z.string().optional(),
-  })
-  .or(z.boolean());
-
-export type TVertexModelConfig = z.infer<typeof vertexModelConfigSchema>;
-
-/**
- * Vertex AI configuration schema for Anthropic models served via Google Cloud Vertex AI.
- * Similar to Azure configuration, this allows running Anthropic models through Google Cloud.
- */
-export const vertexAISchema = z.object({
-  /** Enable Vertex AI mode for Anthropic (defaults to true when vertex config is present) */
-  enabled: z.boolean().optional(),
-  /** Google Cloud Project ID (optional - auto-detected from service key file if not provided) */
-  projectId: z.string().optional(),
-  /** Vertex AI region (e.g., 'us-east5', 'europe-west1') */
-  region: z.string().default('us-east5'),
-  /** Optional: Path to service account key file */
-  serviceKeyFile: z.string().optional(),
-  /** Optional: Default deployment name for all models (can be overridden per model) */
-  deploymentName: z.string().optional(),
-  /** Optional: Available models - can be string array or object with deploymentName mapping */
-  models: z.union([z.array(z.string()), z.record(z.string(), vertexModelConfigSchema)]).optional(),
-});
-
-export type TVertexAISchema = z.infer<typeof vertexAISchema>;
-
-export type TVertexModelMap = Record<string, string>;
-
-/**
- * Validated Vertex AI configuration result
- */
-export type TVertexAIConfig = TVertexAISchema & {
-  isValid: boolean;
-  errors: string[];
-  modelNames?: string[];
-  modelDeploymentMap?: TVertexModelMap;
-};
-
-/**
- * Anthropic endpoint schema with optional Vertex AI configuration.
- * Extends baseEndpointSchema with Vertex AI support.
- */
-export const anthropicEndpointSchema = baseEndpointSchema.merge(
-  z.object({
-    /** Vertex AI configuration for running Anthropic models on Google Cloud */
-    vertex: vertexAISchema.optional(),
-    /** Optional: List of available models */
-    models: z.array(z.string()).optional(),
-  }),
-);
-
-export type TAnthropicEndpoint = z.infer<typeof anthropicEndpointSchema>;
-
-const ttsOpenaiSchema = z.object({
-  url: z.string().optional(),
-  apiKey: z.string(),
-  model: z.string(),
-  voices: z.array(z.string()),
-});
-
-const ttsAzureOpenAISchema = z.object({
-  instanceName: z.string(),
-  apiKey: z.string(),
-  deploymentName: z.string(),
-  apiVersion: z.string(),
-  model: z.string(),
-  voices: z.array(z.string()),
-});
-
-const ttsElevenLabsSchema = z.object({
-  url: z.string().optional(),
-  websocketUrl: z.string().optional(),
-  apiKey: z.string(),
-  model: z.string(),
-  voices: z.array(z.string()),
-  voice_settings: z
-    .object({
-      similarity_boost: z.number().optional(),
-      stability: z.number().optional(),
-      style: z.number().optional(),
-      use_speaker_boost: z.boolean().optional(),
-    })
-    .optional(),
-  pronunciation_dictionary_locators: z.array(z.string()).optional(),
-});
-
 const ttsLocalaiSchema = z.object({
   url: z.string(),
   apiKey: z.string().optional(),
@@ -1125,28 +864,7 @@ const ttsLocalaiSchema = z.object({
 });
 
 const ttsSchema = z.object({
-  openai: ttsOpenaiSchema.optional(),
-  azureOpenAI: ttsAzureOpenAISchema.optional(),
-  elevenlabs: ttsElevenLabsSchema.optional(),
   localai: ttsLocalaiSchema.optional(),
-});
-
-const sttOpenaiSchema = z.object({
-  url: z.string().optional(),
-  apiKey: z.string(),
-  model: z.string(),
-});
-
-const sttAzureOpenAISchema = z.object({
-  instanceName: z.string(),
-  apiKey: z.string(),
-  deploymentName: z.string(),
-  apiVersion: z.string(),
-});
-
-const sttSchema = z.object({
-  openai: sttOpenaiSchema.optional(),
-  azureOpenAI: sttAzureOpenAISchema.optional(),
 });
 
 const speechTab = z
@@ -1158,8 +876,6 @@ const speechTab = z
       .optional()
       .or(
         z.object({
-          /** Keep in sync with STTProviders enum (defined below — cannot reference due to eval order) */
-          engineSTT: z.enum(['openai', 'azureOpenAI']).optional(),
           languageSTT: z.string().optional(),
           autoTranscribeAudio: z.boolean().optional(),
           decibelValue: z.number().optional(),
@@ -1173,7 +889,7 @@ const speechTab = z
       .or(
         z.object({
           /** Keep in sync with TTSProviders enum (defined below — cannot reference due to eval order) */
-          engineTTS: z.enum(['openai', 'azureOpenAI', 'elevenlabs', 'localai']).optional(),
+          engineTTS: z.enum(['localai']).optional(),
           voice: z.string().optional(),
           languageTTS: z.string().optional(),
           automaticPlayback: z.boolean().optional(),
@@ -1889,7 +1605,6 @@ export const configSchema = z.object({
   speech: z
     .object({
       tts: ttsSchema.optional(),
-      stt: sttSchema.optional(),
       speechTab: speechTab.optional(),
     })
     .optional(),
@@ -1933,12 +1648,6 @@ export type DeepPartial<T> = T extends (infer U)[]
 export const getConfigDefaults = () => getSchemaDefaults(configSchema);
 export type TCustomConfig = DeepPartial<z.infer<typeof configSchema>>;
 export type TCustomEndpoints = z.infer<typeof customEndpointsSchema>;
-
-export type TProviderSchema =
-  | z.infer<typeof ttsOpenaiSchema>
-  | z.infer<typeof ttsElevenLabsSchema>
-  | z.infer<typeof ttsLocalaiSchema>
-  | undefined;
 
 export enum KnownEndpoints {
   ollama = 'ollama',
@@ -2450,30 +2159,7 @@ export enum SettingsTabValues {
   ABOUT = 'about',
 }
 
-export enum STTProviders {
-  /**
-   * Provider for OpenAI STT
-   */
-  OPENAI = 'openai',
-  /**
-   * Provider for Microsoft Azure STT
-   */
-  AZURE_OPENAI = 'azureOpenAI',
-}
-
 export enum TTSProviders {
-  /**
-   * Provider for OpenAI TTS
-   */
-  OPENAI = 'openai',
-  /**
-   * Provider for Microsoft Azure OpenAI TTS
-   */
-  AZURE_OPENAI = 'azureOpenAI',
-  /**
-   * Provider for ElevenLabs TTS
-   */
-  ELEVENLABS = 'elevenlabs',
   /**
    * Provider for LocalAI TTS
    */
