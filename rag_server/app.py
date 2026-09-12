@@ -362,9 +362,9 @@ async def transcribe_audio(
     # needs numerals in the transcript can ask for them.
     suppress_numerals: bool | None = Form(None),
     # True when the caller confirmed splitting by audio channel instead of
-    # pyannote clustering (see /transcribe/probe-channels) - each channel is
-    # transcribed and labelled as its own speaker, bypassing diarization
-    # entirely.
+    # pyannote clustering (see LibreChat's own POST /api/transcribe/probe,
+    # not a route on this server) - each channel is transcribed and labelled
+    # as its own speaker, bypassing diarization entirely.
     channel_split: bool = Form(False),
     user_id: str = Depends(get_user_id),
 ) -> TranscriptionResponse:
