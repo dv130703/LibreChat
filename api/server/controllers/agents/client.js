@@ -81,6 +81,7 @@ const {
   createMetadataAggregator,
 } = require('@librechat/agents');
 const {
+  Tools,
   Constants,
   SteerEvents,
   UsageEvents,
@@ -448,9 +449,25 @@ class AgentClient extends BaseClient {
     }
 
     if (this.message_file_map && !isAgentsEndpoint(this.options.endpoint)) {
+      /**
+       * An embedded file that reaches this point is unconditionally also
+       * categorized into `tool_resources.file_search` (see
+       * `categorizeFileForToolResources` in `packages/api/src/agents/
+       * resources.ts`) - regardless of whether `file_search` ends up in this
+       * agent's tool list. So whenever it IS in the list, the model can
+       * already reach that same file through the tool, and
+       * `createContextHandlers` querying it too would retrieve and inject
+       * the same content a second time, independently of whether the model
+       * ever calls the tool. Skipped only in that case - a file that got
+       * embedded without `file_search` making it onto this turn's tool list
+       * (e.g. the ephemeral toggle didn't resend) still needs
+       * `createContextHandlers` as its only path to the model.
+       */
+      const hasFileSearchTool = (this.options.agent?.tools ?? []).includes(Tools.file_search);
       this.contextHandlers = createContextHandlers(
         this.options.req,
         orderedMessages[orderedMessages.length - 1].text,
+        { hasFileSearchTool },
       );
     }
 

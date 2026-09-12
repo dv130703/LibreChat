@@ -14,7 +14,7 @@ In your response, remember to follow these guidelines:
 - Avoid mentioning that you obtained the information from the context.
 `;
 
-function createContextHandlers(req, userMessageContent) {
+function createContextHandlers(req, userMessageContent, { hasFileSearchTool = false } = {}) {
   if (!process.env.RAG_API_URL) {
     return;
   }
@@ -58,7 +58,13 @@ function createContextHandlers(req, userMessageContent) {
   };
 
   const processFile = async (file) => {
-    if (file.embedded && !processedIds.has(file.file_id)) {
+    // A file the model can already reach through a live `file_search` tool
+    // must not ALSO be queried here - every embedded file is unconditionally
+    // categorized into `tool_resources.file_search` regardless of whether
+    // that tool made it onto this turn's list (see the call site in
+    // client.js), so `hasFileSearchTool` is what actually distinguishes
+    // "the tool can reach this" from "this is the only path left".
+    if (file.embedded && !hasFileSearchTool && !processedIds.has(file.file_id)) {
       try {
         const promise = query(file);
         queryPromises.push(promise);

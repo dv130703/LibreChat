@@ -50,6 +50,50 @@ describe('createContextHandlers', () => {
     });
   });
 
+  describe('hasFileSearchTool (A-1: avoiding double retrieval)', () => {
+    it(
+      'does NOT query a file the model can already reach through a live file_search ' +
+        'tool - every embedded file is unconditionally categorized into ' +
+        'tool_resources.file_search regardless of whether the tool is active, so ' +
+        'querying it here too would retrieve and inject the same content twice',
+      async () => {
+        const handlers = createContextHandlers(req, 'q', { hasFileSearchTool: true });
+        await handlers.processFile({ file_id: 'file-1', filename: 'doc.pdf', embedded: true });
+        const prompt = await handlers.createContext();
+
+        expect(axios.post).not.toHaveBeenCalled();
+        expect(axios.get).not.toHaveBeenCalled();
+        expect(prompt).toBe('');
+      },
+    );
+
+    it(
+      "still queries an embedded file when file_search is NOT on this turn's tool " +
+        'list - the one case where this is the only retrieval path left',
+      async () => {
+        axios.post.mockResolvedValue({ data: [[{ page_content: 'still findable' }, 0.1]] });
+
+        const handlers = createContextHandlers(req, 'q', { hasFileSearchTool: false });
+        await handlers.processFile({ file_id: 'file-1', filename: 'doc.pdf', embedded: true });
+        const prompt = await handlers.createContext();
+
+        expect(axios.post).toHaveBeenCalled();
+        expect(prompt).toContain('still findable');
+      },
+    );
+
+    it('defaults to querying when no options object is passed at all', async () => {
+      axios.post.mockResolvedValue({ data: [[{ page_content: 'default path' }, 0.1]] });
+
+      const handlers = createContextHandlers(req, 'q');
+      await handlers.processFile({ file_id: 'file-1', filename: 'doc.pdf', embedded: true });
+      const prompt = await handlers.createContext();
+
+      expect(axios.post).toHaveBeenCalled();
+      expect(prompt).toContain('default path');
+    });
+  });
+
   describe('RAG_USE_FULL_CONTEXT=true', () => {
     beforeEach(() => {
       process.env.RAG_USE_FULL_CONTEXT = 'true';
@@ -71,7 +115,7 @@ describe('createContextHandlers', () => {
     });
 
     it(
-      'NEVER fetches a transcript_rag file\'s whole text, even with the flag on - ' +
+      "NEVER fetches a transcript_rag file's whole text, even with the flag on - " +
         'falls back to chunk-level /query instead',
       async () => {
         // A-2: RAG_USE_FULL_CONTEXT's whole point is "inject the entire
@@ -101,7 +145,7 @@ describe('createContextHandlers', () => {
       },
     );
 
-    it('NEVER fetches a transcript_diarization_detail file\'s whole text either', async () => {
+    it("NEVER fetches a transcript_diarization_detail file's whole text either", async () => {
       axios.post.mockResolvedValue({ data: [] });
 
       const handlers = createContextHandlers(req, 'q');
