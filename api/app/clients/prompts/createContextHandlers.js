@@ -65,14 +65,22 @@ function createContextHandlers(req, userMessageContent, { hasFileSearchTool = fa
     // client.js), so `hasFileSearchTool` is what actually distinguishes
     // "the tool can reach this" from "this is the only path left".
     if (file.embedded && !hasFileSearchTool && !processedIds.has(file.file_id)) {
-      try {
-        const promise = query(file);
-        queryPromises.push(promise);
-        processedFiles.push(file);
-        processedIds.add(file.file_id);
-      } catch (error) {
+      // `query(file)` is itself `async`, so calling it never throws
+      // synchronously - a real failure (RAG server down, network error, a
+      // non-2xx response) only ever surfaces later as a REJECTED PROMISE,
+      // which a plain try/catch around this call can never see. Attaching
+      // `.catch` here converts that failure into a value (`null`) instead of
+      // an unhandled rejection left sitting in `queryPromises`, so one
+      // file's transient RAG failure degrades to "no results for this file"
+      // in `createContext` below rather than rejecting its `Promise.all`
+      // and losing the context for every OTHER attached file too.
+      const promise = query(file).catch((error) => {
         logAxiosError({ message: `Error processing file ${file.filename}`, error });
-      }
+        return null;
+      });
+      queryPromises.push(promise);
+      processedFiles.push(file);
+      processedIds.add(file.file_id);
     }
   };
 
@@ -109,12 +117,18 @@ function createContextHandlers(req, userMessageContent, { hasFileSearchTool = fa
 
       const resolvedQueries = await Promise.all(queryPromises);
 
+      // A `null` entry is a file whose query failed (see the `.catch` in
+      // `processFile`) - paired with its file and dropped here, rather than
+      // one failure blanking out every other attached file's context.
+      const succeeded = resolvedQueries
+        .map((queryResult, index) => ({ queryResult, file: processedFiles[index] }))
+        .filter(({ queryResult }) => queryResult != null);
+
       const context =
-        resolvedQueries.length === 0
+        succeeded.length === 0
           ? '\n\tThe semantic search did not return any results.'
-          : resolvedQueries
-              .map((queryResult, index) => {
-                const file = processedFiles[index];
+          : succeeded
+              .map(({ queryResult, file }) => {
                 let contextItems = queryResult.data;
 
                 const generateContext = (currentContext) =>

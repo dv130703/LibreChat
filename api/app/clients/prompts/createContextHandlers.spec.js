@@ -21,6 +21,36 @@ describe('createContextHandlers', () => {
     expect(createContextHandlers(req, 'hello')).toBeUndefined();
   });
 
+  describe("A-3: one file's RAG failure must not kill the whole turn", () => {
+    it('createContext still resolves - and reports the other file - when one query rejects', async () => {
+      // The bug this guards: `query(file)` is async, so a plain try/catch
+      // around calling it can never see a real (asynchronous) failure - the
+      // rejection used to sit unhandled until `Promise.all` in
+      // `createContext` rejected on it, taking down the ENTIRE turn's
+      // context for every other attached file too.
+      axios.post
+        .mockRejectedValueOnce(new Error('RAG server unreachable'))
+        .mockResolvedValueOnce({ data: [[{ page_content: 'the other file is fine' }, 0.2]] });
+
+      const handlers = createContextHandlers(req, 'q');
+      await handlers.processFile({ file_id: 'broken', filename: 'broken.pdf', embedded: true });
+      await handlers.processFile({ file_id: 'fine', filename: 'fine.pdf', embedded: true });
+
+      await expect(handlers.createContext()).resolves.toContain('the other file is fine');
+    });
+
+    it('reports "no results" rather than throwing when every query fails', async () => {
+      axios.post.mockRejectedValue(new Error('RAG server unreachable'));
+
+      const handlers = createContextHandlers(req, 'q');
+      await handlers.processFile({ file_id: 'broken', filename: 'broken.pdf', embedded: true });
+
+      await expect(handlers.createContext()).resolves.toContain(
+        'The semantic search did not return any results.',
+      );
+    });
+  });
+
   describe('chunk-level search (RAG_USE_FULL_CONTEXT unset)', () => {
     it('queries /query and renders the returned chunks as an XML context block', async () => {
       axios.post.mockResolvedValue({
