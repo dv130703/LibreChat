@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { logger } = require('@librechat/data-schemas');
-const { genAzureEndpoint, logAxiosError, applyAxiosProxyConfig } = require('@librechat/api');
+const { logAxiosError, applyAxiosProxyConfig } = require('@librechat/api');
 const { extractEnvVariable, TTSProviders } = require('librechat-data-provider');
 const { getRandomVoiceId, createChunkProcessor, splitTextIntoChunks } = require('./streamAudio');
 const { getAppConfig } = require('~/server/services/Config');
@@ -15,9 +15,6 @@ class TTSService {
    */
   constructor() {
     this.providerStrategies = {
-      [TTSProviders.OPENAI]: this.openAIProvider.bind(this),
-      [TTSProviders.AZURE_OPENAI]: this.azureOpenAIProvider.bind(this),
-      [TTSProviders.ELEVENLABS]: this.elevenLabsProvider.bind(this),
       [TTSProviders.LOCALAI]: this.localAIProvider.bind(this),
     };
   }
@@ -91,117 +88,6 @@ class TTSService {
         delete obj[key];
       }
     });
-  }
-
-  /**
-   * Prepares the request for OpenAI TTS provider.
-   * @param {Object} ttsSchema - The TTS schema for OpenAI.
-   * @param {string} input - The input text.
-   * @param {string} voice - The selected voice.
-   * @returns {Array} An array containing the URL, data, and headers for the request.
-   * @throws {Error} If the selected voice is not available.
-   */
-  openAIProvider(ttsSchema, input, voice) {
-    const url = ttsSchema?.url || 'https://api.openai.com/v1/audio/speech';
-
-    if (
-      ttsSchema?.voices &&
-      ttsSchema.voices.length > 0 &&
-      !ttsSchema.voices.includes(voice) &&
-      !ttsSchema.voices.includes('ALL')
-    ) {
-      throw new Error(`Voice ${voice} is not available.`);
-    }
-
-    const data = {
-      input,
-      model: ttsSchema?.model,
-      voice: ttsSchema?.voices && ttsSchema.voices.length > 0 ? voice : undefined,
-      backend: ttsSchema?.backend,
-    };
-
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${extractEnvVariable(ttsSchema?.apiKey)}`,
-    };
-
-    return [url, data, headers];
-  }
-
-  /**
-   * Prepares the request for Azure OpenAI TTS provider.
-   * @param {Object} ttsSchema - The TTS schema for Azure OpenAI.
-   * @param {string} input - The input text.
-   * @param {string} voice - The selected voice.
-   * @returns {Array} An array containing the URL, data, and headers for the request.
-   * @throws {Error} If the selected voice is not available.
-   */
-  azureOpenAIProvider(ttsSchema, input, voice) {
-    const url = `${genAzureEndpoint({
-      azureOpenAIApiInstanceName: extractEnvVariable(ttsSchema?.instanceName),
-      azureOpenAIApiDeploymentName: extractEnvVariable(ttsSchema?.deploymentName),
-    })}/audio/speech?api-version=${extractEnvVariable(ttsSchema?.apiVersion)}`;
-
-    if (
-      ttsSchema?.voices &&
-      ttsSchema.voices.length > 0 &&
-      !ttsSchema.voices.includes(voice) &&
-      !ttsSchema.voices.includes('ALL')
-    ) {
-      throw new Error(`Voice ${voice} is not available.`);
-    }
-
-    const data = {
-      model: extractEnvVariable(ttsSchema?.model),
-      input,
-      voice: ttsSchema?.voices && ttsSchema.voices.length > 0 ? voice : undefined,
-    };
-
-    const headers = {
-      'Content-Type': 'application/json',
-      'api-key': ttsSchema.apiKey ? extractEnvVariable(ttsSchema.apiKey) : '',
-    };
-
-    return [url, data, headers];
-  }
-
-  /**
-   * Prepares the request for ElevenLabs TTS provider.
-   * @param {Object} ttsSchema - The TTS schema for ElevenLabs.
-   * @param {string} input - The input text.
-   * @param {string} voice - The selected voice.
-   * @param {boolean} stream - Whether to use streaming.
-   * @returns {Array} An array containing the URL, data, and headers for the request.
-   * @throws {Error} If the selected voice is not available.
-   */
-  elevenLabsProvider(ttsSchema, input, voice, stream) {
-    let url =
-      ttsSchema?.url ||
-      `https://api.elevenlabs.io/v1/text-to-speech/${voice}${stream ? '/stream' : ''}`;
-
-    if (!ttsSchema?.voices.includes(voice) && !ttsSchema?.voices.includes('ALL')) {
-      throw new Error(`Voice ${voice} is not available.`);
-    }
-
-    const data = {
-      model_id: ttsSchema?.model,
-      text: input,
-      voice_settings: {
-        similarity_boost: ttsSchema?.voice_settings?.similarity_boost,
-        stability: ttsSchema?.voice_settings?.stability,
-        style: ttsSchema?.voice_settings?.style,
-        use_speaker_boost: ttsSchema?.voice_settings?.use_speaker_boost,
-      },
-      pronunciation_dictionary_locators: ttsSchema?.pronunciation_dictionary_locators,
-    };
-
-    const headers = {
-      'Content-Type': 'application/json',
-      'xi-api-key': extractEnvVariable(ttsSchema?.apiKey),
-      Accept: 'audio/mpeg',
-    };
-
-    return [url, data, headers];
   }
 
   /**

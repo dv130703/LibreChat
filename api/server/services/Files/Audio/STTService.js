@@ -1,10 +1,8 @@
 const axios = require('axios');
 const fs = require('fs').promises;
-const FormData = require('form-data');
 const { Readable } = require('stream');
 const { logger } = require('@librechat/data-schemas');
-const { genAzureEndpoint, logAxiosError, applyAxiosProxyConfig } = require('@librechat/api');
-const { extractEnvVariable, STTProviders } = require('librechat-data-provider');
+const { logAxiosError, applyAxiosProxyConfig } = require('@librechat/api');
 const { getAppConfig } = require('~/server/services/Config');
 
 /**
@@ -33,34 +31,6 @@ const MIME_TO_EXTENSION_MAP = {
   'audio/flac': 'flac',
   'audio/x-flac': 'flac',
 };
-
-/**
- * Validates and extracts ISO-639-1 language code from a locale string.
- * @param {string} language - The language/locale string (e.g., "en-US", "en", "zh-CN")
- * @returns {string|null} The ISO-639-1 language code (e.g., "en") or null if invalid
- */
-function getValidatedLanguageCode(language) {
-  try {
-    if (!language) {
-      return null;
-    }
-
-    const normalizedLanguage = language.toLowerCase();
-    const isValidLocaleCode = /^[a-z]{2}(-[a-z]{2})?$/.test(normalizedLanguage);
-
-    if (isValidLocaleCode) {
-      return normalizedLanguage.split('-')[0];
-    }
-
-    logger.warn(
-      `[STT] Invalid language format "${language}". Expected ISO-639-1 locale code like "en-US" or "en". Skipping language parameter.`,
-    );
-    return null;
-  } catch (error) {
-    logger.error(`[STT] Error validating language code "${language}":`, error);
-    return null;
-  }
-}
 
 /**
  * Gets the file extension from the MIME type.
@@ -113,10 +83,7 @@ function getFileExtensionFromMime(mimeType) {
  */
 class STTService {
   constructor() {
-    this.providerStrategies = {
-      [STTProviders.OPENAI]: this.openAIProvider,
-      [STTProviders.AZURE_OPENAI]: this.azureOpenAIProvider,
-    };
+    this.providerStrategies = {};
   }
 
   /**
@@ -183,90 +150,6 @@ class STTService {
         delete obj[key];
       }
     });
-  }
-
-  /**
-   * Prepares the request for the OpenAI STT provider.
-   * @param {Object} sttSchema - The STT schema for OpenAI.
-   * @param {Stream} audioReadStream - The audio data to be transcribed.
-   * @param {Object} audioFile - The audio file object (unused in OpenAI provider).
-   * @param {string} language - The language code for the transcription.
-   * @returns {Array} An array containing the URL, data, and headers for the request.
-   */
-  openAIProvider(sttSchema, audioReadStream, audioFile, language) {
-    const url = sttSchema?.url || 'https://api.openai.com/v1/audio/transcriptions';
-    const apiKey = extractEnvVariable(sttSchema.apiKey) || '';
-
-    const data = {
-      file: audioReadStream,
-      model: sttSchema.model,
-    };
-
-    const validLanguage = getValidatedLanguageCode(language);
-    if (validLanguage) {
-      data.language = validLanguage;
-    }
-
-    const headers = {
-      'Content-Type': 'multipart/form-data',
-      ...(apiKey && { Authorization: `Bearer ${apiKey}` }),
-    };
-    [headers].forEach(this.removeUndefined);
-
-    return [url, data, headers];
-  }
-
-  /**
-   * Prepares the request for the Azure OpenAI STT provider.
-   * @param {Object} sttSchema - The STT schema for Azure OpenAI.
-   * @param {Buffer} audioBuffer - The audio data to be transcribed.
-   * @param {Object} audioFile - The audio file object containing originalname, mimetype, and size.
-   * @param {string} language - The language code for the transcription.
-   * @returns {Array} An array containing the URL, data, and headers for the request.
-   * @throws {Error} If the audio file size exceeds 25MB or the audio file format is not accepted.
-   */
-  azureOpenAIProvider(sttSchema, audioBuffer, audioFile, language) {
-    const url = `${genAzureEndpoint({
-      azureOpenAIApiInstanceName: extractEnvVariable(sttSchema?.instanceName),
-      azureOpenAIApiDeploymentName: extractEnvVariable(sttSchema?.deploymentName),
-    })}/audio/transcriptions?api-version=${extractEnvVariable(sttSchema?.apiVersion)}`;
-
-    const apiKey = sttSchema.apiKey ? extractEnvVariable(sttSchema.apiKey) : '';
-
-    if (audioBuffer.byteLength > 25 * 1024 * 1024) {
-      throw new Error('The audio file size exceeds the limit of 25MB');
-    }
-
-    const acceptedFormats = ['flac', 'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'ogg', 'wav', 'webm'];
-    const [mimePrefix, rawFormat = ''] = audioFile.mimetype.split('/');
-    const isAudioMime = mimePrefix === 'audio' || mimePrefix === 'video';
-    const isKnownMime = audioFile.mimetype in MIME_TO_EXTENSION_MAP;
-    const normalizedFormat = isKnownMime ? MIME_TO_EXTENSION_MAP[audioFile.mimetype] : null;
-    if (
-      !acceptedFormats.includes(normalizedFormat) &&
-      !(isAudioMime && acceptedFormats.includes(rawFormat))
-    ) {
-      throw new Error(`The audio file format ${rawFormat} is not accepted`);
-    }
-
-    const formData = new FormData();
-    formData.append('file', audioBuffer, {
-      filename: audioFile.originalname,
-      contentType: audioFile.mimetype,
-    });
-
-    const validLanguage = getValidatedLanguageCode(language);
-    if (validLanguage) {
-      formData.append('language', validLanguage);
-    }
-
-    const headers = {
-      ...(apiKey && { 'api-key': apiKey }),
-    };
-
-    [headers].forEach(this.removeUndefined);
-
-    return [url, formData, { ...headers, ...formData.getHeaders() }];
   }
 
   /**

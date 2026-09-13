@@ -545,7 +545,6 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
       deferredToolsEnabled,
       programmaticToolsEnabled,
       codeExecutionEnabled,
-      provider: agent.provider,
     },
     {
       isBuiltInTool,
@@ -627,7 +626,6 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
           deferredToolsEnabled,
           programmaticToolsEnabled,
           codeExecutionEnabled,
-          provider: agent.provider,
         },
         {
           isBuiltInTool,
@@ -850,7 +848,6 @@ async function loadAgentTools({
       loadedTools,
       userId: req.user.id,
       agentId: agent.id,
-      provider: agent.provider,
       agentToolOptions: agent.tool_options,
       deferredToolsEnabled,
       programmaticToolsEnabled,

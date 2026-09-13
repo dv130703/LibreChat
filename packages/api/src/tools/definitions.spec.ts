@@ -1,4 +1,4 @@
-import { Providers, WebSearchToolDefinition } from '@librechat/agents';
+import { WebSearchToolDefinition } from '@librechat/agents';
 import type {
   LoadToolDefinitionsParams,
   LoadToolDefinitionsDeps,
@@ -443,7 +443,7 @@ describe('definitions.ts', () => {
         expect(getItemDef?.description).toBe('Get a specific item');
       });
 
-      it('union-flattens MCP tool schemas for Google, but preserves unions otherwise', async () => {
+      it('preserves union schemas in MCP tool definitions', async () => {
         const mockServerTools = {
           issue_write_mcp_github: {
             function: {
@@ -477,24 +477,6 @@ describe('definitions.ts', () => {
           getOrFetchMCPServerTools: mockGetOrFetchMCPServerTools,
           isBuiltInTool: mockIsBuiltInTool,
         };
-
-        const googleResult = await loadToolDefinitions(
-          {
-            userId: 'user-123',
-            agentId: 'agent-123',
-            tools: ['issue_write_mcp_github'],
-            provider: Providers.GOOGLE,
-          },
-          deps,
-        );
-        const googleDef = googleResult.toolDefinitions.find(
-          (d) => d.name === 'issue_write_mcp_github',
-        );
-        expect(JSON.stringify(googleDef?.parameters)).not.toContain('anyOf');
-        expect(
-          (googleDef?.parameters as { properties: Record<string, { properties: object }> })
-            .properties.payload.properties,
-        ).toEqual({ action: { type: 'string', enum: ['create'] }, title: { type: 'string' } });
 
         const defaultResult = await loadToolDefinitions(
           { userId: 'user-123', agentId: 'agent-123', tools: ['issue_write_mcp_github'] },

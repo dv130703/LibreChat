@@ -70,15 +70,6 @@ import { primeResources } from './resources';
  */
 const DEFAULT_RESERVE_RATIO = 0.05;
 const temporalSpecialVarRegex = /{{\s*(current_date|current_datetime|iso_datetime)\s*}}/i;
-const geminiModelVersionRegex = /^gemini-(\d+)(?:\.(\d+))?(?:-|$)/;
-const googleToolCombinationTextModels = [
-  'gemini-3-flash-preview',
-  'gemini-3-pro-preview',
-  'gemini-3.1-flash-lite',
-  'gemini-3.1-pro-preview',
-];
-const googleToolCombinationExcludedModalityRegex =
-  /(?:^|-)image(?:-|$)|(?:^|-)live(?:-|$)|(?:^|-)tts(?:-|$)/;
 
 function hasTemporalSpecialVars(text: string): boolean {
   return temporalSpecialVarRegex.test(text);
@@ -98,137 +89,6 @@ function getMaxCatalogSkills(req: ServerRequest): number | undefined {
     | Record<string, { skills?: { maxCatalogSkills?: number } } | undefined>
     | undefined;
   return endpoints?.[EModelEndpoint.agents]?.skills?.maxCatalogSkills;
-}
-
-function getToolName(tool: unknown): string | undefined {
-  if (tool == null || typeof tool !== 'object') {
-    return undefined;
-  }
-  const { name } = tool as { name?: unknown };
-  return typeof name === 'string' ? name : undefined;
-}
-
-function hasToolDefinition(toolDefinitions: LCTool[] | undefined, name: string): boolean {
-  return toolDefinitions?.some((toolDefinition) => toolDefinition.name === name) === true;
-}
-
-function hasGoogleSearchTool(tool: unknown): boolean {
-  if (tool == null || typeof tool !== 'object') {
-    return false;
-  }
-  return 'googleSearch' in tool || 'googleSearchRetrieval' in tool;
-}
-
-function normalizeGoogleModelName(model: string): string {
-  const normalized = model.trim().toLowerCase();
-  return normalized.split('/').pop() ?? normalized;
-}
-
-function isKnownGoogleToolCombinationTextModel(model: string): boolean {
-  return googleToolCombinationTextModels.some(
-    (knownModel) => model === knownModel || model.startsWith(`${knownModel}-`),
-  );
-}
-
-function isGemini35OrLater(model: string): boolean {
-  const match = geminiModelVersionRegex.exec(model);
-  if (!match) {
-    return false;
-  }
-  const major = Number(match[1]);
-  const minor = Number(match[2] ?? '0');
-  return major > 3 || (major === 3 && minor >= 5);
-}
-
-function supportsGoogleToolCombination(model: unknown): boolean {
-  if (typeof model !== 'string') {
-    return false;
-  }
-  const normalized = normalizeGoogleModelName(model);
-  if (googleToolCombinationExcludedModalityRegex.test(normalized)) {
-    return false;
-  }
-  return isKnownGoogleToolCombinationTextModel(normalized) || isGemini35OrLater(normalized);
-}
-
-function isGoogleToolCombinationProvider(provider?: string): boolean {
-  return provider === Providers.GOOGLE || provider === Providers.VERTEXAI;
-}
-
-function shouldIncludeGoogleServerSideToolInvocations({
-  provider,
-  hasProviderTools,
-  hasAgentTools,
-}: {
-  provider?: string;
-  hasProviderTools: boolean;
-  hasAgentTools: boolean;
-}): boolean {
-  return isGoogleToolCombinationProvider(provider) && hasProviderTools && hasAgentTools;
-}
-
-function assertGoogleToolCombinationSupport(model: unknown): void {
-  if (!supportsGoogleToolCombination(model)) {
-    throw new Error(`{ "type": "${ErrorTypes.GOOGLE_TOOL_CONFLICT}"}`);
-  }
-}
-
-function enableGoogleServerSideToolInvocations({
-  agent,
-  llmConfig,
-}: {
-  agent: Agent;
-  llmConfig: Record<string, unknown>;
-}): void {
-  llmConfig.includeServerSideToolInvocations = true;
-  if (agent.model_parameters) {
-    (agent.model_parameters as Record<string, unknown>).includeServerSideToolInvocations = true;
-  }
-}
-
-function resolveProviderToolConflicts({
-  provider,
-  tools,
-  toolDefinitions,
-}: {
-  provider?: string;
-  tools?: unknown[];
-  toolDefinitions?: LCTool[];
-}): unknown[] | undefined {
-  if (!tools?.length) {
-    return tools;
-  }
-
-  if (!hasToolDefinition(toolDefinitions, Tools.web_search)) {
-    return tools;
-  }
-
-  const shouldRemoveTool = (tool: unknown): boolean => {
-    if (provider === Providers.ANTHROPIC) {
-      return getToolName(tool) === Tools.web_search;
-    }
-    if (provider === Providers.GOOGLE || provider === Providers.VERTEXAI) {
-      return hasGoogleSearchTool(tool);
-    }
-    return false;
-  };
-
-  let removed = 0;
-  const resolvedTools = tools.filter((tool) => {
-    const shouldRemove = shouldRemoveTool(tool);
-    if (shouldRemove) {
-      removed += 1;
-    }
-    return !shouldRemove;
-  });
-
-  if (removed > 0) {
-    logger.debug(
-      `[initializeAgent] Removed ${removed} ${provider} native web search tool(s); LibreChat web_search is enabled.`,
-    );
-  }
-
-  return resolvedTools;
 }
 
 /**
@@ -1265,40 +1125,14 @@ export async function initializeAgent(
     }
   }
 
-  /** Check for tool presence from either full instances or definitions (event-driven mode) */
-  const hasAgentTools = (structuredTools?.length ?? 0) > 0 || (toolDefinitions?.length ?? 0) > 0;
-  const providerTools = resolveProviderToolConflicts({
-    provider: agent.provider,
-    tools: options.tools,
-    toolDefinitions,
-  });
+  const providerTools = options.tools;
   const hasProviderTools = (providerTools?.length ?? 0) > 0;
 
   let tools: GenericTool[] = hasProviderTools
     ? (providerTools as GenericTool[])
     : (structuredTools ?? []);
 
-  if (isGoogleToolCombinationProvider(agent.provider) && hasProviderTools && hasAgentTools) {
-    assertGoogleToolCombinationSupport(llmConfig.model);
-    if (
-      shouldIncludeGoogleServerSideToolInvocations({
-        provider: agent.provider,
-        hasProviderTools,
-        hasAgentTools,
-      })
-    ) {
-      enableGoogleServerSideToolInvocations({ agent, llmConfig });
-    }
-    if (structuredTools?.length) {
-      tools = structuredTools.concat(providerTools as GenericTool[]);
-    }
-  } else if (
-    (agent.provider === Providers.OPENAI ||
-      agent.provider === Providers.AZURE ||
-      agent.provider === Providers.ANTHROPIC) &&
-    hasProviderTools &&
-    structuredTools?.length
-  ) {
+  if (agent.provider === Providers.OPENAI && hasProviderTools && structuredTools?.length) {
     tools = structuredTools.concat(providerTools as GenericTool[]);
   }
 
@@ -1361,20 +1195,6 @@ export async function initializeAgent(
     activeSkillNames = skillResult.activeSkillNames;
   }
 
-  const hasFinalAgentTools =
-    (structuredTools?.length ?? 0) > 0 || (toolDefinitions?.length ?? 0) > 0;
-  if (isGoogleToolCombinationProvider(agent.provider) && hasProviderTools && hasFinalAgentTools) {
-    assertGoogleToolCombinationSupport(llmConfig.model);
-    if (
-      shouldIncludeGoogleServerSideToolInvocations({
-        provider: agent.provider,
-        hasProviderTools,
-        hasAgentTools: hasFinalAgentTools,
-      })
-    ) {
-      enableGoogleServerSideToolInvocations({ agent, llmConfig });
-    }
-  }
 
   const agentMaxContextNum = Number(agentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS;
   const maxOutputTokensNum = Number(maxOutputTokens) || 0;
