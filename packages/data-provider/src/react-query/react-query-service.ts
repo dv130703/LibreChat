@@ -145,15 +145,6 @@ export const useRevokeUserKeyMutation = (name: string): UseMutationResult<unknow
       queryClient.invalidateQueries([QueryKeys.name, name]);
       queryClient.invalidateQueries([QueryKeys.models]);
       queryClient.invalidateQueries([QueryKeys.tokenConfig]);
-      if (s.isAssistantsEndpoint(name)) {
-        queryClient.invalidateQueries([QueryKeys.assistants, name, defaultOrderQuery]);
-        queryClient.invalidateQueries([QueryKeys.assistantDocs]);
-        queryClient.invalidateQueries([QueryKeys.assistants]);
-        queryClient.invalidateQueries([QueryKeys.assistant]);
-        queryClient.invalidateQueries([QueryKeys.mcpTools]);
-        queryClient.invalidateQueries([QueryKeys.actions]);
-        queryClient.invalidateQueries([QueryKeys.tools]);
-      }
     },
   });
 };

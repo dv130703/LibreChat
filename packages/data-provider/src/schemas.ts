@@ -264,21 +264,6 @@ export const eThinkingLevelSchema = z.nativeEnum(ThinkingLevel);
 export const eReasoningModeSchema = z.nativeEnum(ReasoningMode);
 export const eReasoningContextSchema = z.nativeEnum(ReasoningContext);
 
-export const defaultAssistantFormValues = {
-  assistant: '',
-  id: '',
-  name: '',
-  description: '',
-  instructions: '',
-  conversation_starters: [],
-  model: '',
-  functions: [],
-  code_interpreter: false,
-  image_vision: false,
-  retrieval: false,
-  append_current_datetime: false,
-};
-
 export const defaultAgentFormValues = {
   agent: {},
   id: '',

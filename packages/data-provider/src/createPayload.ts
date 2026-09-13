@@ -44,8 +44,8 @@ export default function createPayload(submission: t.TSubmission) {
     editedContent,
     conversationId,
     isContinued: !!(isEdited && isContinued),
-    ephemeralAgent: s.isAssistantsEndpoint(endpoint) ? undefined : ephemeralAgent,
-    manualSkills: s.isAssistantsEndpoint(endpoint) ? undefined : manualSkills,
+    ephemeralAgent,
+    manualSkills,
     timezone: getUserTimezone(),
     clientRequestId,
   };
