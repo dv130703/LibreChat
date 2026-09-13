@@ -211,14 +211,6 @@ export const shortcutDefinitions = {
     ariaMac: 'Meta+Shift+V',
     ariaOther: 'Control+Shift+V',
   },
-  openAssistants: {
-    labelKey: 'com_shortcut_open_assistants',
-    groupKey: 'com_shortcut_group_panels',
-    displayMac: '',
-    displayOther: '',
-    ariaMac: '',
-    ariaOther: '',
-  },
   openAgents: {
     labelKey: 'com_shortcut_open_agents',
     groupKey: 'com_shortcut_group_panels',
@@ -716,7 +708,6 @@ export function useShortcutActions(): ShortcutAction[] {
     [sidebarExpanded, setSidebarExpanded],
   );
 
-  const handleOpenAssistants = useCallback(() => handleOpenPanel('assistants'), [handleOpenPanel]);
   const handleOpenAgents = useCallback(() => handleOpenPanel('agents'), [handleOpenPanel]);
   const handleOpenPrompts = useCallback(() => handleOpenPanel('prompts'), [handleOpenPanel]);
   const handleOpenMemories = useCallback(() => handleOpenPanel('memories'), [handleOpenPanel]);
@@ -749,7 +740,6 @@ export function useShortcutActions(): ShortcutAction[] {
       bookmarkConversation: handleBookmarkConversation,
       continueResponse: handleContinueResponse,
       readAloudLastResponse: handleReadAloudLastResponse,
-      openAssistants: handleOpenAssistants,
       openAgents: handleOpenAgents,
       openPrompts: handleOpenPrompts,
       openMemories: handleOpenMemories,
@@ -781,7 +771,6 @@ export function useShortcutActions(): ShortcutAction[] {
       handleBookmarkConversation,
       handleContinueResponse,
       handleReadAloudLastResponse,
-      handleOpenAssistants,
       handleOpenAgents,
       handleOpenPrompts,
       handleOpenMemories,
