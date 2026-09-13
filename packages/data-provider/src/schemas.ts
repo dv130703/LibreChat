@@ -103,16 +103,6 @@ export const getSettingsKeys = (endpoint: EModelEndpoint | string, model: string
   return [combinedKey, endpoint];
 };
 
-/** Assistants API (OpenAI/Azure) support was removed with the other non-Ollama
- *  providers; kept as an always-false stub so the many call sites that guard
- *  assistants-only behavior keep working without individually being revisited. */
-export const isAssistantsEndpoint = (_endpoint?: string | null): boolean => false;
-
-/** @deprecated Assistants API (OpenAI/Azure) support was removed. Retained as a
- *  type placeholder until the Assistants-only UI/data-layer that still
- *  references it is deleted. */
-export type AssistantsEndpoint = string;
-
 export type AgentProvider = Exclude<keyof typeof EModelEndpoint, EModelEndpoint.agents> | string;
 
 export const isAgentsEndpoint = (_endpoint?: EModelEndpoint.agents | null | string): boolean => {

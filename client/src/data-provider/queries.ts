@@ -14,7 +14,6 @@ import type {
   ConversationListParams,
   MessagesListParams,
   MessagesListResponse,
-  AssistantDocument,
   TEndpointsConfig,
   TCheckUserKeyResponse,
   SharedLinksListParams,
@@ -178,7 +177,7 @@ export const useConversationTagsQuery = (
  * For MCP tools, use `useMCPToolsQuery` from mcp-queries.ts
  */
 export const useAvailableToolsQuery = <TData = t.TPlugin[]>(
-  endpoint: t.AssistantsEndpoint | EModelEndpoint.agents,
+  endpoint: string | EModelEndpoint.agents,
   config?: UseQueryOptions<t.TPlugin[], unknown, TData>,
 ): QueryObserverResult<TData> => {
   const queryClient = useQueryClient();
@@ -205,7 +204,7 @@ export const useAvailableToolsQuery = <TData = t.TPlugin[]>(
  * Hook for retrieving user's saved Assistant Actions
  */
 export const useGetActionsQuery = <TData = Action[]>(
-  endpoint: t.AssistantsEndpoint | EModelEndpoint.agents,
+  endpoint: string | EModelEndpoint.agents,
   config?: UseQueryOptions<Action[], unknown, TData>,
 ): QueryObserverResult<TData> => {
   const queryClient = useQueryClient();
@@ -223,38 +222,6 @@ export const useGetActionsQuery = <TData = Action[]>(
     ...config,
     enabled: config?.enabled !== undefined ? config.enabled && enabled : enabled,
   });
-};
-
-/**
- * Hook for retrieving user's saved Assistant Documents (metadata saved to Database)
- */
-export const useGetAssistantDocsQuery = <TData = AssistantDocument[]>(
-  endpoint: t.AssistantsEndpoint | string,
-  config?: UseQueryOptions<AssistantDocument[], unknown, TData>,
-): QueryObserverResult<TData> => {
-  const queryClient = useQueryClient();
-  const endpointsConfig = queryClient.getQueryData<TEndpointsConfig>([QueryKeys.endpoints]);
-  const keyExpiry = queryClient.getQueryData<TCheckUserKeyResponse>([QueryKeys.name, endpoint]);
-  const userProvidesKey = !!(endpointsConfig?.[endpoint]?.userProvide ?? false);
-  const keyProvided = userProvidesKey ? !!(keyExpiry?.expiresAt ?? '') : true;
-  const enabled = !!endpointsConfig?.[endpoint] && keyProvided;
-  const version = endpointsConfig?.[endpoint]?.version ?? '';
-
-  return useQuery<AssistantDocument[], unknown, TData>(
-    [QueryKeys.assistantDocs, endpoint],
-    () =>
-      dataService.getAssistantDocs({
-        endpoint,
-        version,
-      }),
-    {
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-      refetchOnMount: false,
-      ...config,
-      enabled: config?.enabled !== undefined ? config.enabled && enabled : enabled,
-    },
-  );
 };
 
 /** STT/TTS */

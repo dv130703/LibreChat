@@ -8,7 +8,6 @@ const {
   resolveUploadErrorMessage,
   verifyAgentUploadPermission,
 } = require('@librechat/api');
-const { isAssistantsEndpoint } = require('librechat-data-provider');
 const {
   processAgentFileUpload,
   processImageFile,
@@ -38,7 +37,7 @@ router.post('/', async (req, res) => {
     metadata.temp_file_id = metadata.file_id;
     metadata.file_id = req.file_id;
 
-    if (!isAssistantsEndpoint(metadata.endpoint) && metadata.tool_resource != null) {
+    if (metadata.tool_resource != null) {
       const denied = await verifyAgentUploadPermission({
         req,
         res,

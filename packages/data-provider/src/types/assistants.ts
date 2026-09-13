@@ -1,5 +1,5 @@
 import type { OpenAPIV3 } from 'openapi-types';
-import type { AssistantsEndpoint, AgentProvider, MemoryScope } from 'src/schemas';
+import type { AgentProvider, MemoryScope } from 'src/schemas';
 import type { Agents, GraphEdge } from './agents';
 import type { ContentTypes } from './runs';
 import type { TFile } from './files';
@@ -7,13 +7,6 @@ import { ArtifactModes } from 'src/artifacts';
 
 export type Schema = OpenAPIV3.SchemaObject & { description?: string };
 export type Reference = OpenAPIV3.ReferenceObject & { description?: string };
-
-export type Metadata = {
-  avatar?: string;
-  author?: string;
-} & {
-  [key: string]: unknown;
-};
 
 export enum Tools {
   execute_code = 'execute_code',
@@ -81,25 +74,6 @@ export interface FileSearchResource {
    */
   vector_store_ids?: Array<string>;
 }
-
-/* Assistant types */
-
-export type Assistant = {
-  id: string;
-  created_at: number;
-  description: string | null;
-  file_ids?: string[];
-  instructions: string | null;
-  conversation_starters?: string[];
-  metadata: Metadata | null;
-  model: string;
-  name: string | null;
-  object: string;
-  tools?: FunctionTool[];
-  tool_resources?: ToolResources;
-};
-
-export type TAssistantsMap = Record<AssistantsEndpoint, Record<string, Assistant>>;
 
 /* Agent types */
 
@@ -627,36 +601,10 @@ export function isActionTool(toolName: string): boolean {
 export const hostImageIdSuffix = '_host_copy';
 export const hostImageNamePrefix = 'host_copy_';
 
-export type AssistantAvatar = {
-  filepath: string;
-  source: string;
-};
-
-export type AssistantDocument = {
-  user: string;
-  assistant_id: string;
-  conversation_starters?: string[];
-  avatar?: AssistantAvatar;
-  access_level?: number;
-  file_ids?: string[];
-  actions?: string[];
-  createdAt?: Date;
-  updatedAt?: Date;
-  append_current_datetime?: boolean;
-};
-
 /* Agent types */
 
 export type AgentAvatar = {
   filepath: string;
   source: string;
-};
-
-export const defaultOrderQuery: {
-  order: 'desc';
-  limit: 100;
-} = {
-  order: 'desc',
-  limit: 100,
 };
 

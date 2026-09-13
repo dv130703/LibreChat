@@ -12,7 +12,6 @@ import {
   isAgentsEndpoint,
   parseCompactConvo,
   replaceSpecialVars,
-  isAssistantsEndpoint,
   getDefaultParamsEndpoint,
 } from 'librechat-data-provider';
 import type {
@@ -375,25 +374,18 @@ export default function useChatFunctions({
           : drainPendingManualSkills(conversationId ?? Constants.NEW_CONVO);
     }
     /**
-     * Quoted-excerpt resolution mirrors manual skills, but is skipped entirely
-     * for Assistants endpoints: those bypass the `BaseClient` merge, so the
-     * quote UI is hidden there and a selection queued on another endpoint must
-     * not silently ride along on a fresh submit. The pending atom is left
-     * untouched so the queue survives if the user switches back.
+     * Quoted-excerpt resolution:
      *  - Explicit `overrideQuotes` wins (regenerate / resubmit replay the
      *    original user message's persisted quotes so the same context is sent).
      *  - Regenerate / continue / edit without an override → empty (those flows
      *    replay a prior turn; the compose-time atom is left untouched).
      *  - Fresh submit → drain the per-convo atom into the message.
      */
-    const quotesSupported = !isAssistantsEndpoint(endpoint);
     let quotes: string[] = [];
-    if (quotesSupported) {
-      if (overrideQuotes != null) {
-        quotes = overrideQuotes;
-      } else if (!isRegenerate && !isContinued && !isEdited) {
-        quotes = drainPendingQuotes(conversationId ?? Constants.NEW_CONVO);
-      }
+    if (overrideQuotes != null) {
+      quotes = overrideQuotes;
+    } else if (!isRegenerate && !isContinued && !isEdited) {
+      quotes = drainPendingQuotes(conversationId ?? Constants.NEW_CONVO);
     }
     const isEditOrContinue = isEdited || isContinued;
 
@@ -592,18 +584,7 @@ export default function useChatFunctions({
       manualSkills: manualSkills.length > 0 ? manualSkills : undefined,
     };
 
-    if (isAssistantsEndpoint(endpoint)) {
-      initialResponse.model = conversation?.assistant_id ?? '';
-      initialResponse.text = '';
-      initialResponse.content = [
-        {
-          type: ContentTypes.TEXT,
-          [ContentTypes.TEXT]: {
-            value: '',
-          },
-        },
-      ];
-    } else if (endpoint != null) {
+    if (endpoint != null) {
       initialResponse.model = isAgentsEndpoint(endpoint)
         ? (conversation?.agent_id ?? '')
         : (conversation?.model ?? '');

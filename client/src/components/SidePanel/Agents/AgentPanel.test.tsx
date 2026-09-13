@@ -56,7 +56,6 @@ jest.mock('librechat-data-provider', () => {
     PermissionBits: actualModule.PermissionBits || {
       EDIT: 2,
     },
-    isAssistantsEndpoint: jest.fn(() => false),
   };
 });
 

@@ -6,7 +6,6 @@ import type {
 } from '@tanstack/react-query';
 import { MCPServerConnectionStatusResponse } from '../types/queries';
 import { Constants, initialModelsConfig } from '../config';
-import { defaultOrderQuery } from '../types/assistants';
 import * as permissions from '../accessPermissions';
 import { ResourceType } from '../accessPermissions';
 import * as dataService from '../data-service';
@@ -155,10 +154,6 @@ export const useRevokeAllUserKeysMutation = (): UseMutationResult<unknown> => {
     onSuccess: () => {
       queryClient.invalidateQueries([QueryKeys.name]);
       queryClient.invalidateQueries([QueryKeys.tokenConfig]);
-      queryClient.invalidateQueries([QueryKeys.assistants, defaultOrderQuery]);
-      queryClient.invalidateQueries([QueryKeys.assistantDocs]);
-      queryClient.invalidateQueries([QueryKeys.assistants]);
-      queryClient.invalidateQueries([QueryKeys.assistant]);
       queryClient.invalidateQueries([QueryKeys.mcpTools]);
       queryClient.invalidateQueries([QueryKeys.actions]);
       queryClient.invalidateQueries([QueryKeys.tools]);

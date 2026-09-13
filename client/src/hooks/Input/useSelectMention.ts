@@ -1,14 +1,8 @@
 import { useCallback, useMemo } from 'react';
 import { useRecoilValue } from 'recoil';
 import { useSearchParams } from 'react-router-dom';
-import { EModelEndpoint, isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
-import type {
-  TPreset,
-  TModelSpec,
-  TConversation,
-  TAssistantsMap,
-  TEndpointsConfig,
-} from 'librechat-data-provider';
+import { EModelEndpoint, isAgentsEndpoint } from 'librechat-data-provider';
+import type { TPreset, TModelSpec, TConversation, TEndpointsConfig } from 'librechat-data-provider';
 import type { MentionOption, ConvoGenerator } from '~/common';
 import {
   clearModelForNonEphemeralAgent,
@@ -23,7 +17,6 @@ import store from '~/store';
 export default function useSelectMention({
   presets,
   modelSpecs,
-  assistantsMap,
   returnHandlers,
   endpointsConfig,
   getConversation,
@@ -32,7 +25,6 @@ export default function useSelectMention({
   presets?: TPreset[];
   modelSpecs: TModelSpec[];
   returnHandlers?: boolean;
-  assistantsMap?: TAssistantsMap;
   newConversation: ConvoGenerator;
   endpointsConfig: TEndpointsConfig;
   getConversation: () => TConversation | null;
@@ -87,14 +79,6 @@ export default function useSelectMention({
         preset.endpointType = newEndpointType;
       }
 
-      if (
-        isAssistantsEndpoint(newEndpoint) &&
-        preset.assistant_id != null &&
-        !(preset.model ?? '')
-      ) {
-        preset.model = assistantsMap?.[newEndpoint]?.[preset.assistant_id]?.model;
-      }
-
       const isModular = isCurrentModular && isNewModular && shouldSwitch;
       if (isExistingConversation && isModular) {
         template.endpointType = newEndpointType as EModelEndpoint | undefined;
@@ -132,7 +116,6 @@ export default function useSelectMention({
       modularChat,
       newConversation,
       endpointsConfig,
-      assistantsMap,
       routeChatProjectId,
     ],
   );
@@ -319,18 +302,13 @@ export default function useSelectMention({
         onSelectEndpoint(key, { model: option.label });
       } else if (option.type === 'endpoint') {
         onSelectEndpoint(key);
-      } else if (isAssistantsEndpoint(option.type)) {
-        onSelectEndpoint(option.type, {
-          assistant_id: key,
-          model: assistantsMap?.[option.type]?.[key]?.model ?? '',
-        });
       } else if (isAgentsEndpoint(option.type)) {
         onSelectEndpoint(option.type, {
           agent_id: key,
         });
       }
     },
-    [modelSpecs, onSelectEndpoint, onSelectPreset, onSelectSpec, presets, assistantsMap],
+    [modelSpecs, onSelectEndpoint, onSelectPreset, onSelectSpec, presets],
   );
 
   if (returnHandlers) {

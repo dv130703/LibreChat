@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { TConversation, TEndpointsConfig } from 'librechat-data-provider';
-import { useAgentsMapContext, useAssistantsMapContext } from '~/Providers';
+import { useAgentsMapContext } from '~/Providers';
 import EndpointIcon from '~/components/Endpoints/EndpointIcon';
 import { areConversationIconFieldsEqual } from './utils';
 import { useGetEndpointsQuery } from '~/data-provider';
@@ -24,13 +24,11 @@ function ConversationEndpointIcon({
 }: ConversationEndpointIconProps) {
   const { data: endpointsConfig = emptyEndpointsConfig } = useGetEndpointsQuery();
   const agentsMap = useAgentsMapContext();
-  const assistantMap = useAssistantsMapContext();
 
   return (
     <EndpointIcon
       conversation={conversation}
       endpointsConfig={endpointsConfig}
-      assistantMap={assistantMap}
       agentsMap={agentsMap}
       className={className}
       size={size}

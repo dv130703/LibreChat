@@ -1,13 +1,7 @@
 import { useToastContext } from '@librechat/client';
 import { EToolResources } from 'librechat-data-provider';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import {
-  QueryKeys,
-  dataService,
-  MutationKeys,
-  defaultOrderQuery,
-  isAssistantsEndpoint,
-} from 'librechat-data-provider';
+import { QueryKeys, dataService, MutationKeys } from 'librechat-data-provider';
 import type { UseMutationResult } from '@tanstack/react-query';
 import type * as t from 'librechat-data-provider';
 import { useGetStartupConfig } from '../Endpoints';
@@ -30,11 +24,6 @@ export const useUploadFileMutation = (
     mutationFn: (body: FormData) => {
       const width = body.get('width') ?? '';
       const height = body.get('height') ?? '';
-      const version = body.get('version') ?? '';
-      const endpoint = (body.get('endpoint') ?? '') as string;
-      if (isAssistantsEndpoint(endpoint) && version === '2') {
-        return dataService.uploadFile(body, signal, sseEnabled);
-      }
 
       if (width !== '' && height !== '') {
         return dataService.uploadImage(body, signal, sseEnabled);
@@ -49,10 +38,8 @@ export const useUploadFileMutation = (
         ...(_files ?? []),
       ]);
 
-      const endpoint = formData.get('endpoint');
       const message_file = formData.get('message_file');
       const agent_id = (formData.get('agent_id') as string | undefined) ?? '';
-      const assistant_id = (formData.get('assistant_id') as string | undefined) ?? '';
       const tool_resource = (formData.get('tool_resource') as string | undefined) ?? '';
 
       if (message_file === 'true') {
@@ -91,51 +78,6 @@ export const useUploadFileMutation = (
         });
       }
 
-      if (!assistant_id) {
-        onSuccess?.(data, formData, context);
-        return;
-      }
-
-      queryClient.setQueryData<t.AssistantListResponse>(
-        [QueryKeys.assistants, endpoint, defaultOrderQuery],
-        (prev) => {
-          if (!prev) {
-            return prev;
-          }
-
-          return {
-            ...prev,
-            data: prev.data.map((assistant) => {
-              if (assistant.id !== assistant_id) {
-                return assistant;
-              }
-
-              const update = {};
-              if (!tool_resource) {
-                update['file_ids'] = [...(assistant.file_ids ?? []), data.file_id];
-              }
-              if (tool_resource === EToolResources.code_interpreter) {
-                const prevResources = assistant.tool_resources ?? {};
-                const prevResource = assistant.tool_resources?.[tool_resource] ?? {
-                  file_ids: [],
-                };
-                if (!prevResource.file_ids) {
-                  prevResource.file_ids = [];
-                }
-                prevResource.file_ids.push(data.file_id);
-                update['tool_resources'] = {
-                  ...prevResources,
-                  [tool_resource]: prevResource,
-                };
-              }
-              return {
-                ...assistant,
-                ...update,
-              };
-            }),
-          };
-        },
-      );
       onSuccess?.(data, formData, context);
     },
   });

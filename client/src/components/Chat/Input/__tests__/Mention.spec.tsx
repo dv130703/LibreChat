@@ -46,10 +46,6 @@ jest.mock('~/hooks', () => ({
   useGetConversation: () => jest.fn(),
 }));
 
-jest.mock('~/Providers', () => ({
-  useAssistantsMapContext: () => ({}),
-}));
-
 /* react-virtualized renders nothing in jsdom without a measured size; replace
    AutoSizer + List with a flat ul so every row's MentionItem button renders. */
 jest.mock('react-virtualized', () => ({

@@ -21,14 +21,7 @@ const {
   requiresEphemeralUserConnection,
   containsGraphTokenPlaceholder,
 } = require('@librechat/api');
-const {
-  Time,
-  CacheKeys,
-  Constants,
-  Permissions,
-  PermissionTypes,
-  isAssistantsEndpoint,
-} = require('librechat-data-provider');
+const { Time, CacheKeys, Constants, Permissions, PermissionTypes } = require('librechat-data-provider');
 const {
   getOAuthReconnectionManager,
   getMCPServersRegistry,
@@ -827,9 +820,6 @@ function createToolInstance({
         oboTrustChecker: createOboTrustChecker(),
       });
 
-      if (isAssistantsEndpoint(provider) && Array.isArray(result)) {
-        return result[0];
-      }
       return result;
     } catch (error) {
       logger.error(

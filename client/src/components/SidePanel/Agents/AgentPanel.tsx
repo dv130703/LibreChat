@@ -10,7 +10,6 @@ import {
   ResourceType,
   EModelEndpoint,
   PermissionBits,
-  isAssistantsEndpoint,
 } from 'librechat-data-provider';
 import type { FieldNamesMarkedBoolean } from 'react-hook-form';
 import type { Agent } from 'librechat-data-provider';
@@ -326,7 +325,6 @@ export default function AgentPanel() {
       Object.keys(endpointsConfig ?? {})
         .filter(
           (key) =>
-            !isAssistantsEndpoint(key) &&
             (allowedProviders.size > 0 ? allowedProviders.has(key) : true) &&
             key !== EModelEndpoint.agents,
         )

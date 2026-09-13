@@ -1,4 +1,3 @@
-import { isAssistantsEndpoint } from 'librechat-data-provider';
 import type { TSubmission } from 'librechat-data-provider';
 import type { EventHandlerParams } from './useEventHandlers';
 import useResumableSSE from './useResumableSSE';
@@ -10,11 +9,10 @@ type ChatHelpers = Pick<
 >;
 
 /**
- * Adaptive SSE hook that switches between standard and resumable modes.
- * Uses resumable streams by default, falls back to standard SSE for assistants endpoints.
+ * Adaptive SSE hook that uses resumable streams.
  *
  * Note: Both hooks are always called to comply with React's Rules of Hooks.
- * We pass null submission to the inactive one.
+ * `useSSE` is passed a null submission since only the resumable path is active.
  */
 export default function useAdaptiveSSE(
   submission: TSubmission | null,
@@ -22,20 +20,9 @@ export default function useAdaptiveSSE(
   isAddedRequest = false,
   runIndex = 0,
 ) {
-  const endpoint = submission?.conversation?.endpoint;
-  const endpointType = submission?.conversation?.endpointType;
-  const actualEndpoint = endpointType ?? endpoint;
-  const isAssistants = isAssistantsEndpoint(actualEndpoint);
-  const resumableEnabled = !isAssistants;
+  useSSE(null, chatHelpers, isAddedRequest, runIndex);
 
-  useSSE(resumableEnabled ? null : submission, chatHelpers, isAddedRequest, runIndex);
+  const { streamId } = useResumableSSE(submission, chatHelpers, isAddedRequest, runIndex);
 
-  const { streamId } = useResumableSSE(
-    resumableEnabled ? submission : null,
-    chatHelpers,
-    isAddedRequest,
-    runIndex,
-  );
-
-  return { streamId, resumableEnabled };
+  return { streamId, resumableEnabled: true };
 }

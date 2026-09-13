@@ -1,4 +1,4 @@
-import { EModelEndpoint, isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
+import { EModelEndpoint, isAgentsEndpoint } from 'librechat-data-provider';
 import type { TConfig, TSpecsConfig, TEndpointsConfig } from 'librechat-data-provider';
 
 /**
@@ -65,7 +65,7 @@ const getReachableEndpoints = ({
   }
 
   for (const endpoint of allEndpoints) {
-    if (!isAgentsEndpoint(endpoint) && !isAssistantsEndpoint(endpoint)) {
+    if (!isAgentsEndpoint(endpoint)) {
       reachable.add(endpoint);
     }
   }

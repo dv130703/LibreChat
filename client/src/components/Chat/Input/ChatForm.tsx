@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { useWatch } from 'react-hook-form';
 import { TextareaAutosize } from '@librechat/client';
 import { useRecoilState, useRecoilValue, useRecoilCallback } from 'recoil';
-import { Constants, isAssistantsEndpoint, isAgentsEndpoint } from 'librechat-data-provider';
+import { Constants, isAgentsEndpoint } from 'librechat-data-provider';
 import type { TMessage, TConversation } from 'librechat-data-provider';
 import type { ExtendedFile, FileSetter, ConvoGenerator } from '~/common';
 import type { QueuedMessageContext } from '~/hooks/Chat/useSteering';
@@ -17,12 +17,7 @@ import {
   useSubmitMessage,
   useFocusChatEffect,
 } from '~/hooks';
-import {
-  useChatContext,
-  useChatFormContext,
-  useAddedChatContext,
-  useAssistantsMapContext,
-} from '~/Providers';
+import { useChatContext, useChatFormContext, useAddedChatContext } from '~/Providers';
 import PendingManualSkillsChips from './PendingManualSkillsChips';
 import useAskAnswerMode from '~/hooks/Input/useAskAnswerMode';
 import AskUserQuestionPopover from './AskUserQuestionPopover';
@@ -117,7 +112,6 @@ const ChatForm = memo(function ChatForm({
     conversation: addedConvo,
     setConversation: setAddedConvo,
   } = useAddedChatContext();
-  const assistantMap = useAssistantsMapContext();
   const { data: startupConfig } = useGetStartupConfig();
 
   const endpoint = useMemo(
@@ -133,23 +127,9 @@ const ChatForm = memo(function ChatForm({
     () => conversation?.conversationId ?? Constants.NEW_CONVO,
     [conversation?.conversationId],
   );
-  /**
-   * The quote feature merges excerpts server-side in `BaseClient.sendMessage`,
-   * which the Assistants endpoints bypass — so hide the UI there rather than
-   * letting users queue quotes the assistant never receives.
-   */
-  const quotesEnabled = useMemo(() => !isAssistantsEndpoint(endpoint), [endpoint]);
-
   const isRTL = useMemo(
     () => (chatDirection != null ? chatDirection?.toLowerCase() === 'rtl' : false),
     [chatDirection],
-  );
-  const invalidAssistant = useMemo(
-    () =>
-      isAssistantsEndpoint(endpoint) &&
-      (!(conversation?.assistant_id ?? '') ||
-        !assistantMap?.[endpoint ?? '']?.[conversation?.assistant_id ?? '']),
-    [conversation?.assistant_id, endpoint, assistantMap],
   );
   /** A recording still uploading (before `POST /api/transcribe` has even
    *  resolved into a real, cancellable job) - `useConversationTranscriptionStatus`
@@ -161,8 +141,8 @@ const ChatForm = memo(function ChatForm({
     store.pendingTranscriptionUploadsByConvoId(conversationId),
   ).some((upload) => upload.status === 'uploading');
   const disableInputs = useMemo(
-    () => requiresKey || invalidAssistant || hasPendingTranscriptionUpload,
-    [requiresKey, invalidAssistant, hasPendingTranscriptionUpload],
+    () => requiresKey || hasPendingTranscriptionUpload,
+    [requiresKey, hasPendingTranscriptionUpload],
   );
 
   const handleContainerClick = useCallback(() => {
@@ -558,7 +538,7 @@ const ChatForm = memo(function ChatForm({
     >
       <div className="relative flex h-full flex-1 items-stretch md:flex-col">
         {/* Primary composer owns the selection popup so split-view doesn't double it. */}
-        {index === 0 && quotesEnabled && <QuoteButton conversationId={conversationId} />}
+        {index === 0 && <QuoteButton conversationId={conversationId} />}
         {/* `relative` anchors the in-flight steer overlay, which floats above
             the composer (`bottom-full`) over the bottom of the thread. */}
         <div className="relative flex w-full flex-col">
@@ -579,7 +559,6 @@ const ChatForm = memo(function ChatForm({
               textAreaRef={textAreaRef}
               commandChar="+"
               placeholder="com_ui_add_model_preset"
-              includeAssistants={false}
             />
             <Mention
               index={index}
@@ -609,7 +588,7 @@ const ChatForm = memo(function ChatForm({
             >
               <TextareaHeader addedConvo={addedConvo} setAddedConvo={setAddedConvo} />
               <PendingManualSkillsChips conversationId={conversationId} />
-              {quotesEnabled && <PendingQuoteChips conversationId={conversationId} />}
+              <PendingQuoteChips conversationId={conversationId} />
               {steering.enabled && (
                 <PendingSteerChips
                   conversationId={conversationId}
@@ -711,12 +690,7 @@ const ChatForm = memo(function ChatForm({
                   />
                 </div>
                 <BadgeRow
-                  showEphemeralBadges={
-                    !!endpoint &&
-                    !hideBadgeRow &&
-                    !isAgentsEndpoint(endpoint) &&
-                    !isAssistantsEndpoint(endpoint)
-                  }
+                  showEphemeralBadges={!!endpoint && !hideBadgeRow && !isAgentsEndpoint(endpoint)}
                   isSubmitting={isSubmitting}
                   conversationId={conversationId}
                   specName={conversation?.spec}

@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
 import { VisuallyHidden } from '@ariakit/react';
-import { Spinner, TooltipAnchor } from '@librechat/client';
-import { CheckCircle2, MousePointerClick, SettingsIcon } from 'lucide-react';
-import { EModelEndpoint, isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
+import { CheckCircle2, SettingsIcon } from 'lucide-react';
+import { EModelEndpoint, isAgentsEndpoint } from 'librechat-data-provider';
 import type { TModelSpec } from 'librechat-data-provider';
 import type { Endpoint } from '~/common';
 import { CustomMenu as Menu, CustomMenuItem as MenuItem, CustomMenuSeparator } from '../CustomMenu';
@@ -95,7 +94,7 @@ function EndpointMenuContent({
   endpointIndex: number;
 }) {
   const localize = useLocalize();
-  const { agentsMap, assistantsMap, modelSpecs, selectedValues, endpointSearchValues } =
+  const { agentsMap, modelSpecs, selectedValues, endpointSearchValues } =
     useModelSelectorContext();
   const { modelSpec: selectedSpec } = selectedValues;
   const searchValue = endpointSearchValues[endpoint.value] || '';
@@ -107,25 +106,12 @@ function EndpointMenuContent({
     return modelSpecs.filter((spec: TModelSpec) => spec.group === endpoint.value);
   }, [modelSpecs, endpoint.value]);
 
-  if (isAssistantsEndpoint(endpoint.value) && endpoint.models === undefined) {
-    return (
-      <div
-        className="flex items-center justify-center p-2"
-        role="status"
-        aria-label={localize('com_ui_loading')}
-      >
-        <Spinner aria-hidden="true" />
-      </div>
-    );
-  }
-
   const filteredModels = searchValue
     ? filterModels(
         endpoint,
         (endpoint.models || []).map((model) => model.name),
         searchValue,
         agentsMap,
-        assistantsMap,
       )
     : null;
   const renderedModels = filteredModels ?? endpoint.models?.map((model) => model.name) ?? [];
@@ -166,9 +152,6 @@ export function EndpointItem({ endpoint, endpointIndex }: EndpointItemProps) {
     [endpointRequiresUserKey, endpoint.value],
   );
 
-  const isAssistantsNotLoaded =
-    isAssistantsEndpoint(endpoint.value) && endpoint.models === undefined;
-
   const renderIconLabel = () => (
     <div className="flex min-w-0 items-center gap-2">
       {endpoint.icon && (
@@ -187,10 +170,9 @@ export function EndpointItem({ endpoint, endpointIndex }: EndpointItemProps) {
   }
 
   if (endpoint.hasModels) {
-    const placeholder =
-      isAgentsEndpoint(endpoint.value) || isAssistantsEndpoint(endpoint.value)
-        ? localize('com_endpoint_search_var', { 0: endpoint.label })
-        : localize('com_endpoint_search_endpoint_models', { 0: endpoint.label });
+    const placeholder = isAgentsEndpoint(endpoint.value)
+      ? localize('com_endpoint_search_var', { 0: endpoint.label })
+      : localize('com_endpoint_search_endpoint_models', { 0: endpoint.label });
     return (
       <Menu
         id={`endpoint-${endpoint.value}-menu`}
@@ -234,18 +216,7 @@ export function EndpointItem({ endpoint, endpointIndex }: EndpointItemProps) {
           {endpointRequiresUserKey(endpoint.value) && (
             <SettingsButton endpoint={endpoint} handleOpenKeyDialog={handleOpenKeyDialog} />
           )}
-          {isAssistantsNotLoaded && (
-            <TooltipAnchor
-              description={localize('com_ui_click_to_view_var', { 0: endpoint.label })}
-              side="top"
-              render={
-                <span className="flex items-center">
-                  <MousePointerClick className="size-4 text-text-secondary" aria-hidden="true" />
-                </span>
-              }
-            />
-          )}
-          {isEndpointSelected && !isAssistantsNotLoaded && (
+          {isEndpointSelected && (
             <>
               <CheckCircle2 className="size-4 shrink-0 text-text-primary" aria-hidden="true" />
               <VisuallyHidden>{localize('com_a11y_selected')}</VisuallyHidden>

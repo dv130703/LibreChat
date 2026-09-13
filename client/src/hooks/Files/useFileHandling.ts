@@ -10,7 +10,6 @@ import {
   Constants,
   EToolResources,
   mergeFileConfig,
-  isAssistantsEndpoint,
   getEndpointFileConfig,
   getConfiguredMimeAccept,
 } from 'librechat-data-provider';
@@ -320,20 +319,15 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
       }
     }
 
-    if (!isAssistantsEndpoint(endpointType ?? endpoint)) {
-      if (!agent_id) {
-        formData.append('message_file', 'true');
-      }
-      const tool_resource = extendedFile.tool_resource;
-      if (tool_resource != null) {
-        formData.append('tool_resource', tool_resource);
-      }
-      if (conversation?.agent_id != null && formData.get('agent_id') == null) {
-        formData.append('agent_id', conversation.agent_id);
-      }
-
-      uploadFile.mutate(formData);
-      return;
+    if (!agent_id) {
+      formData.append('message_file', 'true');
+    }
+    const tool_resource = extendedFile.tool_resource;
+    if (tool_resource != null) {
+      formData.append('tool_resource', tool_resource);
+    }
+    if (conversation?.agent_id != null && formData.get('agent_id') == null) {
+      formData.append('agent_id', conversation.agent_id);
     }
 
     uploadFile.mutate(formData);

@@ -265,20 +265,10 @@ export const getModels = async (): Promise<t.TModelsConfig> => {
   return request.get(endpoints.models());
 };
 
-/* Assistants */
-
-/** @deprecated Assistants API (OpenAI/Azure) support was removed. */
-export function getAssistantDocs(_params: {
-  endpoint: s.AssistantsEndpoint | string;
-  version: number | string;
-}): Promise<a.AssistantDocument[]> {
-  return Promise.resolve([]);
-}
-
 /* Tools */
 
 export const getAvailableTools = (
-  _endpoint: s.AssistantsEndpoint | s.EModelEndpoint.agents,
+  _endpoint: string | s.EModelEndpoint.agents,
   _version?: number | string,
 ): Promise<s.TPlugin[]> => {
   return request.get(endpoints.agents({ path: 'tools' }));

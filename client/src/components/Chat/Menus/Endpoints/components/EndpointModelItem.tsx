@@ -1,7 +1,7 @@
 import React from 'react';
 import { VisuallyHidden } from '@ariakit/react';
 import { CheckCircle2, EarthIcon, Pin, PinOff } from 'lucide-react';
-import { isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
+import { isAgentsEndpoint } from 'librechat-data-provider';
 import type { Endpoint } from '~/common';
 import { useFavorites, useLocalize, useIsActiveItem } from '~/hooks';
 import { useModelSelectorContext } from '../ModelSelectorContext';
@@ -38,13 +38,6 @@ export function EndpointModelItem({ modelId, endpoint }: EndpointModelItemProps)
 
     const modelInfo = endpoint?.models?.find((m) => m.name === modelId);
     isGlobal = modelInfo?.isGlobal ?? false;
-  } else if (
-    endpoint &&
-    modelId &&
-    isAssistantsEndpoint(endpoint.value) &&
-    endpoint.assistantNames?.[modelId]
-  ) {
-    modelName = endpoint.assistantNames[modelId];
   }
 
   const isAgent = isAgentsEndpoint(endpoint.value);
@@ -70,9 +63,7 @@ export function EndpointModelItem({ modelId, endpoint }: EndpointModelItemProps)
   };
 
   const renderAvatar = () => {
-    const isAgentOrAssistant =
-      isAgentsEndpoint(endpoint.value) || isAssistantsEndpoint(endpoint.value);
-    const showEndpointIcon = isAgentOrAssistant && endpoint.icon;
+    const showEndpointIcon = isAgentsEndpoint(endpoint.value) && endpoint.icon;
 
     const getContent = () => {
       if (avatarUrl) {

@@ -6,12 +6,10 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   QueryKeys,
   Constants,
-  EndpointURLs,
   ContentTypes,
   tPresetSchema,
   tMessageSchema,
   tConvoUpdateSchema,
-  isAssistantsEndpoint,
 } from 'librechat-data-provider';
 import type {
   TMessage,
@@ -45,7 +43,6 @@ import useAttachmentHandler from '~/hooks/SSE/useAttachmentHandler';
 import useContentHandler from '~/hooks/SSE/useContentHandler';
 import useStepHandler from '~/hooks/SSE/useStepHandler';
 import { useApplyAgentTemplate } from '~/hooks/Agents';
-import { useAuthContext } from '~/hooks/AuthContext';
 import { MESSAGE_UPDATE_INTERVAL } from '~/common';
 import { useLiveAnnouncer } from '~/Providers';
 import store from '~/store';
@@ -299,7 +296,6 @@ export default function useEventHandlers({
 
   const lastAnnouncementTimeRef = useRef(Date.now());
   const { conversationId: paramId } = useParams();
-  const { token } = useAuthContext();
 
   const { contentHandler, resetContentHandler } = useContentHandler({ setMessages, getMessages });
   /** `refetchType: 'all'` so cached-but-unmounted skill queries refresh too —
@@ -797,15 +793,6 @@ export default function useEventHandlers({
 
         if (finalMessages.length > 0) {
           setFinalMessages(conversation.conversationId, finalMessages);
-        } else if (
-          isAssistantsEndpoint(submissionConvo.endpoint) &&
-          (!submissionConvo.conversationId ||
-            submissionConvo.conversationId === Constants.NEW_CONVO)
-        ) {
-          queryClient.setQueryData<TMessage[]>(
-            [QueryKeys.messages, conversation.conversationId],
-            [...currentMessages],
-          );
         }
 
         if (isNewConvo && submissionConvo.conversationId) {
@@ -1002,15 +989,7 @@ export default function useEventHandlers({
 
   const abortConversation = useCallback(
     async (conversationId = '', submission: EventSubmission, messages?: TMessage[]) => {
-      const runAbortKey = `${conversationId}:${messages?.[messages.length - 1]?.messageId ?? ''}`;
-      const { endpoint: _endpoint, endpointType } =
-        (submission.conversation as TConversation | null) ?? {};
-      const endpoint = endpointType ?? _endpoint;
-      if (
-        !isAssistantsEndpoint(endpoint) &&
-        messages?.[messages.length - 1] != null &&
-        messages[messages.length - 2] != null
-      ) {
+      if (messages?.[messages.length - 1] != null && messages[messages.length - 2] != null) {
         let requestMessage = messages[messages.length - 2];
         const _responseMessage = messages[messages.length - 1];
         if (requestMessage.messageId !== _responseMessage.parentMessageId) {
@@ -1044,76 +1023,19 @@ export default function useEventHandlers({
           setIsSubmitting(false);
         }
         return;
-      } else if (!isAssistantsEndpoint(endpoint)) {
-        const convoId = conversationId || `_${v4()}`;
-        logger.log('conversation', 'Aborted conversation with minimal messages, ID: ' + convoId);
-        if (newConversation) {
-          newConversation({
-            template: { ...(submission.conversation ?? {}), conversationId: convoId },
-            preset: tPresetSchema.parse(submission.conversation),
-          });
-        }
-        setIsSubmitting(false);
-        return;
       }
 
-      try {
-        const response = await fetch(`${EndpointURLs[endpoint ?? '']}/abort`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            abortKey: runAbortKey,
-            endpoint,
-          }),
+      const convoId = conversationId || `_${v4()}`;
+      logger.log('conversation', 'Aborted conversation with minimal messages, ID: ' + convoId);
+      if (newConversation) {
+        newConversation({
+          template: { ...(submission.conversation ?? {}), conversationId: convoId },
+          preset: tPresetSchema.parse(submission.conversation),
         });
-
-        // Check if the response is JSON
-        const contentType = response.headers.get('content-type');
-        if (contentType != null && contentType.includes('application/json')) {
-          const data = await response.json();
-          if (response.status === 404) {
-            setIsSubmitting(false);
-            return;
-          }
-          if (data.final === true) {
-            finalHandler(data, submission);
-          } else {
-            cancelHandler(data, submission);
-          }
-        } else if (response.status === 204 || response.status === 200) {
-          setIsSubmitting(false);
-        } else {
-          throw new Error(
-            'Unexpected response from server; Status: ' +
-              response.status +
-              ' ' +
-              response.statusText,
-          );
-        }
-      } catch (error) {
-        const errorResponse = createErrorMessage({
-          getMessages,
-          submission,
-          error,
-        });
-        setMessages([...submission.messages, submission.userMessage, errorResponse]);
-        if (newConversation) {
-          newConversation({
-            template: {
-              ...(submission.conversation ?? {}),
-              conversationId: conversationId || errorResponse.conversationId || v4(),
-            },
-            preset: tPresetSchema.parse(submission.conversation),
-          });
-        }
-        setIsSubmitting(false);
       }
+      setIsSubmitting(false);
     },
     [
-      token,
       getMessages,
       setMessages,
       finalHandler,

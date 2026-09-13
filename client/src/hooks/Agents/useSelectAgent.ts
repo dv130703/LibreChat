@@ -1,12 +1,6 @@
 import { useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  Constants,
-  QueryKeys,
-  dataService,
-  EModelEndpoint,
-  isAssistantsEndpoint,
-} from 'librechat-data-provider';
+import { Constants, QueryKeys, dataService, EModelEndpoint } from 'librechat-data-provider';
 import type { TConversation, TPreset, Agent } from 'librechat-data-provider';
 import useGetConversation from '~/hooks/Conversations/useGetConversation';
 import useDefaultConvo from '~/hooks/Conversations/useDefaultConvo';
@@ -25,13 +19,6 @@ export default function useSelectAgent() {
     async (agent: Partial<Agent>, template: Partial<TPreset | TConversation>) => {
       const conversation = await getConversation();
       logger.log('conversation', 'Updating conversation with agent', agent);
-      if (isAssistantsEndpoint(conversation?.endpoint)) {
-        newConversation({
-          template: { ...(template as Partial<TConversation>) },
-          preset: template as Partial<TPreset>,
-        });
-        return;
-      }
       const currentConvo = getDefaultConversation({
         conversation: { ...(conversation ?? {}), agent_id: agent.id },
         preset: template,

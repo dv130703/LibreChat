@@ -5,7 +5,6 @@ import Landing from '../Landing';
 
 let mockConversation: Record<string, unknown> | null = null;
 let mockAgentsMap: Record<string, any> | undefined;
-let mockAssistantMap: Record<string, any> | undefined;
 
 jest.mock('@react-spring/web', () => ({
   easings: {
@@ -33,7 +32,6 @@ jest.mock(
 jest.mock('~/Providers', () => ({
   useChatContext: () => ({ conversation: mockConversation }),
   useAgentsMapContext: () => mockAgentsMap,
-  useAssistantsMapContext: () => mockAssistantMap,
 }));
 
 jest.mock('~/data-provider', () => ({
@@ -67,23 +65,16 @@ jest.mock('~/utils', () => ({
   getEntity: ({
     endpoint,
     agentsMap,
-    assistantMap,
     agent_id,
-    assistant_id,
   }: {
     endpoint: string;
     agentsMap?: Record<string, any>;
-    assistantMap?: Record<string, any>;
     agent_id?: string;
-    assistant_id?: string;
   }) => {
     if (endpoint === 'agents' && agent_id != null) {
-      return { entity: agentsMap?.[agent_id], isAgent: true, isAssistant: false };
+      return { entity: agentsMap?.[agent_id], isAgent: true };
     }
-    if (assistant_id != null) {
-      return { entity: assistantMap?.[assistant_id], isAgent: false, isAssistant: true };
-    }
-    return { entity: undefined, isAgent: false, isAssistant: false };
+    return { entity: undefined, isAgent: false };
   },
 }));
 
@@ -93,7 +84,6 @@ describe('Landing agent contact', () => {
   beforeEach(() => {
     mockConversation = null;
     mockAgentsMap = undefined;
-    mockAssistantMap = undefined;
   });
 
   it('shows contact for the selected agent from agentsMap', () => {
@@ -133,24 +123,5 @@ describe('Landing agent contact', () => {
 
     expect(screen.queryByText('Contact:')).not.toBeInTheDocument();
     expect(screen.queryByText('No contact available')).not.toBeInTheDocument();
-  });
-
-  it('does not show contact for assistants', () => {
-    mockConversation = {
-      endpoint: 'assistants',
-      assistant_id: 'assistant-1',
-    };
-    mockAssistantMap = {
-      'assistant-1': {
-        id: 'assistant-1',
-        name: 'Assistant',
-        description: 'Assistant description',
-      },
-    };
-
-    render(<Landing centerFormOnLanding={false} />);
-
-    expect(screen.getByText('Assistant')).toBeInTheDocument();
-    expect(screen.queryByText('Contact:')).not.toBeInTheDocument();
   });
 });

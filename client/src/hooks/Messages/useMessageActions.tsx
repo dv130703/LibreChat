@@ -7,12 +7,11 @@ import {
   isAgentsEndpoint,
   SearchResultData,
   toMinimalFeedback,
-  isAssistantsEndpoint,
   TUpdateFeedbackRequest,
 } from 'librechat-data-provider';
 import type { TMessageProps } from '~/common';
 import type { TMessageChatContext } from '~/common/types';
-import { useAssistantsMapContext, useAgentsMapContext } from '~/Providers';
+import { useAgentsMapContext } from '~/Providers';
 import useCopyToClipboard from './useCopyToClipboard';
 import { useAuthContext } from '~/hooks/AuthContext';
 import { useGetAddedConvo } from '~/hooks/Chat';
@@ -55,7 +54,6 @@ export default function useMessageActions(props: TMessageActions) {
   const getAddedConvo = useGetAddedConvo();
 
   const agentsMap = useAgentsMapContext();
-  const assistantMap = useAssistantsMapContext();
 
   const { text, content, messageId = null, isCreatedByUser } = message ?? {};
   const edit = useMemo(() => messageId === currentEditId, [messageId, currentEditId]);
@@ -76,17 +74,6 @@ export default function useMessageActions(props: TMessageActions) {
     (cancel?: boolean) => setCurrentEditId && setCurrentEditId(cancel === true ? -1 : messageId),
     [messageId, setCurrentEditId],
   );
-
-  const assistant = useMemo(() => {
-    if (!isAssistantsEndpoint(conversation?.endpoint)) {
-      return undefined;
-    }
-
-    const endpointKey = conversation?.endpoint ?? '';
-    const modelKey = message?.model ?? '';
-
-    return assistantMap?.[endpointKey] ? assistantMap[endpointKey][modelKey] : undefined;
-  }, [conversation?.endpoint, message?.model, assistantMap]);
 
   const agent = useMemo(() => {
     if (!isAgentsEndpoint(conversation?.endpoint)) {
@@ -128,12 +115,10 @@ export default function useMessageActions(props: TMessageActions) {
       return UsernameDisplay ? (user?.name ?? '') || user?.username : localize('com_user_message');
     } else if (agent) {
       return agent.name ?? 'Assistant';
-    } else if (assistant) {
-      return assistant.name ?? 'Assistant';
     } else {
       return message?.sender;
     }
-  }, [message, agent, assistant, UsernameDisplay, user, localize]);
+  }, [message, agent, UsernameDisplay, user, localize]);
 
   const feedbackMutation = useUpdateFeedbackMutation(
     conversation?.conversationId || '',
@@ -173,7 +158,6 @@ export default function useMessageActions(props: TMessageActions) {
     index,
     agent,
     feedback,
-    assistant,
     enterEdit,
     conversation,
     messageLabel,

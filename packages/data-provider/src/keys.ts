@@ -19,13 +19,6 @@ export enum QueryKeys {
   tokenCount = 'tokenCount',
   availablePlugins = 'availablePlugins',
   startupConfig = 'startupConfig',
-  /** @deprecated Assistants API (OpenAI/Azure) support was removed. Both keys
-   *  are still consumed - `assistants` by client/src/data-provider/Files/
-   *  mutations.ts, `assistant` by react-query-service.ts's
-   *  useRevokeUserKeyMutation/useRevokeAllUserKeysMutation - deferred to the
-   *  final cleanup phase alongside `isAssistantsEndpoint`. */
-  assistants = 'assistants',
-  assistant = 'assistant',
   agents = 'agents',
   agent = 'agent',
   files = 'files',
@@ -38,7 +31,6 @@ export enum QueryKeys {
   mcpAuthValues = 'mcpAuthValues',
   agentTools = 'agentTools',
   actions = 'actions',
-  assistantDocs = 'assistantDocs',
   agentDocs = 'agentDocs',
   fileDownload = 'fileDownload',
   filePreview = 'filePreview',

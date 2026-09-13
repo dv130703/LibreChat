@@ -3,7 +3,6 @@ import {
   EModelEndpoint,
   isAgentsEndpoint,
   isEphemeralAgentId,
-  isAssistantsEndpoint,
 } from 'librechat-data-provider';
 import type { TConversation, EndpointSchemaKey } from 'librechat-data-provider';
 import { clearModelForNonEphemeralAgent } from './endpoints';
@@ -60,13 +59,6 @@ const buildDefaultConvo = ({
     endpointType,
     endpoint,
   };
-
-  // Ensures assistant_id is always defined
-  const assistantId = convo?.assistant_id ?? conversation?.assistant_id ?? '';
-  const defaultAssistantId = lastConversationSetup?.assistant_id ?? '';
-  if (isAssistantsEndpoint(endpoint) && !defaultAssistantId && assistantId) {
-    defaultConvo.assistant_id = assistantId;
-  }
 
   // Ensures agent_id is always defined
   const agentId = convo?.agent_id ?? '';

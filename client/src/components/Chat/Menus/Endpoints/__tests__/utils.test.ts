@@ -20,7 +20,7 @@ const disabledAgentsEndpoint: Endpoint = {
 
 describe('model selector utilities', () => {
   it('matches endpoint search aliases', () => {
-    const results = filterItems([agentsEndpoint], 'marketplace', undefined, undefined);
+    const results = filterItems([agentsEndpoint], 'marketplace', undefined);
     expect(results).toEqual([agentsEndpoint]);
   });
 
@@ -35,12 +35,12 @@ describe('model selector utilities', () => {
       return key;
     }) as ReturnType<typeof useLocalize>;
 
-    const results = filterItems([agentsEndpoint], 'tienda', undefined, undefined, localize);
+    const results = filterItems([agentsEndpoint], 'tienda', undefined, localize);
     expect(results).toEqual([agentsEndpoint]);
   });
 
   it('does not match agents when there are no selectable agent options', () => {
-    const results = filterItems([disabledAgentsEndpoint], 'my agents', undefined, undefined);
+    const results = filterItems([disabledAgentsEndpoint], 'my agents', undefined);
     expect(results).toEqual([]);
   });
 });

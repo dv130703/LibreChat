@@ -1,18 +1,13 @@
 import { useMemo, useCallback } from 'react';
 import { Constants } from 'librechat-data-provider';
-import {
-  useGetAssistantDocsQuery,
-  useGetEndpointsQuery,
-  useGetStartupConfig,
-} from '~/data-provider';
-import { useChatContext, useAgentsMapContext, useAssistantsMapContext } from '~/Providers';
+import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
+import { useChatContext, useAgentsMapContext } from '~/Providers';
 import { getIconEndpoint, getEntity, getModelSpec } from '~/utils';
 import { useSubmitMessage } from '~/hooks';
 
 const ConversationStarters = () => {
   const { conversation } = useChatContext();
   const agentsMap = useAgentsMapContext();
-  const assistantMap = useAssistantsMapContext();
   const { data: endpointsConfig } = useGetEndpointsQuery();
   const { data: startupConfig } = useGetStartupConfig();
 
@@ -25,16 +20,10 @@ const ConversationStarters = () => {
     });
   }, [conversation?.endpoint, conversation?.iconURL, endpointsConfig]);
 
-  const { data: documentsMap = new Map() } = useGetAssistantDocsQuery(endpointType, {
-    select: (data) => new Map(data.map((dbA) => [dbA.assistant_id, dbA])),
-  });
-
-  const { entity, isAgent } = getEntity({
+  const { entity } = getEntity({
     endpoint: endpointType,
     agentsMap,
-    assistantMap,
     agent_id: conversation?.agent_id,
-    assistant_id: conversation?.assistant_id,
   });
 
   const modelSpec = useMemo(
@@ -51,12 +40,8 @@ const ConversationStarters = () => {
       return modelSpec.conversation_starters;
     }
 
-    if (isAgent) {
-      return [];
-    }
-
-    return documentsMap.get(entity?.id ?? '')?.conversation_starters ?? [];
-  }, [documentsMap, isAgent, entity, modelSpec]);
+    return [];
+  }, [entity, modelSpec]);
 
   const { submitMessage } = useSubmitMessage();
   const sendConversationStarter = useCallback(
