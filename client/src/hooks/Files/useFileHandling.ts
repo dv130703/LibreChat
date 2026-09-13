@@ -214,9 +214,19 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
 
   const uploadFile = useUploadFileMutation(
     {
-      onSuccess: (data) => {
+      onSuccess: (data, body) => {
         clearUploadTimer(data.temp_file_id);
         console.log('upload success', data);
+        /** File Search stays on for the rest of the conversation/session once any
+         *  upload actually succeeds as a file_search resource - set here (on success)
+         *  rather than optimistically at file-select time, so a failed upload never
+         *  leaves it dangling "on" with nothing searchable behind it. */
+        if (body.get('tool_resource') === EToolResources.file_search) {
+          setEphemeralAgent((prev) => ({
+            ...prev,
+            [EToolResources.file_search]: true,
+          }));
+        }
         if (agent_id) {
           queryClient.refetchQueries([QueryKeys.agent, agent_id]);
           return;

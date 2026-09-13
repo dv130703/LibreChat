@@ -49,11 +49,10 @@ describe('getViableUploadOptions', () => {
       ]);
     });
 
-    it('offers every destination for a PDF', () => {
+    it('routes a PDF to file_search + code, not context (file_search wins over context when both are viable)', () => {
       expect(getViableUploadOptions([file('application/pdf', 'doc.pdf')], baseCtx())).toEqual([
         EToolResources.file_search,
         EToolResources.execute_code,
-        EToolResources.context,
       ]);
     });
 
@@ -73,6 +72,43 @@ describe('getViableUploadOptions', () => {
     it('returns nothing for a spreadsheet when no capabilities are enabled', () => {
       const ctx = baseCtx({ fileSearchEnabled: false, codeEnabled: false, contextEnabled: false });
       expect(getViableUploadOptions([file(XLSX, 'report.xlsx')], ctx)).toEqual([]);
+    });
+  });
+
+  describe('file_search wins over plain provider attachment (never both)', () => {
+    /** Regression: a custom/OpenAI-compatible endpoint (how Ollama is typically
+     *  configured) is treated as document-attach-capable by `isProviderAttachType`,
+     *  even though most such providers can't actually read a PDF natively. Before
+     *  this fix, a document type with file_search enabled offered BOTH `undefined`
+     *  and `file_search` as viable destinations; a caller with no tie-breaker (the
+     *  drag/paste "which destination?" modal) could let the user pick plain
+     *  attachment, silently storing the file with no content ever reaching the
+     *  model - see the "does not see any PDF attached" bug this covers. */
+    it('offers only file_search for a PDF on a document-supported custom endpoint, not plain attachment', () => {
+      const ctx = baseCtx({
+        provider: 'custom',
+        endpoint: 'Ollama',
+        endpointType: 'custom',
+        codeEnabled: false,
+        contextEnabled: false,
+      });
+      expect(getViableUploadOptions([file('application/pdf', 'doc.pdf')], ctx)).toEqual([
+        EToolResources.file_search,
+      ]);
+    });
+
+    it('still falls back to plain attachment for a PDF when file_search is unavailable', () => {
+      const ctx = baseCtx({
+        provider: 'custom',
+        endpoint: 'Ollama',
+        endpointType: 'custom',
+        fileSearchEnabled: false,
+        codeEnabled: false,
+        contextEnabled: false,
+      });
+      expect(getViableUploadOptions([file('application/pdf', 'doc.pdf')], ctx)).toEqual([
+        undefined,
+      ]);
     });
   });
 

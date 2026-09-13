@@ -17,7 +17,6 @@ import { BadgeRowProvider } from '~/Providers';
 import ToolsDropdown from './ToolsDropdown';
 import { useChatBadges } from '~/hooks';
 import ToolDialogs from './ToolDialogs';
-import FileSearch from './FileSearch';
 import Artifacts from './Artifacts';
 import MCPSelect from './MCPSelect';
 import WebSearch from './WebSearch';
@@ -374,7 +373,6 @@ function BadgeRow({
           <>
             <WebSearch />
             <CodeInterpreter />
-            <FileSearch />
             <Skills />
             <Memory />
             <Artifacts />

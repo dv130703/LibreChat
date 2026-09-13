@@ -27,46 +27,50 @@ describe('useAgentToolPermissions', () => {
   });
 
   describe('Ephemeral Agent Scenarios (without ephemeralAgent parameter)', () => {
-    it('should return false for all tools when agentId is null and no ephemeralAgent provided', () => {
+    /** file_search has no manual pre-toggle for ephemeral agents (it's auto-enabled by
+     *  a successful file_search upload itself), so it reads as allowed even with no
+     *  ephemeralAgent state at all - unlike execute_code, which stays gated on its
+     *  own still-existing toggle (the Code Interpreter badge). */
+    it('allows file_search but not execute_code when agentId is null and no ephemeralAgent provided', () => {
       (useAgentsMapContext as jest.Mock).mockReturnValue({});
       (useGetAgentByIdQuery as jest.Mock).mockReturnValue({ data: undefined });
 
       const { result } = renderHook(() => useAgentToolPermissions(null));
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
       expect(result.current.tools).toBeUndefined();
     });
 
-    it('should return false for all tools when agentId is undefined and no ephemeralAgent provided', () => {
+    it('allows file_search but not execute_code when agentId is undefined and no ephemeralAgent provided', () => {
       (useAgentsMapContext as jest.Mock).mockReturnValue({});
       (useGetAgentByIdQuery as jest.Mock).mockReturnValue({ data: undefined });
 
       const { result } = renderHook(() => useAgentToolPermissions(undefined));
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
       expect(result.current.tools).toBeUndefined();
     });
 
-    it('should return false for all tools when agentId is empty string and no ephemeralAgent provided', () => {
+    it('allows file_search but not execute_code when agentId is empty string and no ephemeralAgent provided', () => {
       (useAgentsMapContext as jest.Mock).mockReturnValue({});
       (useGetAgentByIdQuery as jest.Mock).mockReturnValue({ data: undefined });
 
       const { result } = renderHook(() => useAgentToolPermissions(''));
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
       expect(result.current.tools).toBeUndefined();
     });
 
-    it('should return false for all tools when agentId is EPHEMERAL_AGENT_ID and no ephemeralAgent provided', () => {
+    it('allows file_search but not execute_code when agentId is EPHEMERAL_AGENT_ID and no ephemeralAgent provided', () => {
       (useAgentsMapContext as jest.Mock).mockReturnValue({});
       (useGetAgentByIdQuery as jest.Mock).mockReturnValue({ data: undefined });
 
       const { result } = renderHook(() => useAgentToolPermissions(Constants.EPHEMERAL_AGENT_ID));
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
       expect(result.current.tools).toBeUndefined();
     });
@@ -98,7 +102,7 @@ describe('useAgentToolPermissions', () => {
 
       const { result } = renderHook(() => useAgentToolPermissions(undefined, ephemeralAgent));
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(true);
       expect(result.current.tools).toBeUndefined();
     });
@@ -119,7 +123,7 @@ describe('useAgentToolPermissions', () => {
       expect(result.current.tools).toBeUndefined();
     });
 
-    it('should return false for tools when ephemeralAgent has them explicitly disabled', () => {
+    it('allows file_search even when ephemeralAgent explicitly disables it, but respects execute_code being disabled', () => {
       (useAgentsMapContext as jest.Mock).mockReturnValue({});
       (useGetAgentByIdQuery as jest.Mock).mockReturnValue({ data: undefined });
 
@@ -132,7 +136,7 @@ describe('useAgentToolPermissions', () => {
         useAgentToolPermissions(Constants.EPHEMERAL_AGENT_ID, ephemeralAgent),
       );
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
       expect(result.current.tools).toBeUndefined();
     });
@@ -477,9 +481,10 @@ describe('useAgentToolPermissions', () => {
       expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(true);
 
-      // Switch to ephemeral without tools
+      // Switch to ephemeral without tools - file_search still reads as allowed (no
+      // manual pre-toggle to check); execute_code has its own toggle and drops back
       rerender({ agentId: null, ephemeralAgent: undefined });
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
     });
   });
@@ -505,8 +510,8 @@ describe('useAgentToolPermissions', () => {
     });
 
     it('should handle whitespace-only agentId as ephemeral', () => {
-      // Note: Based on the current implementation, only empty string is treated as ephemeral
-      // Whitespace-only strings would be treated as regular agent IDs
+      // A whitespace-only ID doesn't start with "agent_", so isEphemeralAgentId
+      // treats it as ephemeral, same as null/undefined/empty string.
       const whitespaceId = '   ';
 
       (useAgentsMapContext as jest.Mock).mockReturnValue({});
@@ -514,8 +519,7 @@ describe('useAgentToolPermissions', () => {
 
       const { result } = renderHook(() => useAgentToolPermissions(whitespaceId));
 
-      // Whitespace ID is not considered ephemeral in current implementation
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
     });
 

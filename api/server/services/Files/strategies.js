@@ -19,6 +19,7 @@ const {
   getCloudFrontDownloadURL,
   deleteFileFromCloudFront,
   uploadGoogleVertexMistralOCR,
+  uploadOllamaVisionOCR,
 } = require('@librechat/api');
 const {
   getFirebaseURL,
@@ -262,6 +263,26 @@ const vertexMistralOCRStrategy = () => ({
   handleFileUpload: uploadGoogleVertexMistralOCR,
 });
 
+const ollamaVisionOCRStrategy = () => ({
+  /** @type {typeof saveFileFromURL | null} */
+  saveURL: null,
+  /** @type {typeof getLocalFileURL | null} */
+  getFileURL: null,
+  /** @type {typeof saveLocalBuffer | null} */
+  saveBuffer: null,
+  /** @type {typeof processLocalAvatar | null} */
+  processAvatar: null,
+  /** @type {typeof uploadLocalImage | null} */
+  handleImageUpload: null,
+  /** @type {typeof prepareImagesLocal | null} */
+  prepareImagePayload: null,
+  /** @type {typeof deleteLocalFile | null} */
+  deleteFile: null,
+  /** @type {typeof getLocalFileStream | null} */
+  getDownloadStream: null,
+  handleFileUpload: uploadOllamaVisionOCR,
+});
+
 const documentParserStrategy = () => ({
   /** @type {typeof saveFileFromURL | null} */
   saveURL: null,
@@ -304,6 +325,8 @@ const getStrategyFunctions = (fileSource) => {
     return azureMistralOCRStrategy();
   } else if (fileSource === FileSources.vertexai_mistral_ocr) {
     return vertexMistralOCRStrategy();
+  } else if (fileSource === FileSources.ollama_vision) {
+    return ollamaVisionOCRStrategy();
   } else if (fileSource === FileSources.document_parser) {
     return documentParserStrategy();
   } else if (fileSource === FileSources.text) {

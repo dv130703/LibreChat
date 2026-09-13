@@ -9,6 +9,7 @@ export * from './probeAudioChannels';
 export * from './filter';
 export * from './mistral/crud';
 export * from './ocr';
+export * from './ollamaVision/crud';
 export * from './parse';
 export * from './rag';
 export * from './retention';

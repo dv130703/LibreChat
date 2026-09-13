@@ -1303,6 +1303,7 @@ export enum OCRStrategy {
   CUSTOM_OCR = 'custom_ocr',
   AZURE_MISTRAL_OCR = 'azure_mistral_ocr',
   VERTEXAI_MISTRAL_OCR = 'vertexai_mistral_ocr',
+  OLLAMA_VISION = 'ollama_vision',
   DOCUMENT_PARSER = 'document_parser',
 }
 
@@ -1423,6 +1424,12 @@ export const ocrSchema = z.object({
   apiKey: z.string().optional().default('${OCR_API_KEY}'),
   baseURL: z.string().optional().default('${OCR_BASEURL}'),
   strategy: z.nativeEnum(OCRStrategy).default(OCRStrategy.MISTRAL_OCR),
+  /** Model name for `strategy: ollama_vision` - must be a vision-capable model
+   * already pulled on the target Ollama instance (e.g. `llama3.2-vision`, `qwen2.5vl`). */
+  ollamaVisionModel: z.string().optional(),
+  /** Overrides `OLLAMA_BASE_URL` for `strategy: ollama_vision` only; falls back to that
+   * env var, then `http://localhost:11434`, when unset. */
+  ollamaBaseURL: z.string().optional(),
 });
 
 export const balanceSchema = z.object({

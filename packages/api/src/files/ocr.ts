@@ -11,5 +11,7 @@ export function loadOCRConfig(config?: TCustomConfig['ocr']): TCustomConfig['ocr
     baseURL,
     mistralModel,
     strategy: config?.strategy ?? OCRStrategy.MISTRAL_OCR,
+    ollamaVisionModel: config?.ollamaVisionModel,
+    ollamaBaseURL: config?.ollamaBaseURL,
   };
 }
