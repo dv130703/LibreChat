@@ -2136,6 +2136,8 @@
   "com_ui_transcript_model": "Transcribed with {{0}}",
   "com_ui_transcript_retranscribe": "Re-transcribe",
   "com_ui_transcript_retranscribe_hint": "Run transcription again on the original audio. Replaces this transcript and clears its corrections.",
+  "com_ui_transcript_retranscribing_queued": "Re-transcription queued… this transcript will update automatically once it starts.",
+  "com_ui_transcript_retranscribing_in_progress": "Re-transcribing… this may take a while for a long recording. The transcript below will update automatically when it's ready.",
   "com_ui_transcribe_stop_cancel": "Cancel transcription",
   "com_ui_transcribe_cancel_error": "Couldn't cancel the transcription. Please try again.",
   "com_ui_transcript_line_count_one": "{{count}} line",

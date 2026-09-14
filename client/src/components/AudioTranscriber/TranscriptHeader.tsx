@@ -65,6 +65,17 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 const WAVEFORM_BARS = 120;
 const FLAT_PEAKS = new Array(WAVEFORM_BARS).fill(0.12);
 
+/** Above this length, `computeAudioPeaks` is skipped entirely in favor of the
+ *  flat placeholder. `decodeAudioData` has no partial/streaming mode - it
+ *  always materializes the *entire* recording as raw Float32 PCM in memory
+ *  (roughly 1.4MB per minute of mono 44.1kHz audio, double that for stereo
+ *  or 48kHz) just to downsample it into 120 bars. A 3-hour recording was
+ *  observed reliably crashing the tab outright ("Aw, Snap!") this way - a
+ *  purely decorative waveform has no business risking that. 30 minutes is a
+ *  conservative cutoff: even at 48kHz stereo (the worst realistic case) that
+ *  caps the decoded buffer around ~700MB rather than several gigabytes. */
+const MAX_WAVEFORM_DURATION_SECONDS = 30 * 60;
+
 function formatPlayerTime(totalSeconds: number): string {
   if (!Number.isFinite(totalSeconds)) {
     return '0:00';
@@ -207,10 +218,18 @@ function TranscriptHeader({
   // once per file and cached here for the life of this component. Falls back
   // to a flat line (rather than nothing) if decoding fails - some browsers or
   // formats don't support `decodeAudioData`, and seeking still has to work.
+  // Gated on `duration` (from `handleLoadedMetadata`, a cheap `preload="metadata"`
+  // read - no full download needed just to know how long the file is) so a
+  // recording past `MAX_WAVEFORM_DURATION_SECONDS` skips the decode
+  // altogether instead of ever attempting it.
   useEffect(() => {
     let cancelled = false;
     setPeaks(null);
-    if (!audioSrc) {
+    if (!audioSrc || !duration) {
+      return;
+    }
+    if (duration > MAX_WAVEFORM_DURATION_SECONDS) {
+      setPeaks(FLAT_PEAKS);
       return;
     }
     computeAudioPeaks(audioSrc, WAVEFORM_BARS)
@@ -227,7 +246,7 @@ function TranscriptHeader({
     return () => {
       cancelled = true;
     };
-  }, [audioSrc]);
+  }, [audioSrc, duration]);
 
   // A freshly loaded element starts at 1x/full volume/unmuted, so whatever
   // this player is currently showing has to be pushed back onto it - otherwise

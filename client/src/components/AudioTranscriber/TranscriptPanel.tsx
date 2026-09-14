@@ -2,7 +2,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as Popover from '@radix-ui/react-popover';
 import { useRecoilState } from 'recoil';
+import { useQueryClient } from '@tanstack/react-query';
 import { isEqual } from 'lodash';
+import { List, CellMeasurer, CellMeasurerCache } from 'react-virtualized';
 import {
   X,
   Mic,
@@ -15,6 +17,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { Spinner, usePopoverZIndex } from '@librechat/client';
+import type { Index, ListRowProps } from 'react-virtualized';
 import {
   useGetConvoIdQuery,
   useFilePreview,
@@ -31,13 +34,13 @@ import {
   useRetryTranscriptionMutation,
   useTranscribeAudioTokenQuery,
 } from '~/data-provider';
-import { parseTranscriptText, sourceFileIdFromDerived } from 'librechat-data-provider';
+import { QueryKeys, parseTranscriptText, sourceFileIdFromDerived } from 'librechat-data-provider';
 import type { InterviewTranscriptForm, MeetingMinutesForm } from 'librechat-data-provider';
-import { useAuthContext, useLocalize } from '~/hooks';
+import { useAuthContext, useLocalize, useElementSize } from '~/hooks';
 import { usePendingUploadRetry } from '~/hooks/AudioTranscriber/usePendingUploadRetry';
 import { cn } from '~/utils';
 import store from '~/store';
-import type { MouseEvent } from 'react';
+import type { MouseEvent, CSSProperties, FC } from 'react';
 import type { ParsedLine, SpeakerOption } from './types';
 import { useChatHeaderSlot } from './panelHostContext';
 import type { PanelComponentProps } from './panelHostContext';
@@ -56,6 +59,12 @@ import SpeakerRosterModal from './SpeakerRosterModal';
 /** How far short of a bounded-playback boundary to stop, so the next line
  *  never gets a chance to register as "currently playing." */
 const BOUNDARY_BACKOFF_SECONDS = 0.15;
+
+/** The rows region's own padding (Tailwind `p-3`, 12px). The virtualized
+ *  `List` needs explicit pixel dimensions rather than CSS - passing its
+ *  measured container's full size would render past that padding on the
+ *  right/bottom, so this is subtracted from `listWidth`/`listHeight` first. */
+const ROWS_CONTAINER_PADDING = 12;
 
 /** Rough, fixed estimate of the row context menu's own footprint rather than
  *  measuring it - two lines of text, so the size barely varies, and this
@@ -323,6 +332,66 @@ function TranscriptPanelHeader({
   );
 }
 
+type MeasuredCellParent = {
+  invalidateCellSizeAfterRender?: (cell: { columnIndex: number; rowIndex: number }) => void;
+  recomputeGridSize?: (cell: { columnIndex: number; rowIndex: number }) => void;
+};
+
+/** Virtualized row wrapper that reports its measured height back to the cache
+ *  (same pattern as `routes/Search.tsx`'s own `MeasuredRow`). A `ResizeObserver`
+ *  re-measures whenever a row's actual height drifts from what's cached -
+ *  typing grows/shrinks the textarea, the inline time editor or "add speaker"
+ *  field swaps in, the playback progress bar appears - so the virtualized
+ *  list's layout never goes stale. Compares `offsetHeight` (not
+ *  `contentRect`, which excludes padding) since that's what `CellMeasurer`
+ *  itself measures and what's stored in the cache. */
+const MeasuredRow: FC<{
+  cache: CellMeasurerCache;
+  rowKey: string;
+  parent: MeasuredCellParent;
+  index: number;
+  style: CSSProperties;
+  onResize: (index: number) => void;
+  children: React.ReactNode;
+}> = memo(({ cache, rowKey, parent, index, style, onResize, children }) => {
+  const nodeRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = nodeRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      const height = el.offsetHeight;
+      if (height > 0 && Math.abs(height - cache.getHeight(index, 0)) > 1) {
+        onResize(index);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [cache, index, onResize]);
+
+  return (
+    <CellMeasurer cache={cache} columnIndex={0} key={rowKey} parent={parent} rowIndex={index}>
+      {({ registerChild }) => (
+        <div
+          ref={(node: HTMLDivElement | null) => {
+            nodeRef.current = node;
+            (registerChild as (instance: Element | null) => void)(node);
+          }}
+          style={style}
+          className="pb-1"
+          data-testid="transcript-row-measured"
+        >
+          {children}
+        </div>
+      )}
+    </CellMeasurer>
+  );
+});
+
+MeasuredRow.displayName = 'TranscriptMeasuredRow';
+
 /**
  * Memoized: `ChatPanelHost` re-rendering (e.g. from `useChatHeaderSlot`'s own
  * `setHeaderSlot` call below settling) must not cascade into re-executing
@@ -397,6 +466,29 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
    *  "poll status, then refetch the conversation once it says ready" pair. */
   const jobStatus = record?.jobStatus ?? undefined;
   const retryTranscription = useRetryTranscriptionMutation();
+  const queryClient = useQueryClient();
+
+  /** A re-transcription replaces this same `transcriptFileId`'s content and
+   *  wipes its corrections server-side (see `useRetranscribeAudioMutation`),
+   *  but neither `useFilePreview` nor `useTranscriptCorrectionsQuery` are
+   *  watching `jobStatus` themselves - once it lands back on a terminal
+   *  status, both of their caches are stale by construction, and each of
+   *  their own polls has typically already gone dormant (a `status: 'ready'`
+   *  preview stops polling; corrections have no poll at all). Detected here
+   *  as an edge into a terminal status from a non-terminal one, rather than
+   *  just "status is terminal," so this doesn't re-fire on every render
+   *  once settled. */
+  const previousJobStatusRef = useRef(jobStatus);
+  useEffect(() => {
+    const wasInProgress =
+      previousJobStatusRef.current === 'queued' || previousJobStatusRef.current === 'transcribing';
+    const isNowTerminal = jobStatus === 'ready' || jobStatus === 'failed';
+    if (wasInProgress && isNowTerminal && transcriptFileId) {
+      queryClient.invalidateQueries([QueryKeys.filePreview, transcriptFileId]);
+      queryClient.invalidateQueries([QueryKeys.transcriptCorrections, transcriptFileId]);
+    }
+    previousJobStatusRef.current = jobStatus;
+  }, [jobStatus, transcriptFileId, queryClient]);
 
   /** Syncs the URL to this panel's real target so a reload or a shared link
    *  lands on the same recording.
@@ -680,7 +772,26 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
   const handleAudioMounted = useCallback(() => {
     setAudioElVersion((version) => version + 1);
   }, []);
-  const rowsContainerRef = useRef<HTMLDivElement>(null);
+  /** Measures the scrollable rows region for the virtualized `List` below,
+   *  which needs explicit pixel dimensions rather than CSS flex sizing.
+   *  `rowsContainerRef` doubles as the query root for the width-change
+   *  textarea rewrap pass further down - `useElementSize`'s own ref is a
+   *  callback, not an object, so it's composed with a plain ref here for
+   *  `.current` access. */
+  const rowsContainerRef = useRef<HTMLDivElement | null>(null);
+  const {
+    ref: rowsSizeRef,
+    width: listWidth,
+    height: listHeight,
+  } = useElementSize<HTMLDivElement>();
+  const setRowsContainerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      rowsContainerRef.current = node;
+      rowsSizeRef(node);
+    },
+    [rowsSizeRef],
+  );
+  const listRef = useRef<List>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -802,28 +913,19 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
   const followedLineIndexRef = useRef(followedLineIndex);
   followedLineIndexRef.current = followedLineIndex;
 
-  useEffect(() => {
-    if (followedLineIndex < 0) {
-      return;
-    }
-    const container = rowsContainerRef.current;
-    const row = document.querySelector(`[data-line-index="${followedLineIndex}"]`);
-    if (!container || !row) {
-      return;
-    }
-    // Only follow the playhead when it's actually leaving view - re-centering
-    // on every single line, including ones already comfortably on screen,
-    // would yank whatever's under the mouse (often the play/pause button just
-    // clicked) away on every line change, forcing a hunt for it mid-playback.
-    const containerRect = container.getBoundingClientRect();
-    const rowRect = row.getBoundingClientRect();
-    const isFullyVisible =
-      rowRect.top >= containerRect.top && rowRect.bottom <= containerRect.bottom;
-    if (isFullyVisible) {
-      return;
-    }
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [followedLineIndex]);
+  /** `displayLines` array position of the followed line, since the
+   *  virtualized `List` below addresses rows by position, not `lineIndex`
+   *  identity. Fed to `List`'s `scrollToIndex` (default `scrollToAlignment`
+   *  is `"auto"`: it only scrolls the minimum amount needed to bring the row
+   *  into view, and does nothing when the row's already visible - the same
+   *  "don't yank whatever's under the mouse on every line change" behavior
+   *  the old manual `getBoundingClientRect` check existed for, now handled
+   *  by react-virtualized itself since it only re-applies scrollToIndex when
+   *  the value actually changes, not on every render. */
+  const followedRowPosition = useMemo(
+    () => displayLines.findIndex((line) => line.lineIndex === followedLineIndex),
+    [displayLines, followedLineIndex],
+  );
 
   const startBoundaryWatch = useCallback(() => {
     if (boundaryRafRef.current != null) {
@@ -1152,32 +1254,85 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
   } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
-  // One observer for the whole list, not one per row (that was tried - see
-  // the note in TranscriptRow - and thrashes badly on a real transcript):
-  // resetting every row's height before reading any of them, and reading
-  // every scrollHeight before writing any of them, means the browser only
-  // has to recompute layout once per resize tick instead of once per row.
+  /** Keys cached row heights to `lineIndex` (a stable identity), not array
+   *  position, via a ref - same reasoning as `displayLinesRef` above: an
+   *  insert/reassign gives `displayLines` a new reference (and can shift
+   *  every later row's position) without any of those rows' actual rendered
+   *  heights having changed, so their cached measurements must survive that
+   *  reshuffle rather than being keyed off (and invalidated by) position. */
+  const cache = useMemo(
+    () =>
+      new CellMeasurerCache({
+        fixedWidth: true,
+        defaultHeight: 82,
+        keyMapper: (index) => displayLinesRef.current[index]?.lineIndex ?? `row-${index}`,
+      }),
+    [],
+  );
+
+  const recompute = useCallback(
+    (clear: boolean) => {
+      if (clear) {
+        cache.clearAll();
+      }
+      listRef.current?.recomputeRowHeights(0);
+    },
+    [cache],
+  );
+
+  /** A row's own rendered height drifted from what's cached (text typed,
+   *  the inline time editor or "add speaker" field toggling, the playback
+   *  progress bar appearing) - see `MeasuredRow`'s `ResizeObserver`. */
+  const invalidateRowHeight = useCallback(
+    (index: number) => {
+      cache.clear(index, 0);
+      listRef.current?.recomputeRowHeights(index);
+    },
+    [cache],
+  );
+
+  /** `fixedWidth` cache keys heights by row, not width - a panel resize (the
+   *  split pane dragged, or the window itself) rewraps every visible line's
+   *  text, so their cached heights need dropping too. Re-measuring currently-
+   *  mounted textareas for the new width happens first (one reset-all/read-
+   *  all/write-all pass, same technique this used before virtualization -
+   *  now scoped to only the handful of rows actually rendered instead of the
+   *  entire transcript) so `CellMeasurer` reads the already-correct height
+   *  rather than one still wrapped for the old width. */
+  const measuredWidthRef = useRef(0);
   useEffect(() => {
-    const container = rowsContainerRef.current;
-    if (!container) {
+    if (listWidth === 0 || listWidth === measuredWidthRef.current) {
       return;
     }
-    const resizeAllRows = () => {
-      const textareas = Array.from(container.querySelectorAll('textarea'));
-      textareas.forEach((el) => {
-        el.style.height = 'auto';
-      });
-      const targetHeights = textareas.map(
-        (el) => el.scrollHeight + (el.offsetHeight - el.clientHeight),
-      );
-      textareas.forEach((el, index) => {
-        el.style.height = `${targetHeights[index]}px`;
-      });
-    };
-    const observer = new ResizeObserver(resizeAllRows);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, []);
+    measuredWidthRef.current = listWidth;
+    const container = rowsContainerRef.current;
+    const frameId = requestAnimationFrame(() => {
+      if (container) {
+        const textareas = Array.from(container.querySelectorAll('textarea'));
+        textareas.forEach((el) => {
+          el.style.height = 'auto';
+        });
+        const targetHeights = textareas.map(
+          (el) => el.scrollHeight + (el.offsetHeight - el.clientHeight),
+        );
+        textareas.forEach((el, index) => {
+          el.style.height = `${targetHeights[index]}px`;
+        });
+      }
+      recompute(true);
+    });
+    return () => cancelAnimationFrame(frameId);
+  }, [listWidth, recompute]);
+
+  /** The Grid re-derives row offsets on its own when `rowCount` changes, but
+   *  not on a same-count reorder - a defensive recompute either way, same as
+   *  `Conversations.tsx`'s identical effect on its own flattened item count. */
+  useEffect(() => {
+    const frameId = requestAnimationFrame(() => {
+      listRef.current?.recomputeRowHeights(0);
+    });
+    return () => cancelAnimationFrame(frameId);
+  }, [displayLines.length]);
 
   const handleRowContextMenu = useCallback((event: MouseEvent<HTMLDivElement>) => {
     const rowEl = (event.target as HTMLElement).closest<HTMLElement>('[data-line-index]');
@@ -1322,9 +1477,100 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
     [sourceFileId, conversation?.title, speakerOptions, exportMeetingMinutesDocx],
   );
 
+  const getRowHeight = useCallback(({ index }: Index) => cache.getHeight(index, 0), [cache]);
+
+  const rowRenderer = useCallback(
+    ({ index, parent, style }: ListRowProps) => {
+      const line = displayLines[index];
+      if (!line) {
+        return null;
+      }
+      const isDraft = draftsRef.current.some((draft) => draft.lineIndex === line.lineIndex);
+      const isPreviewing = isPlaying && followedLineIndex === line.lineIndex;
+      const duration =
+        line.endSeconds != null && line.seconds != null ? line.endSeconds - line.seconds : 0;
+      const playbackRatio =
+        isPreviewing && duration > 0 && line.seconds != null
+          ? Math.min(1, Math.max(0, (currentTime - line.seconds) / duration))
+          : 0;
+      // react-virtualized's `key` is positional; key by `lineIndex` instead so
+      // React reconciles a row by the line it shows, not the slot it sits in -
+      // otherwise inserting a draft above shifts every later row's position,
+      // and a position-keyed row would keep its *previous* neighbor's
+      // in-progress edit (its text buffer, an open time editor) instead of
+      // that state resetting for the line now occupying the slot.
+      const rowKey = String(line.lineIndex);
+      return (
+        <MeasuredRow
+          key={rowKey}
+          cache={cache}
+          rowKey={rowKey}
+          parent={parent as MeasuredCellParent}
+          index={index}
+          style={style}
+          onResize={invalidateRowHeight}
+        >
+          <TranscriptRow
+            line={line}
+            isFollowed={followedLineIndex === line.lineIndex}
+            isPreviewing={isPreviewing}
+            playbackRatio={playbackRatio}
+            canPlay={audioSrc != null}
+            speakerOptions={speakerOptions}
+            isAddingSpeaker={addingSpeakerForLine === line.lineIndex}
+            newSpeakerName={newSpeakerName}
+            onPlaySegment={togglePlaySegment}
+            onTextCommit={onTextCommit}
+            onTimeCommit={onTimeCommit}
+            onSpeakerSelect={reassignSegment}
+            onStartAddSpeaker={startAddSpeaker}
+            onNewSpeakerNameChange={setNewSpeakerName}
+            onCommitNewSpeaker={commitNewSpeaker}
+            onCancelNewSpeaker={cancelNewSpeaker}
+            isDraft={isDraft}
+            onDeleteDraft={isDraft ? () => deleteDraft(line.lineIndex) : undefined}
+          />
+        </MeasuredRow>
+      );
+    },
+    [
+      displayLines,
+      cache,
+      invalidateRowHeight,
+      followedLineIndex,
+      isPlaying,
+      currentTime,
+      audioSrc,
+      speakerOptions,
+      addingSpeakerForLine,
+      newSpeakerName,
+      togglePlaySegment,
+      onTextCommit,
+      onTimeCommit,
+      reassignSegment,
+      startAddSpeaker,
+      commitNewSpeaker,
+      cancelNewSpeaker,
+      deleteDraft,
+    ],
+  );
+
   const isLoading =
     !isConvoError &&
     (isConvoLoading || isTranscriptsLoading || (transcriptFileId != null && isPreviewLoading));
+
+  /** A transcript already exists (the retranscribe button only renders once
+   *  `lines.length > 0` anyway) and the job is non-terminal - can only mean a
+   *  re-transcription is running, since first-time transcription's own
+   *  queued/transcribing state is the full-pane placeholder further down,
+   *  gated on `transcriptFileId == null`. Drives both the header button's
+   *  busy state and the in-place banner below, so there's continuous
+   *  feedback for the job's whole duration - not just the moment or two the
+   *  kick-off request itself is in flight (`retranscribe.isLoading`), which
+   *  is all the button reflected before and reverted long before the job
+   *  actually finished. */
+  const isRetranscribingJob =
+    lines.length > 0 && (jobStatus === 'queued' || jobStatus === 'transcribing');
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -1332,7 +1578,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
         lineCount={lines.length}
         speakerCount={uniqueSpeakerIds.length}
         modelUsed={conversation?.transcription?.model}
-        isRetranscribing={retranscribe.isLoading}
+        isRetranscribing={retranscribe.isLoading || isRetranscribingJob}
         isExportingInterview={exportInterviewDocx.isLoading}
         isExportingMeetingMinutes={exportMeetingMinutesDocx.isLoading}
         showActions={!isLoading && lines.length > 0}
@@ -1343,9 +1589,19 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
         onRetranscribe={() => setRetranscribeOpen(true)}
         onClose={onClose}
       />
+      {isRetranscribingJob && (
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-border-medium bg-blue-500/5 px-4 py-2 text-xs font-medium text-text-secondary dark:bg-blue-400/10">
+          <Spinner className="h-3.5 w-3.5 shrink-0 text-blue-600 dark:text-blue-400" />
+          <span>
+            {jobStatus === 'transcribing'
+              ? localize('com_ui_transcript_retranscribing_in_progress')
+              : localize('com_ui_transcript_retranscribing_queued')}
+          </span>
+        </div>
+      )}
       <div
-        ref={rowsContainerRef}
-        className="flex-1 overflow-y-auto p-3"
+        ref={setRowsContainerRef}
+        className="flex-1 overflow-hidden p-3"
         onContextMenu={(event) => {
           // Suppressed everywhere in this pane, not just on rows - a native
           // menu with nothing this feature can act on (cut/paste/inspect)
@@ -1481,47 +1737,22 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
             </div>
           )}
         {!isLoading && lines.length > 0 && (
-          <>
-            <div className="flex flex-col gap-1">
-              {displayLines.map((line) => {
-                const isDraft = draftsRef.current.some(
-                  (draft) => draft.lineIndex === line.lineIndex,
-                );
-                const isPreviewing = isPlaying && followedLineIndex === line.lineIndex;
-                const duration =
-                  line.endSeconds != null && line.seconds != null
-                    ? line.endSeconds - line.seconds
-                    : 0;
-                const playbackRatio =
-                  isPreviewing && duration > 0 && line.seconds != null
-                    ? Math.min(1, Math.max(0, (currentTime - line.seconds) / duration))
-                    : 0;
-                return (
-                  <TranscriptRow
-                    key={line.lineIndex}
-                    line={line}
-                    isFollowed={followedLineIndex === line.lineIndex}
-                    isPreviewing={isPreviewing}
-                    playbackRatio={playbackRatio}
-                    canPlay={audioSrc != null}
-                    speakerOptions={speakerOptions}
-                    isAddingSpeaker={addingSpeakerForLine === line.lineIndex}
-                    newSpeakerName={newSpeakerName}
-                    onPlaySegment={togglePlaySegment}
-                    onTextCommit={onTextCommit}
-                    onTimeCommit={onTimeCommit}
-                    onSpeakerSelect={reassignSegment}
-                    onStartAddSpeaker={startAddSpeaker}
-                    onNewSpeakerNameChange={setNewSpeakerName}
-                    onCommitNewSpeaker={commitNewSpeaker}
-                    onCancelNewSpeaker={cancelNewSpeaker}
-                    isDraft={isDraft}
-                    onDeleteDraft={isDraft ? () => deleteDraft(line.lineIndex) : undefined}
-                  />
-                );
-              })}
-            </div>
-          </>
+          <List
+            ref={listRef}
+            width={Math.max(0, listWidth - ROWS_CONTAINER_PADDING * 2)}
+            height={Math.max(0, listHeight - ROWS_CONTAINER_PADDING * 2)}
+            deferredMeasurementCache={cache}
+            rowCount={displayLines.length}
+            rowHeight={getRowHeight}
+            rowRenderer={rowRenderer}
+            overscanRowCount={10}
+            scrollToIndex={followedRowPosition >= 0 ? followedRowPosition : undefined}
+            scrollToAlignment="auto"
+            aria-label={localize('com_ui_transcript')}
+            className="outline-none"
+            style={{ outline: 'none' }}
+            tabIndex={-1}
+          />
         )}
       </div>
       {contextMenu &&

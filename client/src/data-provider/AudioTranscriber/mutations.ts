@@ -77,13 +77,23 @@ export const useRetranscribeAudioMutation = (): UseMutationResult<
     mutationFn: ({ sourceFileId, options }: RetranscribeAudioVariables) =>
       dataService.retranscribeAudio(sourceFileId, options),
     onSuccess: (data) => {
-      // The status poll needs to restart from `queued` for this source file,
-      // and once the job finishes, the transcript's own preview/corrections
-      // caches are guaranteed stale (content wholly replaced, corrections
-      // cleared server-side). There's no new transcriptFileId to target
-      // directly here (this response doesn't carry one - Phase 2), so the
-      // conversation invalidation covers the transcript-panel's own refetch
-      // once `useTranscribeStatusQuery` reports `ready`.
+      // `TranscriptPanel` reads job status from `useConversationTranscriptsQuery`
+      // (`[QueryKeys.conversationTranscripts, conversationId]`), not from the
+      // plain conversation document - without this invalidation, its cached
+      // `jobStatus`/`unqueryableReason` stay whatever they were before this
+      // request (already a terminal, queryable state from the prior run), so
+      // its own `refetchInterval` - which only polls while some entry reads
+      // `unqueryableReason: 'in_progress'` - never resumes, and the panel has
+      // no way to learn a job is running again: no button busy-state, no
+      // progress banner, indefinitely, until something unrelated happens to
+      // refetch it (e.g. the panel being closed and reopened). This is the
+      // fix for that: refetching immediately picks up the fresh `queued`
+      // status this request just caused, which re-arms the 3s poll on its own
+      // from there until the job reaches a terminal state again.
+      queryClient.invalidateQueries([QueryKeys.conversationTranscripts, data.conversationId]);
+      // Also still invalidated in case anything else reads transcription
+      // metadata off the bare conversation document (e.g. `previousOptions` in
+      // `TranscriptPanel`, sourced from `conversation?.transcription`).
       queryClient.invalidateQueries([QueryKeys.conversation, data.conversationId]);
       // Not `[QueryKeys.transcribeStatus, variables.sourceFileId]` - that
       // exact key only matches a query polling *this one* file in isolation.
