@@ -268,9 +268,7 @@ export function getReasoningKey(
   }
 
   let reasoningKey: AgentReasoningKey = 'reasoning_content';
-  if (provider === Providers.GOOGLE) {
-    reasoningKey = 'reasoning';
-  } else if (
+  if (
     includesOpenRouter(llmConfig.configuration?.baseURL) ||
     includesOpenRouter(agentEndpoint)
   ) {
@@ -293,7 +291,7 @@ export function getReasoningKey(
     reasoningKey = 'reasoning';
   } else if (
     (llmConfig as OpenAIClientOptions).useResponsesApi === true &&
-    (provider === Providers.OPENAI || provider === Providers.AZURE)
+    provider === Providers.OPENAI
   ) {
     reasoningKey = 'reasoning';
   }

@@ -45,6 +45,18 @@ const NEVER_INLINED_CONTEXTS: ReadonlySet<string> = new Set([
   FileContext.transcript_diarization_detail,
 ]);
 
+/**
+ * Whether a file's full text must never be pasted into a prompt unmediated -
+ * see `NEVER_INLINED_CONTEXTS`. Exported so every place that can inject raw
+ * file text (`extractFileContext` below, and `createContextHandlers.js`'s
+ * `RAG_USE_FULL_CONTEXT` path, which fetches a file's whole reassembled text
+ * as a fallback to chunk-level search) shares one rule instead of each
+ * keeping its own copy that can drift.
+ */
+export function isNeverInlinedFileContext(context: string | null | undefined): boolean {
+  return context != null && NEVER_INLINED_CONTEXTS.has(context);
+}
+
 export async function extractFileContext({
   attachments,
   req,
@@ -69,7 +81,7 @@ export async function extractFileContext({
   let resultText = '';
 
   for (const file of attachments) {
-    if (file.context != null && NEVER_INLINED_CONTEXTS.has(file.context)) {
+    if (isNeverInlinedFileContext(file.context)) {
       logger.debug(
         `[extractFileContext] Skipping ${file.context} file "${file.filename}" - retrieved via file_search, never inlined.`,
       );

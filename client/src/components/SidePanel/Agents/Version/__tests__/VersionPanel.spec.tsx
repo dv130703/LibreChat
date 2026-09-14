@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/extend-expect';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import VersionContent from '../VersionContent';
 import VersionPanel from '../VersionPanel';
 import { Panel } from '~/common/types';
@@ -101,13 +101,10 @@ describe('VersionPanel', () => {
     });
   });
 
-  test('renders panel UI and handles navigation', () => {
+  test('renders panel UI', () => {
     render(<VersionPanel />);
     expect(screen.getByText('com_ui_agent_version_history')).toBeInTheDocument();
     expect(screen.getByTestId('version-content')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button'));
-    expect(mockSetActivePanel).toHaveBeenCalledWith(Panel.builder);
   });
 
   test('VersionContent receives correct props', () => {

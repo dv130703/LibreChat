@@ -3,6 +3,8 @@ import { useRecoilValue } from 'recoil';
 import {
   Tools,
   Constants,
+  Permissions,
+  PermissionTypes,
   mergeFileConfig,
   getEndpointFileConfig,
   defaultAgentCapabilities,
@@ -16,6 +18,7 @@ import { ephemeralAgentByConvoId } from '~/store';
 import { getViableUploadOptions } from '~/utils';
 import { useDragDropContext } from '~/Providers';
 import { isEphemeralAgent } from '~/common';
+import useHasAccess from '~/hooks/Roles/useHasAccess';
 
 /**
  * Resolves which upload destinations a file set can be routed to, plus whether uploads are
@@ -32,6 +35,12 @@ export default function useUploadOptions() {
   const { provider, tools } = useAgentToolPermissions(agentId, ephemeralAgent);
   const { data: fileConfig = null } = useGetFileConfig({
     select: (data) => mergeFileConfig(data),
+  });
+  /** Per-user role ACL for File Search - `capabilities.fileSearchEnabled` alone is
+   *  only the admin-configured capability gate, not the per-user permission. */
+  const canUseFileSearch = useHasAccess({
+    permissionType: PermissionTypes.FILE_SEARCH,
+    permission: Permissions.USE,
   });
 
   /**
@@ -53,7 +62,7 @@ export default function useUploadOptions() {
         endpoint,
         endpointType,
         useResponsesApi,
-        fileSearchEnabled: capabilities.fileSearchEnabled,
+        fileSearchEnabled: capabilities.fileSearchEnabled && canUseFileSearch,
         codeEnabled: capabilities.codeEnabled,
         contextEnabled: capabilities.contextEnabled,
         fileSearchAllowedByAgent,
@@ -69,6 +78,7 @@ export default function useUploadOptions() {
       capabilities.fileSearchEnabled,
       capabilities.codeEnabled,
       capabilities.contextEnabled,
+      canUseFileSearch,
       fileSearchAllowedByAgent,
       codeAllowedByAgent,
       fileConfig,

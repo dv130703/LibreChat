@@ -1,4 +1,4 @@
-import { useRef, useMemo, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 import { useDrop } from 'react-dnd';
 import { useRecoilValue } from 'recoil';
 import { useToastContext } from '@librechat/client';
@@ -8,7 +8,6 @@ import {
   QueryKeys,
   mergeFileConfig,
   resolveEndpointType,
-  isAssistantsEndpoint,
   getEndpointFileConfig,
 } from 'librechat-data-provider';
 import type { DropTargetMonitor } from 'react-dnd';
@@ -25,11 +24,6 @@ export default function useDragHelpers() {
   const localize = useLocalize();
   const conversation = useRecoilValue(store.conversationByIndex(0)) || undefined;
 
-  const isAssistants = useMemo(
-    () => isAssistantsEndpoint(conversation?.endpoint),
-    [conversation?.endpoint],
-  );
-
   const { getOptions } = useUploadOptions();
   const routeFiles = useFileUploadRouter();
   const { openModal } = useUploadModalContext();
@@ -39,13 +33,11 @@ export default function useDragHelpers() {
   const getOptionsRef = useRef(getOptions);
   const routeFilesRef = useRef(routeFiles);
   const openModalRef = useRef(openModal);
-  const isAssistantsRef = useRef(isAssistants);
 
   conversationRef.current = conversation;
   getOptionsRef.current = getOptions;
   routeFilesRef.current = routeFiles;
   openModalRef.current = openModal;
-  isAssistantsRef.current = isAssistants;
 
   const handleDrop = useCallback(
     (item: { files: File[] }) => {
@@ -72,12 +64,6 @@ export default function useDragHelpers() {
           showToast({ message: localize('com_ui_attach_error_disabled'), status: 'error' });
           return;
         }
-      }
-
-      /** Assistants do not use the upload-option flow */
-      if (isAssistantsRef.current) {
-        routeFilesRef.current(item.files);
-        return;
       }
 
       const options = getOptionsRef.current(item.files);

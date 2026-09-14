@@ -20,35 +20,40 @@ describe('useAgentToolPermissions', () => {
   });
 
   describe('when no agentId is provided', () => {
-    it('should disallow all tools for ephemeral agents when no ephemeralAgent settings provided', () => {
+    /** File Search has no manual pre-toggle for ephemeral agents to check - it's
+     *  auto-enabled by a successful file_search upload itself, so it must read as
+     *  allowed here even before that flag is ever set (otherwise no upload could
+     *  ever be the one that sets it). execute_code has a real, separate toggle
+     *  (the Code Interpreter badge) and stays gated on the ephemeralAgent flag. */
+    it('allows file_search but disallows execute_code for ephemeral agents when no ephemeralAgent settings provided', () => {
       mockUseAgentsMapContext.mockReturnValue({});
       mockUseGetAgentByIdQuery.mockReturnValue({ data: undefined });
 
       const { result } = renderHook(() => useAgentToolPermissions(null));
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
       expect(result.current.tools).toBeUndefined();
     });
 
-    it('should disallow all tools when agentId is undefined and no ephemeralAgent settings', () => {
+    it('allows file_search but disallows execute_code when agentId is undefined and no ephemeralAgent settings', () => {
       mockUseAgentsMapContext.mockReturnValue({});
       mockUseGetAgentByIdQuery.mockReturnValue({ data: undefined });
 
       const { result } = renderHook(() => useAgentToolPermissions(undefined));
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
       expect(result.current.tools).toBeUndefined();
     });
 
-    it('should disallow all tools when agentId is empty string and no ephemeralAgent settings', () => {
+    it('allows file_search but disallows execute_code when agentId is empty string and no ephemeralAgent settings', () => {
       mockUseAgentsMapContext.mockReturnValue({});
       mockUseGetAgentByIdQuery.mockReturnValue({ data: undefined });
 
       const { result } = renderHook(() => useAgentToolPermissions(''));
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(false);
       expect(result.current.tools).toBeUndefined();
     });
@@ -179,7 +184,7 @@ describe('useAgentToolPermissions', () => {
   });
 
   describe('when ephemeralAgent settings are provided', () => {
-    it('should allow file_search when ephemeralAgent has file_search enabled', () => {
+    it('stays allowed for file_search regardless of ephemeralAgent.file_search (no manual pre-toggle to check)', () => {
       mockUseAgentsMapContext.mockReturnValue({});
       mockUseGetAgentByIdQuery.mockReturnValue({ data: undefined });
 
@@ -204,7 +209,7 @@ describe('useAgentToolPermissions', () => {
 
       const { result } = renderHook(() => useAgentToolPermissions(undefined, ephemeralAgent));
 
-      expect(result.current.fileSearchAllowedByAgent).toBe(false);
+      expect(result.current.fileSearchAllowedByAgent).toBe(true);
       expect(result.current.codeAllowedByAgent).toBe(true);
       expect(result.current.tools).toBeUndefined();
     });

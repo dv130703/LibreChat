@@ -5,12 +5,11 @@
  * @module packages/api/src/tools/definitions
  */
 
-import { Providers } from '@librechat/agents';
 import { Constants, isActionTool } from 'librechat-data-provider';
 import type { LCToolRegistry, JsonSchemaType, LCTool, GenericTool } from '@librechat/agents';
 import type { AgentToolOptions } from 'librechat-data-provider';
 import type { ToolDefinition } from './classification';
-import { resolveJsonSchemaRefs, normalizeJsonSchema, sanitizeGeminiSchema } from '~/mcp/zod';
+import { resolveJsonSchemaRefs, normalizeJsonSchema } from '~/mcp/zod';
 import { buildToolClassification } from './classification';
 import { getToolDefinition } from './registry/definitions';
 import { toolkitExpansion } from './toolkits/mapping';
@@ -40,8 +39,6 @@ export interface LoadToolDefinitionsParams {
   programmaticToolsEnabled?: boolean;
   /** Whether code execution is enabled and requested by this agent */
   codeExecutionEnabled?: boolean;
-  /** Agent provider — Gemini/Vertex tool schemas get union-flattened for compatibility */
-  provider?: Providers;
 }
 
 export interface ActionToolDefinition {
@@ -86,19 +83,14 @@ export async function loadToolDefinitions(
     deferredToolsEnabled = false,
     programmaticToolsEnabled = false,
     codeExecutionEnabled = false,
-    provider,
   } = params;
   const { getOrFetchMCPServerTools, isBuiltInTool, getActionToolDefinitions } = deps;
 
-  const isGoogle = provider === Providers.GOOGLE || provider === Providers.VERTEXAI;
-
-  /** Normalizes MCP tool params, additionally union-flattening for the Gemini/Vertex path. */
   const buildMcpParameters = (mcpParams?: JsonSchemaType): JsonSchemaType | undefined => {
     if (!mcpParams) {
       return undefined;
     }
-    const normalized = normalizeJsonSchema(resolveJsonSchemaRefs(mcpParams));
-    return isGoogle ? sanitizeGeminiSchema(normalized) : normalized;
+    return normalizeJsonSchema(resolveJsonSchemaRefs(mcpParams));
   };
 
   const emptyResult: LoadToolDefinitionsResult = {
@@ -212,7 +204,6 @@ export async function loadToolDefinitions(
   const classificationResult = await buildToolClassification({
     userId,
     agentId,
-    provider,
     loadedTools,
     deferredToolsEnabled,
     programmaticToolsEnabled,

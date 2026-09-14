@@ -89,7 +89,6 @@ class TranscriptionDiagnostics(BaseModel):
     # dropped from the prompt itself.
     context_terms_used: int = 0
     context_terms_dropped: list[str] = Field(default_factory=list)
-    context_terms_harvested: list[str] = Field(default_factory=list)
     context_prompt_tokens: int = 0
     context_prompt_budget: int = 0
     # Term count in the combined hotwords string actually sent to the decoder
@@ -97,8 +96,7 @@ class TranscriptionDiagnostics(BaseModel):
     # WhisperXService._build_request_hotwords. 0 means neither had anything
     # to contribute this run.
     hotwords_term_count: int = 0
-    speaker_min_requested: int | None = None
-    speaker_max_requested: int | None = None
+    speaker_count_requested: int | None = None
     speaker_hint_applied: bool = False
     speaker_hint_adjustments: list[str] = Field(default_factory=list)
     speaker_count_within_hint: bool | None = None
@@ -190,7 +188,7 @@ class TranscriptionConfig(BaseModel):
     default_clustering_threshold: float | None = None
     hotwords_configured: bool
     suggested_terms: list[str] = Field(default_factory=list)
-    # Same number `resolve_speaker_bounds` clamps to server-side - served so
+    # Same number `resolve_speaker_count` clamps to server-side - served so
     # the client can stop the user at the real limit instead of silently
     # clamping a larger number after the fact.
     max_speakers: int

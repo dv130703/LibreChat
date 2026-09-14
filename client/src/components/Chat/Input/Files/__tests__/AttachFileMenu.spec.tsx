@@ -2,7 +2,7 @@ import React from 'react';
 import { RecoilRoot } from 'recoil';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { EModelEndpoint, EToolResources, Providers } from 'librechat-data-provider';
+import { EModelEndpoint, EToolResources, Providers, mergeFileConfig } from 'librechat-data-provider';
 import AttachFileMenu from '../AttachFileMenu';
 
 jest.mock('~/hooks', () => ({
@@ -11,6 +11,7 @@ jest.mock('~/hooks', () => ({
   useGetAgentsConfig: jest.fn(),
   useFileHandlingNoChatContext: jest.fn(),
   useLocalize: jest.fn(),
+  useHasAccess: jest.fn(),
 }));
 
 jest.mock('~/hooks/Files/useSharePointFileHandling', () => ({
@@ -21,6 +22,7 @@ jest.mock('~/hooks/Files/useSharePointFileHandling', () => ({
 
 jest.mock('~/data-provider', () => ({
   useGetStartupConfig: jest.fn(),
+  useGetFileConfig: jest.fn(),
 }));
 
 jest.mock('~/components/SharePoint', () => ({
@@ -83,6 +85,7 @@ const mockUseAgentCapabilities = jest.requireMock('~/hooks').useAgentCapabilitie
 const mockUseGetAgentsConfig = jest.requireMock('~/hooks').useGetAgentsConfig;
 const mockUseFileHandlingNoChatContext = jest.requireMock('~/hooks').useFileHandlingNoChatContext;
 const mockUseLocalize = jest.requireMock('~/hooks').useLocalize;
+const mockUseHasAccess = jest.requireMock('~/hooks').useHasAccess;
 const mockUseSharePointFileHandling = jest.requireMock(
   '~/hooks/Files/useSharePointFileHandling',
 ).default;
@@ -90,6 +93,7 @@ const mockUseSharePointFileHandlingNoChatContext = jest.requireMock(
   '~/hooks/Files/useSharePointFileHandling',
 ).useSharePointFileHandlingNoChatContext;
 const mockUseGetStartupConfig = jest.requireMock('~/data-provider').useGetStartupConfig;
+const mockUseGetFileConfig = jest.requireMock('~/data-provider').useGetFileConfig;
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -125,6 +129,10 @@ function setupMocks(overrides: { provider?: string } = {}) {
     codeAllowedByAgent: false,
     provider: overrides.provider ?? undefined,
   });
+  // Per-user role ACL for File Search - defaults to allowed; tests that need to
+  // simulate a restricted role override this after calling setupMocks().
+  mockUseHasAccess.mockReturnValue(true);
+  mockUseGetFileConfig.mockReturnValue({ data: mergeFileConfig(undefined) });
 }
 
 function renderMenu(props: Record<string, unknown> = {}) {
@@ -283,7 +291,12 @@ describe('AttachFileMenu', () => {
   });
 
   describe('Agent Capabilities', () => {
-    it('shows OCR Text option when context is enabled', () => {
+    /** "Upload as Text" is the sole surviving upload-type menu item beyond
+     *  "Attach Files"/"Upload to Code Environment" - the old standalone
+     *  "Upload for File Search" item was removed and its capability gate
+     *  merged onto this one; both entry points now auto-resolve to
+     *  `file_search` for eligible files (see `handleFileChange` below). */
+    it('does NOT show Upload as Text when only context is enabled (File Search unavailable)', () => {
       setupMocks();
       mockUseAgentCapabilities.mockReturnValue({
         contextEnabled: true,
@@ -292,10 +305,10 @@ describe('AttachFileMenu', () => {
       });
       renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
-      expect(screen.getByText('Upload as Text')).toBeInTheDocument();
+      expect(screen.queryByText('Upload as Text')).not.toBeInTheDocument();
     });
 
-    it('shows File Search option when enabled and allowed by agent', () => {
+    it('shows Upload as Text when File Search is enabled and allowed by agent', () => {
       setupMocks();
       mockUseAgentCapabilities.mockReturnValue({
         contextEnabled: false,
@@ -309,10 +322,10 @@ describe('AttachFileMenu', () => {
       });
       renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
-      expect(screen.getByText('Upload for File Search')).toBeInTheDocument();
+      expect(screen.getByText('Upload as Text')).toBeInTheDocument();
     });
 
-    it('does NOT show File Search when enabled but not allowed by agent', () => {
+    it('does NOT show Upload as Text when File Search is enabled but not allowed by agent', () => {
       setupMocks();
       mockUseAgentCapabilities.mockReturnValue({
         contextEnabled: false,
@@ -321,7 +334,25 @@ describe('AttachFileMenu', () => {
       });
       renderMenu({ endpointType: EModelEndpoint.custom });
       openMenu();
-      expect(screen.queryByText('Upload for File Search')).not.toBeInTheDocument();
+      expect(screen.queryByText('Upload as Text')).not.toBeInTheDocument();
+    });
+
+    it('does NOT show Upload as Text when the user lacks the File Search role permission', () => {
+      setupMocks();
+      mockUseAgentCapabilities.mockReturnValue({
+        contextEnabled: false,
+        fileSearchEnabled: true,
+        codeEnabled: false,
+      });
+      mockUseAgentToolPermissions.mockReturnValue({
+        fileSearchAllowedByAgent: true,
+        codeAllowedByAgent: false,
+        provider: undefined,
+      });
+      mockUseHasAccess.mockReturnValue(false);
+      renderMenu({ endpointType: EModelEndpoint.custom });
+      openMenu();
+      expect(screen.queryByText('Upload as Text')).not.toBeInTheDocument();
     });
 
     it('shows Code Files option when enabled and allowed by agent', () => {
@@ -341,7 +372,7 @@ describe('AttachFileMenu', () => {
       expect(screen.getByText('Upload to Code Environment')).toBeInTheDocument();
     });
 
-    it('shows all options when all capabilities are enabled', () => {
+    it('shows all viable options when all capabilities are enabled', () => {
       setupMocks();
       mockUseAgentCapabilities.mockReturnValue({
         contextEnabled: true,
@@ -357,11 +388,10 @@ describe('AttachFileMenu', () => {
       openMenu();
       expect(screen.getByText('Attach Files')).toBeInTheDocument();
       expect(screen.getByText('Upload as Text')).toBeInTheDocument();
-      expect(screen.getByText('Upload for File Search')).toBeInTheDocument();
       expect(screen.getByText('Upload to Code Environment')).toBeInTheDocument();
     });
 
-    it('passes File Search resource when the file input changes before React state commits', () => {
+    it('auto-resolves and passes the File Search resource once the real file list is known', () => {
       setupMocks();
       const handleFileChange = jest.fn();
       mockUseFileHandlingNoChatContext.mockReturnValue({ handleFileChange });
@@ -376,8 +406,52 @@ describe('AttachFileMenu', () => {
         provider: undefined,
       });
       const originalClick = HTMLInputElement.prototype.click;
-      const file = new File(['data'], 'sheet.xlsx', {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      const file = new File(['data'], 'doc.docx', {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+
+      HTMLInputElement.prototype.click = function click() {
+        Object.defineProperty(this, 'files', {
+          configurable: true,
+          value: [file],
+        });
+        fireEvent.change(this);
+      };
+
+      try {
+        renderMenu({ endpointType: EModelEndpoint.custom });
+        openMenu();
+        fireEvent.click(screen.getByText('Upload as Text'));
+      } finally {
+        HTMLInputElement.prototype.click = originalClick;
+      }
+
+      expect(handleFileChange).toHaveBeenCalledTimes(1);
+      expect(handleFileChange).toHaveBeenNthCalledWith(
+        1,
+        expect.any(Object),
+        EToolResources.file_search,
+      );
+    });
+
+    it('does not auto-resolve to File Search when the user lacks the role permission', () => {
+      setupMocks();
+      const handleFileChange = jest.fn();
+      mockUseFileHandlingNoChatContext.mockReturnValue({ handleFileChange });
+      mockUseAgentCapabilities.mockReturnValue({
+        contextEnabled: false,
+        fileSearchEnabled: true,
+        codeEnabled: false,
+      });
+      mockUseAgentToolPermissions.mockReturnValue({
+        fileSearchAllowedByAgent: true,
+        codeAllowedByAgent: false,
+        provider: undefined,
+      });
+      mockUseHasAccess.mockReturnValue(false);
+      const originalClick = HTMLInputElement.prototype.click;
+      const file = new File(['data'], 'doc.docx', {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       });
 
       HTMLInputElement.prototype.click = function click() {
@@ -392,17 +466,13 @@ describe('AttachFileMenu', () => {
         renderMenu({ endpointType: EModelEndpoint.custom });
         openMenu();
         fireEvent.click(screen.getByText('Attach Files'));
-        fireEvent.click(screen.getByText('Upload for File Search'));
       } finally {
         HTMLInputElement.prototype.click = originalClick;
       }
 
-      expect(handleFileChange).toHaveBeenNthCalledWith(1, expect.any(Object), undefined);
-      expect(handleFileChange).toHaveBeenNthCalledWith(
-        2,
-        expect.any(Object),
-        EToolResources.file_search,
-      );
+      expect(handleFileChange).toHaveBeenCalledTimes(1);
+      const [, toolResource] = handleFileChange.mock.calls[0];
+      expect(toolResource).not.toBe(EToolResources.file_search);
     });
   });
 

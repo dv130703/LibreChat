@@ -5,7 +5,6 @@ import type { UseMutationResult } from '@tanstack/react-query';
 import '@testing-library/jest-dom/extend-expect';
 import type { Agent, AgentCreateParams, TUser, ResourceType } from 'librechat-data-provider';
 import AgentFooter from '../AgentFooter';
-import { Panel } from '~/common';
 
 const mockUseWatch = jest.fn();
 const mockUseAuthContext = jest.fn();
@@ -126,16 +125,6 @@ jest.mock('~/data-provider', () => ({
   useUpdateAgentMutation: () => createBaseMutation<Agent, any>(),
 }));
 
-jest.mock('../Advanced/AdvancedButton', () => ({
-  __esModule: true,
-  default: jest.fn(() => <div data-testid="advanced-button" />),
-}));
-
-jest.mock('../Version/VersionButton', () => ({
-  __esModule: true,
-  default: jest.fn(() => <div data-testid="version-button" />),
-}));
-
 jest.mock('../AdminSettings', () => ({
   __esModule: true,
   default: jest.fn(() => <div data-testid="admin-settings" />),
@@ -212,16 +201,13 @@ describe('AgentFooter', () => {
     roles: {},
   });
 
-  const mockSetActivePanel = jest.fn();
   const mockSetCurrentAgentId = jest.fn();
   const mockCreateMutation = createBaseMutation<Agent, AgentCreateParams>();
   const mockUpdateMutation = createBaseMutation<Agent, any>();
 
   const defaultProps = {
-    activePanel: Panel.builder,
     createMutation: mockCreateMutation,
     updateMutation: mockUpdateMutation,
-    setActivePanel: mockSetActivePanel,
     setCurrentAgentId: mockSetCurrentAgentId,
     isAvatarUploading: false,
   };
@@ -266,8 +252,6 @@ describe('AgentFooter', () => {
     test('renders with standard components based on default state', () => {
       const { container } = render(<AgentFooter {...defaultProps} />);
       expect(screen.getByText('Save')).toBeInTheDocument();
-      expect(screen.getByTestId('advanced-button')).toBeInTheDocument();
-      expect(screen.getByTestId('version-button')).toBeInTheDocument();
       expect(screen.getByTestId('delete-button')).toBeInTheDocument();
       expect(screen.queryByTestId('admin-settings')).not.toBeInTheDocument();
       expect(screen.getByTestId('grant-access-dialog-agent')).toBeInTheDocument();
@@ -310,12 +294,6 @@ describe('AgentFooter', () => {
   });
 
   describe('Conditional Rendering', () => {
-    test('adjusts UI based on activePanel state', () => {
-      render(<AgentFooter {...defaultProps} activePanel={Panel.advanced} />);
-      expect(screen.queryByTestId('advanced-button')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('version-button')).not.toBeInTheDocument();
-    });
-
     test('adjusts UI based on agent ID existence', () => {
       mockUseWatch.mockImplementation(({ name }) => {
         if (name === 'agent') {
@@ -336,7 +314,6 @@ describe('AgentFooter', () => {
 
       render(<AgentFooter {...defaultProps} />);
       expect(screen.getByText('Create')).toBeInTheDocument();
-      expect(screen.queryByTestId('version-button')).not.toBeInTheDocument();
       expect(screen.queryByTestId('delete-button')).not.toBeInTheDocument();
       expect(screen.queryByTestId('grant-access-dialog-agent')).not.toBeInTheDocument();
       expect(screen.queryByTestId('duplicate-agent')).not.toBeInTheDocument();

@@ -8,9 +8,8 @@ import {
   PermissionTypes,
   isAgentsEndpoint,
   getConfigDefaults,
-  isAssistantsEndpoint,
 } from 'librechat-data-provider';
-import type { TAssistantsMap, TEndpointsConfig } from 'librechat-data-provider';
+import type { TEndpointsConfig } from 'librechat-data-provider';
 import type { MentionOption } from '~/common';
 import {
   useGetPresetsQuery,
@@ -26,13 +25,7 @@ import { filterMentionEndpoints } from './mentions';
 
 const defaultInterface = getConfigDefaults().interface;
 
-export default function useMentions({
-  assistantMap,
-  includeAssistants,
-}: {
-  assistantMap: TAssistantsMap;
-  includeAssistants: boolean;
-}) {
+export default function useMentions() {
   const hasAgentAccess = useHasAccess({
     permissionType: PermissionTypes.AGENTS,
     permission: Permissions.USE,
@@ -59,10 +52,9 @@ export default function useMentions({
       filterMentionEndpoints({
         endpoints,
         includedEndpoints,
-        includeAssistants,
         hasAgentAccess,
       }),
-    [endpoints, includedEndpoints, includeAssistants, hasAgentAccess],
+    [endpoints, includedEndpoints, hasAgentAccess],
   );
   const validEndpointSet = useMemo(() => new Set(validEndpoints), [validEndpoints]);
   const agentQueryEnabled =
@@ -115,7 +107,7 @@ export default function useMentions({
 
   const options: MentionOption[] = useMemo(() => {
     const modelOptions = validEndpoints.flatMap((endpoint) => {
-      if (isAssistantsEndpoint(endpoint) || isAgentsEndpoint(endpoint)) {
+      if (isAgentsEndpoint(endpoint)) {
         return [];
       }
 
@@ -179,7 +171,6 @@ export default function useMentions({
           containerClassName: 'shadow-stroke overflow-hidden rounded-full',
           endpointsConfig: endpointsConfig,
           context: 'menu-item',
-          assistantMap,
           size: 20,
         }),
         type: 'preset' as const,
@@ -192,12 +183,10 @@ export default function useMentions({
     presets,
     modelSpecs,
     agentsList,
-    assistantMap,
     modelsConfig,
     validEndpoints,
     validEndpointSet,
     endpointsConfig,
-    includeAssistants,
     interfaceConfig.presets,
     interfaceConfig.modelSelect,
   ]);

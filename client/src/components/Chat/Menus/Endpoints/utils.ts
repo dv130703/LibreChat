@@ -1,12 +1,7 @@
 import React from 'react';
 import { Bot } from 'lucide-react';
-import { isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
-import type {
-  TModelSpec,
-  TAgentsMap,
-  TAssistantsMap,
-  TEndpointsConfig,
-} from 'librechat-data-provider';
+import { isAgentsEndpoint } from 'librechat-data-provider';
+import type { TModelSpec, TAgentsMap, TEndpointsConfig } from 'librechat-data-provider';
 import type { useLocalize } from '~/hooks';
 import SpecIcon from '~/components/Chat/Menus/Endpoints/components/SpecIcon';
 import { Endpoint, SelectedValues } from '~/common';
@@ -25,7 +20,6 @@ export function filterItems<
   items: T[],
   searchValue: string,
   agentsMap: TAgentsMap | undefined,
-  assistantsMap: TAssistantsMap | undefined,
   localize?: ReturnType<typeof useLocalize>,
 ): T[] | null {
   const searchTermLower = searchValue.trim().toLowerCase();
@@ -64,15 +58,6 @@ export function filterItems<
           return typeof agentName === 'string' && agentName.toLowerCase().includes(searchTermLower);
         }
 
-        if (isAssistantsEndpoint(item.value) && assistantsMap) {
-          const endpoint = item.value ?? '';
-          const assistant = assistantsMap[endpoint][modelId.name];
-          if (assistant && typeof assistant.name === 'string') {
-            return assistant.name.toLowerCase().includes(searchTermLower);
-          }
-          return false;
-        }
-
         return false;
       });
     }
@@ -93,7 +78,6 @@ export function filterModels(
   models: string[],
   searchValue: string,
   agentsMap: TAgentsMap | undefined,
-  assistantsMap: TAssistantsMap | undefined,
 ): string[] {
   const searchTermLower = searchValue.trim().toLowerCase();
   if (!searchTermLower) {
@@ -105,14 +89,6 @@ export function filterModels(
 
     if (isAgentsEndpoint(endpoint.value) && agentsMap && agentsMap[modelId]) {
       modelName = agentsMap[modelId]?.name || modelId;
-    } else if (
-      isAssistantsEndpoint(endpoint.value) &&
-      assistantsMap &&
-      assistantsMap[endpoint.value]
-    ) {
-      const assistant = assistantsMap[endpoint.value][modelId];
-      modelName =
-        typeof assistant.name === 'string' && assistant.name ? (assistant.name as string) : modelId;
     }
 
     return modelName.toLowerCase().includes(searchTermLower);
@@ -216,14 +192,6 @@ export const getDisplayValue = ({
     } else if (isAgentsEndpoint(endpoint.value) && agentsMap) {
       const agent = agentsMap[selectedValues.model];
       return agent?.name || selectedValues.model;
-    }
-
-    if (
-      isAssistantsEndpoint(endpoint.value) &&
-      endpoint.assistantNames &&
-      endpoint.assistantNames[selectedValues.model]
-    ) {
-      return endpoint.assistantNames[selectedValues.model];
     }
 
     return selectedValues.model;

@@ -93,12 +93,10 @@ function buildTranscriptionMeta(options, result) {
     requestedModel: result.diagnostics?.model_requested ?? undefined,
     language: result.language,
     diarize: options.diarize,
-    minSpeakers: options.minSpeakers,
-    maxSpeakers: options.maxSpeakers,
+    speakerCount: options.speakerCount,
     clusteringThreshold: options.clusteringThreshold,
     includeTimestamps: options.includeTimestamps,
     contextTerms: options.contextTerms,
-    context: options.context,
     // The resolved value the decoder ran under, not the request's - the caller
     // may have left it unset and taken the deployment default.
     suppressNumerals: result.diagnostics?.suppress_numerals,

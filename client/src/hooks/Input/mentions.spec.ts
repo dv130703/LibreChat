@@ -8,7 +8,6 @@ describe('filterMentionEndpoints', () => {
     const result = filterMentionEndpoints({
       endpoints,
       includedEndpoints: new Set([EModelEndpoint.agents]),
-      includeAssistants: true,
       hasAgentAccess: true,
     });
 
@@ -19,7 +18,6 @@ describe('filterMentionEndpoints', () => {
     const result = filterMentionEndpoints({
       endpoints,
       includedEndpoints: new Set(),
-      includeAssistants: true,
       hasAgentAccess: true,
     });
 
@@ -30,18 +28,16 @@ describe('filterMentionEndpoints', () => {
     const result = filterMentionEndpoints({
       endpoints,
       includedEndpoints: new Set([EModelEndpoint.agents]),
-      includeAssistants: true,
       hasAgentAccess: false,
     });
 
     expect(result).toEqual([]);
   });
 
-  it('keeps non-agent endpoints regardless of includeAssistants', () => {
+  it('keeps non-agent endpoints', () => {
     const result = filterMentionEndpoints({
       endpoints: ['custom'],
       includedEndpoints: new Set(),
-      includeAssistants: false,
       hasAgentAccess: true,
     });
 

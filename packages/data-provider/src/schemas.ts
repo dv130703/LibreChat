@@ -103,16 +103,6 @@ export const getSettingsKeys = (endpoint: EModelEndpoint | string, model: string
   return [combinedKey, endpoint];
 };
 
-/** Assistants API (OpenAI/Azure) support was removed with the other non-Ollama
- *  providers; kept as an always-false stub so the many call sites that guard
- *  assistants-only behavior keep working without individually being revisited. */
-export const isAssistantsEndpoint = (_endpoint?: string | null): boolean => false;
-
-/** @deprecated Assistants API (OpenAI/Azure) support was removed. Retained as a
- *  type placeholder until the Assistants-only UI/data-layer that still
- *  references it is deleted. */
-export type AssistantsEndpoint = string;
-
 export type AgentProvider = Exclude<keyof typeof EModelEndpoint, EModelEndpoint.agents> | string;
 
 export const isAgentsEndpoint = (_endpoint?: EModelEndpoint.agents | null | string): boolean => {
@@ -263,21 +253,6 @@ export const eVerbositySchema = z.nativeEnum(Verbosity);
 export const eThinkingLevelSchema = z.nativeEnum(ThinkingLevel);
 export const eReasoningModeSchema = z.nativeEnum(ReasoningMode);
 export const eReasoningContextSchema = z.nativeEnum(ReasoningContext);
-
-export const defaultAssistantFormValues = {
-  assistant: '',
-  id: '',
-  name: '',
-  description: '',
-  instructions: '',
-  conversation_starters: [],
-  model: '',
-  functions: [],
-  code_interpreter: false,
-  image_vision: false,
-  retrieval: false,
-  append_current_datetime: false,
-};
 
 export const defaultAgentFormValues = {
   agent: {},
@@ -702,12 +677,10 @@ export const tConversationSchema = z.object({
       requestedModel: z.string().nullable().optional(),
       language: z.string().optional(),
       diarize: z.boolean().optional(),
-      minSpeakers: z.number().optional(),
-      maxSpeakers: z.number().optional(),
+      speakerCount: z.number().optional(),
       clusteringThreshold: z.number().optional(),
       includeTimestamps: z.boolean().optional(),
       contextTerms: z.string().optional(),
-      context: z.string().optional(),
       suppressNumerals: z.boolean().optional(),
       /** Whether the user accepted channel-based speaker separation for this
        *  recording after being notified it has multiple audio channels. */

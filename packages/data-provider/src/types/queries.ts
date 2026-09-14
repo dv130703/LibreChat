@@ -257,3 +257,40 @@ export type GraphTokenResponse = {
   expires_in: number;
   scope: string;
 };
+
+/** Replays what actually happened for one message: every persisted tool call,
+ *  plus the agent configuration that produced it. `agent` is `null` for
+ *  non-agent responses (or a deleted agent) - see `agent.source`, which is
+ *  only `'current'` when nothing has changed since the message, and
+ *  `'reconstructed'` when it's a best-effort match against version history
+ *  (never presented as an exact historical record in that case). */
+export type TMessageTransparencyToolCall = {
+  id?: string;
+  name: string;
+  args?: string | Record<string, unknown>;
+  output?: string;
+  isHandoff: boolean;
+  isSubagent: boolean;
+};
+
+export type TMessageTransparencyAgent = {
+  id: string;
+  name?: string;
+  provider?: string;
+  model?: string;
+  instructions?: string;
+  tools: string[];
+  source: 'current' | 'reconstructed';
+  versionUpdatedAt: string | null;
+};
+
+export type TMessageTransparency = {
+  messageId: string;
+  conversationId: string;
+  isCreatedByUser: boolean;
+  createdAt: string;
+  model?: string;
+  endpoint?: string;
+  toolCalls: TMessageTransparencyToolCall[];
+  agent: TMessageTransparencyAgent | null;
+};

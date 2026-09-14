@@ -60,26 +60,6 @@ _MAX_TERMS = 256
 _SEPARATORS = re.compile(r"[,;\n\r]+")
 _WHITESPACE = re.compile(r"\s+")
 
-# Harvesting candidates out of the prose context: bare acronyms, and runs of
-# *adjacent* capitalised words. Deliberately precision-first, because a bad
-# guess costs prompt budget a real term needed and can seed the transcript with
-# a word nobody said. Two consequences, both accepted:
-#   - lone capitalised words are ignored, since most are sentence openings;
-#   - names bridged by a lowercase connector ("Bank of England") are missed,
-#     because allowing the connector also matches "Reviewed the London".
-# Anything the harvester misses can still be typed into the terms field, which
-# is packed first and always wins.
-_ACRONYM = re.compile(r"\b[A-Z][A-Z0-9]{1,7}\b")
-_CAPITALISED_RUN = re.compile(r"\b[A-Z][a-z’'\-]+(?:\s+[A-Z][a-z’'\-]+)+")
-
-# Openers that begin a sentence far more often than they begin a name.
-_HARVEST_STOPWORDS = frozenset(
-    {"a", "an", "the", "this", "that", "these", "those", "it", "we", "they", "he", "she",
-     "i", "there", "here", "his", "her", "their", "our", "in", "on", "at", "for", "with",
-     "and", "but", "or", "if", "when", "while", "during", "after", "before", "subject",
-     "interview", "recording", "meeting", "conducted", "regarding", "about"}
-)
-
 
 @dataclass
 class PromptBuild:
@@ -88,7 +68,6 @@ class PromptBuild:
     prompt: str | None
     used_terms: list[str] = field(default_factory=list)
     dropped_terms: list[str] = field(default_factory=list)
-    harvested_terms: list[str] = field(default_factory=list)
     budget_tokens: int = 0
     used_tokens: int = 0
 
@@ -133,36 +112,6 @@ def parse_terms(raw: str | None) -> list[str]:
     return list(seen.values())
 
 
-def harvest_terms(prose: str | None) -> list[str]:
-    """Pull likely proper nouns out of the free-text context.
-
-    The prose itself is never sent to Whisper - it would be echoed rather than
-    obeyed. But the names inside it are exactly what the prompt window is for,
-    and they are otherwise typed by the user and then thrown away. Only
-    high-confidence shapes are taken: acronyms, and multi-word capitalised runs.
-
-    This is a backstop, not a contract. The UI suggests the same kind of terms
-    to the user, who confirms or removes them before anything is sent; this runs
-    for callers that post prose with no confirmed list (or that leave budget
-    spare). The two need not agree exactly, and nothing depends on them doing so.
-    """
-    if not prose:
-        return []
-
-    found: dict[str, str] = {}
-    for match in _ACRONYM.finditer(prose):
-        term = match.group(0)
-        found.setdefault(term.casefold(), term)
-    for match in _CAPITALISED_RUN.finditer(prose):
-        term = _WHITESPACE.sub(" ", match.group(0)).strip()
-        if term.split()[0].casefold() in _HARVEST_STOPWORDS:
-            continue
-        if len(term) > _MAX_TERM_CHARS:
-            continue
-        found.setdefault(term.casefold(), term)
-    return list(found.values())
-
-
 def _pack(terms: list[str], budget: int, count_tokens: TokenCounter) -> tuple[list[str], list[str], int]:
     """Fit as many terms as the budget allows, in order, keeping the head.
 
@@ -188,39 +137,24 @@ def _pack(terms: list[str], budget: int, count_tokens: TokenCounter) -> tuple[li
 
 def build_initial_prompt(
     confirmed_terms: str | None,
-    context: str | None = None,
     count_tokens: TokenCounter | None = None,
     budget: int | None = None,
 ) -> PromptBuild:
-    """Assemble a prompt from a confirmed term list and the free-text context.
+    """Assemble a prompt from the confirmed term list.
 
     The result is a bare comma-separated list of terms. That is not a stylistic
     choice: every token spent on framing is a token not spent on a name, and
     framing is what leaks into the transcript.
 
     ``confirmed_terms`` is the list the user actually saw and approved, so it is
-    packed first and always wins. ``context`` is their prose, which is never
-    sent to Whisper as prose - only mined for proper nouns, and only to fill
-    budget the confirmed list did not need. Nothing here infers intent from how
-    the text was punctuated or laid out.
+    packed first and always wins. Nothing here infers intent from how the text
+    was punctuated or laid out.
     """
     counter = count_tokens or estimate_tokens
     allowance = prompt_budget() if budget is None else budget
 
-    prose_context = context
     explicit = parse_terms(confirmed_terms)
     used, dropped, used_tokens = _pack(explicit, allowance, counter)
-
-    # Only spend what the explicit terms left behind, and never re-add something
-    # the user already typed or that was just dropped for want of room.
-    harvested_used: list[str] = []
-    if used_tokens < allowance:
-        already = {term.casefold() for term in [*used, *dropped]}
-        candidates = [term for term in harvest_terms(prose_context) if term.casefold() not in already]
-        if candidates:
-            combined, _, combined_tokens = _pack([*used, *candidates], allowance, counter)
-            harvested_used = combined[len(used):]
-            used, used_tokens = combined, combined_tokens
 
     if not used:
         return PromptBuild(prompt=None, dropped_terms=dropped, budget_tokens=allowance)
@@ -229,7 +163,6 @@ def build_initial_prompt(
         prompt=", ".join(used) + ".",
         used_terms=used,
         dropped_terms=dropped,
-        harvested_terms=harvested_used,
         budget_tokens=allowance,
         used_tokens=used_tokens,
     )

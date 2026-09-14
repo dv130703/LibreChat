@@ -10,7 +10,6 @@ import {
   Constants,
   EToolResources,
   mergeFileConfig,
-  isAssistantsEndpoint,
   getEndpointFileConfig,
   getConfiguredMimeAccept,
 } from 'librechat-data-provider';
@@ -215,9 +214,19 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
 
   const uploadFile = useUploadFileMutation(
     {
-      onSuccess: (data) => {
+      onSuccess: (data, body) => {
         clearUploadTimer(data.temp_file_id);
         console.log('upload success', data);
+        /** File Search stays on for the rest of the conversation/session once any
+         *  upload actually succeeds as a file_search resource - set here (on success)
+         *  rather than optimistically at file-select time, so a failed upload never
+         *  leaves it dangling "on" with nothing searchable behind it. */
+        if (body.get('tool_resource') === EToolResources.file_search) {
+          setEphemeralAgent((prev) => ({
+            ...prev,
+            [EToolResources.file_search]: true,
+          }));
+        }
         if (agent_id) {
           queryClient.refetchQueries([QueryKeys.agent, agent_id]);
           return;
@@ -320,20 +329,15 @@ const useFileHandlingCore = (params: UseFileHandling | undefined, fileState: Fil
       }
     }
 
-    if (!isAssistantsEndpoint(endpointType ?? endpoint)) {
-      if (!agent_id) {
-        formData.append('message_file', 'true');
-      }
-      const tool_resource = extendedFile.tool_resource;
-      if (tool_resource != null) {
-        formData.append('tool_resource', tool_resource);
-      }
-      if (conversation?.agent_id != null && formData.get('agent_id') == null) {
-        formData.append('agent_id', conversation.agent_id);
-      }
-
-      uploadFile.mutate(formData);
-      return;
+    if (!agent_id) {
+      formData.append('message_file', 'true');
+    }
+    const tool_resource = extendedFile.tool_resource;
+    if (tool_resource != null) {
+      formData.append('tool_resource', tool_resource);
+    }
+    if (conversation?.agent_id != null && formData.get('agent_id') == null) {
+      formData.append('agent_id', conversation.agent_id);
     }
 
     uploadFile.mutate(formData);

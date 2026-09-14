@@ -6,6 +6,14 @@ const { FileSources } = require('librechat-data-provider');
 const { logAxiosError, generateShortLivedToken } = require('@librechat/api');
 
 /**
+ * Thrown when the RAG API recognizes the file's type but couldn't extract any
+ * text from it (e.g. a scanned/image-only PDF with no embedded text layer).
+ * Distinguished from other embedding failures so callers can attempt an
+ * OCR-first fallback before giving up.
+ */
+class NoExtractableTextError extends Error {}
+
+/**
  * Deletes a file from the vector database. This function takes a file object, constructs the full path, and
  * verifies the path's validity before deleting the file. If the path is invalid, an error is thrown.
  *
@@ -60,13 +68,26 @@ const deleteVectors = async (req, file) => {
  * @param {Object} [params.storageMetadata] - Storage metadata for dual storage pattern.
  * @param {string} [params.logLabel] - Log-line prefix identifying the calling feature
  *   (e.g. `'TRANSCRIPTION'`); defaults to `'RAG'` for ordinary file-upload embedding.
+ * @param {string} [params.text] - Pre-extracted text to embed instead of the original file
+ *   (e.g. OCR output for a scanned document). Sent to the RAG API as a synthetic `.txt`
+ *   upload so it reuses the existing plain-text extraction path server-side.
  *
  * @returns {Promise<{ filepath: string, bytes: number }>}
  *          A promise that resolves to an object containing:
  *            - filepath: The path where the file is saved.
  *            - bytes: The size of the file in bytes.
+ * @throws {NoExtractableTextError} When the RAG API recognized the file type but found no
+ *   extractable text (e.g. a scanned/image-only PDF) - callers may retry with `text` set.
  */
-async function uploadVectors({ req, file, file_id, entity_id, storageMetadata, logLabel = 'RAG' }) {
+async function uploadVectors({
+  req,
+  file,
+  file_id,
+  entity_id,
+  storageMetadata,
+  logLabel = 'RAG',
+  text,
+}) {
   if (!process.env.RAG_API_URL) {
     throw new Error('RAG_API_URL not defined');
   }
@@ -75,7 +96,17 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata, l
     const jwtToken = generateShortLivedToken(req.user.id);
     const formData = new FormData();
     formData.append('file_id', file_id);
-    formData.append('file', fs.createReadStream(file.path));
+    if (text != null) {
+      // Routes through the RAG API's plain-text decode path regardless of the
+      // original file's real extension - only the chunking/embedding step cares
+      // about this filename, LibreChat's own file record keeps the real one.
+      formData.append('file', Buffer.from(text, 'utf8'), {
+        filename: `${file_id}.txt`,
+        contentType: 'text/plain',
+      });
+    } else {
+      formData.append('file', fs.createReadStream(file.path));
+    }
     if (entity_id != null && entity_id) {
       formData.append('entity_id', entity_id);
     }
@@ -88,7 +119,7 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata, l
     const formHeaders = formData.getHeaders();
 
     logger.info(
-      `[${logLabel}] POST ${process.env.RAG_API_URL}/embed file="${file.originalname}" file_id=${file_id} entity=${entity_id || '-'}`,
+      `[${logLabel}] POST ${process.env.RAG_API_URL}/embed file="${file.originalname}" file_id=${file_id} entity=${entity_id || '-'}${text != null ? ' (pre-extracted text)' : ''}`,
     );
     const response = await axios.post(`${process.env.RAG_API_URL}/embed`, formData, {
       headers: {
@@ -116,7 +147,7 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata, l
     }
 
     if (!responseData.status) {
-      throw new Error('File embedding failed.');
+      throw new NoExtractableTextError(`No extractable text found in "${file.originalname}".`);
     }
 
     return {
@@ -126,6 +157,9 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata, l
       embedded: Boolean(responseData.known_type),
     };
   } catch (error) {
+    if (error instanceof NoExtractableTextError) {
+      throw error;
+    }
     logAxiosError({
       error,
       message: 'Error uploading vectors',
@@ -137,4 +171,5 @@ async function uploadVectors({ req, file, file_id, entity_id, storageMetadata, l
 module.exports = {
   deleteVectors,
   uploadVectors,
+  NoExtractableTextError,
 };

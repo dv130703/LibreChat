@@ -56,17 +56,6 @@ export function mapFiles(files: t.TFile[]) {
   return fileMap;
 }
 
-/** Maps Assistants by `id` for quick lookup */
-export function mapAssistants(assistants: t.Assistant[]) {
-  const assistantMap = {} as Record<string, t.Assistant>;
-
-  for (const assistant of assistants) {
-    assistantMap[assistant.id] = assistant;
-  }
-
-  return assistantMap;
-}
-
 /** Maps Agents by `id` for quick lookup */
 export function mapAgents(agents: t.Agent[]) {
   const agentsMap = {} as Record<string, t.Agent>;

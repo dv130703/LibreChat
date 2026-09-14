@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useSetRecoilState, useRecoilValue, useRecoilCallback } from 'recoil';
-import { Constants, tMessageSchema, isAssistantsEndpoint } from 'librechat-data-provider';
+import { Constants, tMessageSchema } from 'librechat-data-provider';
 import type { TMessage, TConversation, TSubmission, Agents } from 'librechat-data-provider';
 import type { StreamStatusResponse } from '~/data-provider';
 import {
@@ -207,11 +207,6 @@ export default function useResumeOnLoad(
 ) {
   const setSubmission = useSetRecoilState(store.submissionByIndex(runIndex));
   const currentSubmission = useRecoilValue(store.submissionByIndex(runIndex));
-  const currentConversation = useRecoilValue(store.conversationByIndex(runIndex));
-  const endpoint = currentConversation?.endpoint;
-  const endpointType = currentConversation?.endpointType;
-  const actualEndpoint = endpointType ?? endpoint;
-  const resumableEnabled = !isAssistantsEndpoint(actualEndpoint);
   // Track conversations we've already processed (either resumed or skipped)
   const processedConvoRef = useRef<string | null>(null);
   const restoreResumeBranch = useRecoilCallback(
@@ -274,7 +269,6 @@ export default function useResumeOnLoad(
     !!currentSubmission && submissionConvoId != null && submissionConvoId !== conversationId;
 
   const shouldCheck =
-    resumableEnabled &&
     messagesLoaded && // Wait for messages to load before checking
     !hasActiveSubmissionForThisConvo && // Allow if no submission or a confirmed stale submission
     !!conversationId &&
@@ -289,7 +283,6 @@ export default function useResumeOnLoad(
 
   useEffect(() => {
     console.log('[ResumeOnLoad] Effect check', {
-      resumableEnabled,
       conversationId,
       messagesLoaded,
       hasCurrentSubmission: !!currentSubmission,
@@ -301,8 +294,8 @@ export default function useResumeOnLoad(
       processedConvoRef: processedConvoRef.current,
     });
 
-    if (!resumableEnabled || !conversationId || conversationId === Constants.NEW_CONVO) {
-      console.log('[ResumeOnLoad] Skipping - not enabled or new convo');
+    if (!conversationId || conversationId === Constants.NEW_CONVO) {
+      console.log('[ResumeOnLoad] Skipping - new convo');
       return;
     }
 
@@ -428,7 +421,6 @@ export default function useResumeOnLoad(
     }
   }, [
     conversationId,
-    resumableEnabled,
     messagesLoaded,
     hasActiveSubmissionForThisConvo,
     submissionConvoId,

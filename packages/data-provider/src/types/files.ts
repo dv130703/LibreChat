@@ -14,6 +14,7 @@ export enum FileSources {
   mistral_ocr = 'mistral_ocr',
   azure_mistral_ocr = 'azure_mistral_ocr',
   vertexai_mistral_ocr = 'vertexai_mistral_ocr',
+  ollama_vision = 'ollama_vision',
   text = 'text',
   document_parser = 'document_parser',
 }
@@ -336,12 +337,10 @@ export type TTranscriptionDiarizationDetail = {
 export type TTranscribeOptions = {
   includeTimestamps?: boolean;
   diarize?: boolean;
-  minSpeakers?: number;
-  maxSpeakers?: number;
+  speakerCount?: number;
   clusteringThreshold?: number;
   language?: string;
   contextTerms?: string;
-  context?: string;
   model?: string;
   /** Whether digits are suppressed at the decoder. Absent takes the server's
    *  configured default; `false` is a real instruction, not an absent option. */
@@ -349,8 +348,7 @@ export type TTranscribeOptions = {
   /** True once the caller has confirmed splitting by audio channel instead
    *  of pyannote clustering, after being notified the file has more than one
    *  channel (see `MultiChannelDialog`). Each channel is transcribed and
-   *  labelled as its own speaker; `minSpeakers`/`maxSpeakers` are ignored
-   *  when this is set. */
+   *  labelled as its own speaker; `speakerCount` is ignored when this is set. */
   channelSplit?: boolean;
 };
 
@@ -366,9 +364,9 @@ export type TTranscribeConfig = {
   /** Vocabulary offered as one-click suggestions. Never sent on its own - a
    *  suggestion only reaches the decoder once the user confirms it. */
   suggested_terms: string[];
-  /** The real server-side cap on `minSpeakers`/`maxSpeakers` - values above
-   *  this are clamped silently by the diarizer, so the UI stops the user at
-   *  the same number rather than letting them type past it. */
+  /** The real server-side cap on `speakerCount` - values above this are
+   *  clamped silently by the diarizer, so the UI stops the user at the same
+   *  number rather than letting them type past it. */
   max_speakers: number;
 };
 

@@ -1,13 +1,7 @@
 import React, { useRef, useState, useMemo, useCallback } from 'react';
 import { useRecoilState } from 'recoil';
 import * as Ariakit from '@ariakit/react';
-import {
-  FileSearch,
-  ImageUpIcon,
-  FileType2Icon,
-  FileImageIcon,
-  TerminalSquareIcon,
-} from 'lucide-react';
+import { ImageUpIcon, FileType2Icon, FileImageIcon, TerminalSquareIcon } from 'lucide-react';
 import {
   FileUpload,
   TooltipAnchor,
@@ -17,8 +11,11 @@ import {
 } from '@librechat/client';
 import {
   Providers,
+  Permissions,
   EToolResources,
   EModelEndpoint,
+  PermissionTypes,
+  mergeFileConfig,
   getConfiguredMimeAccept,
   defaultAgentCapabilities,
   isDocumentSupportedProvider,
@@ -30,6 +27,7 @@ import type {
 } from 'librechat-data-provider';
 import type { ExtendedFile, FileSetter } from '~/common';
 import {
+  useHasAccess,
   useAgentToolPermissions,
   useAgentCapabilities,
   useGetAgentsConfig,
@@ -39,10 +37,10 @@ import {
 import { useSharePointFileHandlingNoChatContext } from '~/hooks/Files/useSharePointFileHandling';
 import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
 import { SharePointPickerDialog } from '~/components/SharePoint';
-import { useGetStartupConfig } from '~/data-provider';
+import { useGetStartupConfig, useGetFileConfig } from '~/data-provider';
 import { ephemeralAgentByConvoId } from '~/store';
 import { MenuItemProps } from '~/common';
-import { cn } from '~/utils';
+import { cn, getViableUploadOptions } from '~/utils';
 
 type FileUploadType = 'image' | 'document' | 'image_document' | 'image_document_video_audio';
 
@@ -103,6 +101,11 @@ const AttachFileMenu = ({
     ephemeralAgentByConvoId(conversationId),
   );
   const toolResourceRef = useRef<EToolResources | undefined>();
+  /** Set for the "Attach Files" / "Upload as Text" items - since neither knows the
+   *  actual selected file types until the OS picker returns, the effective tool
+   *  resource for those two is resolved from the real file list in the
+   *  `handleFileChange` wrapper below, rather than fixed at menu-click time. */
+  const autoResolveRef = useRef(false);
   const { handleFileChange } = useFileHandlingNoChatContext(undefined, {
     files,
     setFiles,
@@ -111,12 +114,9 @@ const AttachFileMenu = ({
     setConversation,
     latestMessageId,
   });
-  const { handleSharePointFiles, isProcessing, downloadProgress } =
-    useSharePointFileHandlingNoChatContext(
-      { toolResource: toolResourceRef.current },
-      { files, setFiles, setFilesLoading, conversation },
-    );
-
+  const { data: fileConfig = null } = useGetFileConfig({
+    select: (data) => mergeFileConfig(data),
+  });
   const { agentsConfig } = useGetAgentsConfig();
   const { data: startupConfig } = useGetStartupConfig();
   const sharePointEnabled = startupConfig?.sharePointFilePickerEnabled;
@@ -133,6 +133,56 @@ const AttachFileMenu = ({
     agentId,
     ephemeralAgent,
   );
+
+  /** Per-user role ACL for File Search - previously enforced only by the now-removed
+   *  manual toggle UI. "Attach Files"/"Upload as Text" now route documents to File
+   *  Search automatically, so this gate has to live here instead. */
+  const canUseFileSearch = useHasAccess({
+    permissionType: PermissionTypes.FILE_SEARCH,
+    permission: Permissions.USE,
+  });
+  const fileSearchViable = capabilities.fileSearchEnabled && canUseFileSearch;
+
+  const resolveSharePointToolResource = useCallback(
+    (selectedFiles: File[]) => {
+      if (!autoResolveRef.current) {
+        return toolResourceRef.current;
+      }
+      const viableOptions = getViableUploadOptions(selectedFiles, {
+        provider,
+        endpoint,
+        endpointType,
+        fileSearchEnabled: fileSearchViable,
+        codeEnabled: capabilities.codeEnabled,
+        contextEnabled: capabilities.contextEnabled,
+        fileSearchAllowedByAgent,
+        codeAllowedByAgent,
+        fileConfig,
+        endpointSupportedMimeTypes: endpointFileConfig?.supportedMimeTypes,
+      });
+      return viableOptions.includes(EToolResources.file_search)
+        ? EToolResources.file_search
+        : viableOptions[0];
+    },
+    [
+      provider,
+      endpoint,
+      endpointType,
+      fileSearchViable,
+      capabilities.codeEnabled,
+      capabilities.contextEnabled,
+      fileSearchAllowedByAgent,
+      codeAllowedByAgent,
+      fileConfig,
+      endpointFileConfig?.supportedMimeTypes,
+    ],
+  );
+
+  const { handleSharePointFiles, isProcessing, downloadProgress } =
+    useSharePointFileHandlingNoChatContext(
+      { toolResource: resolveSharePointToolResource },
+      { files, setFiles, setFilesLoading, conversation },
+    );
 
   const handleUploadClick = useCallback(
     (fileType?: FileUploadType) => {
@@ -167,8 +217,11 @@ const AttachFileMenu = ({
   );
 
   const dropdownItems = useMemo(() => {
-    const setToolResource = (value: EToolResources | undefined) => {
+    /** `auto: true` defers the actual tool_resource decision to `handleFileChange`
+     *  below, once the real file list (and therefore each file's type) is known. */
+    const setToolResource = (value: EToolResources | undefined, auto = false) => {
       toolResourceRef.current = value;
+      autoResolveRef.current = auto;
     };
 
     const createMenuItems = (onAction: (fileType?: FileUploadType) => void) => {
@@ -188,7 +241,9 @@ const AttachFileMenu = ({
         items.push({
           label: localize('com_ui_upload_provider'),
           onClick: () => {
-            setToolResource(undefined);
+            // Auto-resolved per file below: images stay a native attachment,
+            // documents (PDF, etc.) route to File Search automatically.
+            setToolResource(undefined, true);
             let fileType: Exclude<FileUploadType, 'image' | 'document'> = 'image_document';
             if (currentProvider === Providers.OPENROUTER) {
               fileType = 'image_document_video_audio';
@@ -208,29 +263,17 @@ const AttachFileMenu = ({
         });
       }
 
-      if (capabilities.contextEnabled) {
+      if (fileSearchViable && fileSearchAllowedByAgent) {
         items.push({
           label: localize('com_ui_upload_ocr_text'),
           onClick: () => {
-            setToolResource(EToolResources.context);
+            // Auto-resolved per file below - this is now just a second entry
+            // point into the same File Search pipeline as "Attach Files",
+            // with an unrestricted file picker (not limited to PDF/image).
+            setToolResource(undefined, true);
             onAction();
           },
           icon: <FileType2Icon className="icon-md" />,
-        });
-      }
-
-      if (capabilities.fileSearchEnabled && fileSearchAllowedByAgent) {
-        items.push({
-          label: localize('com_ui_upload_file_search'),
-          onClick: () => {
-            setToolResource(EToolResources.file_search);
-            setEphemeralAgent((prev) => ({
-              ...prev,
-              [EToolResources.file_search]: true,
-            }));
-            onAction();
-          },
-          icon: <FileSearch className="icon-md" />,
         });
       }
 
@@ -275,6 +318,7 @@ const AttachFileMenu = ({
     provider,
     endpointType,
     capabilities,
+    fileSearchViable,
     handleUploadClick,
     setEphemeralAgent,
     sharePointEnabled,
@@ -320,8 +364,27 @@ const AttachFileMenu = ({
       <FileUpload
         ref={inputRef}
         handleFileChange={(e) => {
-          handleFileChange(e, toolResourceRef.current);
+          let toolResource = toolResourceRef.current;
+          if (autoResolveRef.current && e.target.files && e.target.files.length > 0) {
+            const viableOptions = getViableUploadOptions(Array.from(e.target.files), {
+              provider,
+              endpoint,
+              endpointType,
+              fileSearchEnabled: fileSearchViable,
+              codeEnabled: capabilities.codeEnabled,
+              contextEnabled: capabilities.contextEnabled,
+              fileSearchAllowedByAgent,
+              codeAllowedByAgent,
+              fileConfig,
+              endpointSupportedMimeTypes: endpointFileConfig?.supportedMimeTypes,
+            });
+            toolResource = viableOptions.includes(EToolResources.file_search)
+              ? EToolResources.file_search
+              : viableOptions[0];
+          }
+          handleFileChange(e, toolResource);
           toolResourceRef.current = undefined;
+          autoResolveRef.current = false;
         }}
       >
         <DropdownPopup

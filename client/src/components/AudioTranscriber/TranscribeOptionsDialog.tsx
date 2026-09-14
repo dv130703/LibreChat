@@ -18,11 +18,9 @@ import { cn } from '~/utils';
 export interface TranscribeAudioOptions {
   includeTimestamps: boolean;
   diarize: boolean;
-  minSpeakers?: number;
-  maxSpeakers?: number;
+  speakerCount?: number;
   clusteringThreshold?: number;
   contextTerms?: string;
-  context?: string;
   model?: string;
   suppressNumerals?: boolean;
   language?: string;
@@ -329,7 +327,7 @@ export default function TranscribeOptionsDialog({
   const [language, setLanguage] = useState('');
   const [includeTimestamps, setIncludeTimestamps] = useState(DEFAULT_OPTIONS.includeTimestamps);
   const [diarize, setDiarize] = useState(DEFAULT_OPTIONS.diarize);
-  const [speakerRange, setSpeakerRange] = useState<{ min?: number; max?: number }>({});
+  const [speakerCount, setSpeakerCount] = useState<number | undefined>(undefined);
   const [speakerGrouping, setSpeakerGrouping] = useState<SpeakerGrouping>('balanced');
   const [termTags, setTermTags] = useState<string[]>([]);
   const [termDraft, setTermDraft] = useState('');
@@ -343,7 +341,7 @@ export default function TranscribeOptionsDialog({
   const serverSuppressesNumerals = transcribeConfig?.default_suppress_numerals ?? true;
   const defaultLanguage = transcribeConfig?.default_language ?? '';
   // Falls back to the pyannote-accuracy-driven default the server itself
-  // clamps to (see MAX_ALLOWED_SPEAKERS in speaker_bounds.py) - only used
+  // clamps to (see MAX_ALLOWED_SPEAKERS in speaker_count.py) - only used
   // before the config has loaded, so the input is never briefly unbounded.
   const maxSpeakerCount = transcribeConfig?.max_speakers ?? 8;
 
@@ -355,7 +353,7 @@ export default function TranscribeOptionsDialog({
       languageTouchedRef.current = initialOptions?.language != null;
       setIncludeTimestamps(initialOptions?.includeTimestamps ?? DEFAULT_OPTIONS.includeTimestamps);
       setDiarize(initialOptions?.diarize ?? DEFAULT_OPTIONS.diarize);
-      setSpeakerRange({ min: initialOptions?.minSpeakers, max: initialOptions?.maxSpeakers });
+      setSpeakerCount(initialOptions?.speakerCount);
       setSpeakerGrouping(groupingFromThreshold(initialOptions?.clusteringThreshold));
       seededRef.current = initialOptions != null;
       setTermTags(parseTermTags(initialOptions?.contextTerms));
@@ -376,12 +374,7 @@ export default function TranscribeOptionsDialog({
 
   const handleSpeakerCountChange = (raw: string) => {
     const digits = sanitizeSpeakerCountInput(raw, maxSpeakerCount);
-    if (digits === '') {
-      setSpeakerRange({ min: undefined, max: undefined });
-      return;
-    }
-    const parsed = Number(digits);
-    setSpeakerRange({ min: parsed, max: parsed });
+    setSpeakerCount(digits === '' ? undefined : Number(digits));
   };
 
   const suggestedTerms = transcribeConfig?.suggested_terms ?? NO_TERMS;
@@ -438,14 +431,13 @@ export default function TranscribeOptionsDialog({
 
   const handleConfirm = () => {
     // Channel-split already answered "who's speaking" one step earlier -
-    // pyannote's own toggle and its min/max/grouping hints are moot once
-    // every speaker is already a settled channel.
+    // pyannote's own toggle and its speaker-count/grouping hints are moot
+    // once every speaker is already a settled channel.
     const effectiveDiarize = channelSplitEnabled ? true : diarize;
     onConfirm({
       includeTimestamps,
       diarize: effectiveDiarize,
-      minSpeakers: effectiveDiarize && !channelSplitEnabled ? speakerRange.min : undefined,
-      maxSpeakers: effectiveDiarize && !channelSplitEnabled ? speakerRange.max : undefined,
+      speakerCount: effectiveDiarize && !channelSplitEnabled ? speakerCount : undefined,
       clusteringThreshold:
         effectiveDiarize && !channelSplitEnabled && speakerGrouping !== 'balanced'
           ? CLUSTERING_THRESHOLD[speakerGrouping]
@@ -584,7 +576,7 @@ export default function TranscribeOptionsDialog({
                           type="text"
                           inputMode="numeric"
                           pattern="[0-9]*"
-                          value={speakerRange.min != null ? String(speakerRange.min) : ''}
+                          value={speakerCount != null ? String(speakerCount) : ''}
                           onChange={(event) => handleSpeakerCountChange(event.target.value)}
                           placeholder={localize('com_ui_transcribe_options_speaker_count_auto')}
                           aria-label={localize('com_ui_transcribe_options_speaker_count_label')}

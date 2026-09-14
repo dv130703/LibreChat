@@ -62,7 +62,6 @@ jest.mock('~/hooks', () => ({
 
 const mockUseAgentsMapContext = jest.fn((): Record<string, Agent> | undefined => ({}));
 jest.mock('~/Providers', () => ({
-  useAssistantsMapContext: () => ({}),
   useAgentsMapContext: () => mockUseAgentsMapContext(),
 }));
 

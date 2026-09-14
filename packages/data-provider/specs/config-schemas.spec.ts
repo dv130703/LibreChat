@@ -1,7 +1,6 @@
 import {
   paramDefinitionSchema,
   agentsEndpointSchema,
-  azureEndpointSchema,
   endpointSchema,
   RetentionMode,
   configSchema,
@@ -531,90 +530,6 @@ describe('agentsEndpointSchema', () => {
       },
     });
 
-    expect(result.success).toBe(false);
-  });
-});
-
-describe('azureEndpointSchema', () => {
-  it('silently strips plugins field', () => {
-    const result = azureEndpointSchema.safeParse({
-      groups: [
-        {
-          group: 'test-group',
-          apiKey: 'test-key',
-          models: { 'gpt-4': true },
-        },
-      ],
-      plugins: true,
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data).not.toHaveProperty('plugins');
-    }
-  });
-
-  it('accepts nested addParams in azure groups', () => {
-    const result = azureEndpointSchema.safeParse({
-      groups: [
-        {
-          group: 'test-group',
-          apiKey: 'test-key',
-          models: { 'gpt-4': true },
-          addParams: {
-            provider: {
-              only: ['z-ai'],
-            },
-          },
-        },
-      ],
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.groups[0].addParams).toEqual({
-        provider: {
-          only: ['z-ai'],
-        },
-      });
-    }
-  });
-
-  it('accepts boolean web_search in azure addParams', () => {
-    const result = azureEndpointSchema.safeParse({
-      groups: [
-        {
-          group: 'test-group',
-          apiKey: 'test-key',
-          models: { 'gpt-4': true },
-          addParams: {
-            provider: {
-              only: ['z-ai'],
-            },
-            web_search: false,
-          },
-        },
-      ],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects non-boolean web_search objects in azure addParams', () => {
-    const result = azureEndpointSchema.safeParse({
-      groups: [
-        {
-          group: 'test-group',
-          apiKey: 'test-key',
-          models: { 'gpt-4': true },
-          addParams: {
-            provider: {
-              only: ['z-ai'],
-            },
-            web_search: {
-              enabled: true,
-            },
-          },
-        },
-      ],
-    });
     expect(result.success).toBe(false);
   });
 });

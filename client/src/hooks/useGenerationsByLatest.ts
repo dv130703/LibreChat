@@ -1,4 +1,4 @@
-import { EModelEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
+import { EModelEndpoint } from 'librechat-data-provider';
 
 type TUseGenerations = {
   error?: boolean;
@@ -49,7 +49,7 @@ export default function useGenerationsByLatest({
     !branchingSupported ||
     (!isEditableEndpoint && !isCreatedByUser);
 
-  const forkingSupported = !isAssistantsEndpoint(endpoint) && !searchResult;
+  const forkingSupported = !searchResult;
 
   return {
     forkingSupported,

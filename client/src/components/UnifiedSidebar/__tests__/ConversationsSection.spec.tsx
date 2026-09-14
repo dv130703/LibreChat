@@ -70,7 +70,6 @@ jest.mock('~/data-provider', () => ({
 
 jest.mock('~/Providers', () => ({
   __esModule: true,
-  useAssistantsMapContext: () => ({}),
   useAgentsMapContext: () => ({}),
 }));
 

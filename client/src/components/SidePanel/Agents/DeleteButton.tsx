@@ -24,7 +24,7 @@ function DeleteButton({
   createMutation,
 }: {
   agent_id: string;
-  setCurrentAgentId: React.Dispatch<React.SetStateAction<string | undefined>>;
+  setCurrentAgentId: (agentId: string | undefined) => void;
   createMutation: UseMutationResult<Agent, Error, AgentCreateParams>;
 }) {
   const localize = useLocalize();

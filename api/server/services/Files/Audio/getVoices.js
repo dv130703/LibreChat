@@ -10,7 +10,7 @@ const { getProvider } = require('./TTSService');
  * @param {Object} req - The request object
  * @param {Object} res - The response object
  * @returns {Promise<void>}
- * @throws {Error} - If the provider is not 'openai' or 'elevenlabs', an error is thrown
+ * @throws {Error} - If the provider is not 'localai', an error is thrown
  */
 async function getVoices(req, res) {
   try {
@@ -31,15 +31,6 @@ async function getVoices(req, res) {
     let voices;
 
     switch (provider) {
-      case TTSProviders.OPENAI:
-        voices = ttsSchema.openai?.voices;
-        break;
-      case TTSProviders.AZURE_OPENAI:
-        voices = ttsSchema.azureOpenAI?.voices;
-        break;
-      case TTSProviders.ELEVENLABS:
-        voices = ttsSchema.elevenlabs?.voices;
-        break;
       case TTSProviders.LOCALAI:
         voices = ttsSchema.localai?.voices;
         break;

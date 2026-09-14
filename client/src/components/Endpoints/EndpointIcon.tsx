@@ -1,11 +1,5 @@
-import { getEndpointField, isAssistantsEndpoint, isAgentsEndpoint } from 'librechat-data-provider';
-import type {
-  TPreset,
-  TConversation,
-  TAgentsMap,
-  TAssistantsMap,
-  TEndpointsConfig,
-} from 'librechat-data-provider';
+import { getEndpointField, isAgentsEndpoint } from 'librechat-data-provider';
+import type { TPreset, TConversation, TAgentsMap, TEndpointsConfig } from 'librechat-data-provider';
 import ConvoIconURL from '~/components/Endpoints/ConvoIconURL';
 import MinimalIcon from '~/components/Endpoints/MinimalIcon';
 import { getAgentAvatarUrl, getIconEndpoint } from '~/utils';
@@ -17,7 +11,6 @@ export default function EndpointIcon({
   conversation,
   endpointsConfig = emptyEndpointsConfig,
   className = 'mr-0',
-  assistantMap,
   agentsMap,
   context,
   size = 20,
@@ -26,7 +19,6 @@ export default function EndpointIcon({
   endpointsConfig: TEndpointsConfig;
   containerClassName?: string;
   context?: 'message' | 'nav' | 'landing' | 'menu-item';
-  assistantMap?: TAssistantsMap;
   agentsMap?: TAgentsMap;
   className?: string;
   size?: number;
@@ -40,15 +32,10 @@ export default function EndpointIcon({
   const endpointIconURL = getEndpointField(endpointsConfig, endpoint, 'iconURL');
 
   const agent = isAgentsEndpoint(endpoint) ? agentsMap?.[conversation?.agent_id ?? ''] : null;
-  const assistant = isAssistantsEndpoint(endpoint)
-    ? assistantMap?.[endpoint]?.[conversation?.assistant_id ?? '']
-    : null;
   const agentAvatar = getAgentAvatarUrl(agent) ?? '';
   const agentName = agent?.name ?? '';
-  const assistantAvatar = (assistant && (assistant.metadata?.avatar as string)) || '';
-  const assistantName = assistant && (assistant.name ?? '');
-  const entityAvatar = agentAvatar || assistantAvatar;
-  const entityName = agentName || assistantName || '';
+  const entityAvatar = agentAvatar;
+  const entityName = agentName || '';
   const hasCustomIcon =
     isImageURL(convoIconURL) || (convoIconURL !== '' && convoIconURL !== originalEndpoint);
 
@@ -61,8 +48,6 @@ export default function EndpointIcon({
         modelLabel={entityName || conversation?.chatGptLabel || conversation?.modelLabel || ''}
         context={context}
         endpointIconURL={endpointIconURL}
-        assistantAvatar={assistantAvatar}
-        assistantName={assistantName ?? ''}
         agentAvatar={agentAvatar}
         agentName={agentName}
       />

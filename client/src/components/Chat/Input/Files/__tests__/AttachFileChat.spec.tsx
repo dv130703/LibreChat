@@ -9,7 +9,6 @@ import AttachFileChat from '../AttachFileChat';
 const mockEndpointsConfig: TEndpointsConfig = {
   [EModelEndpoint.custom]: { userProvide: false, order: 0 },
   [EModelEndpoint.agents]: { userProvide: false, order: 1 },
-  ['assistants']: { userProvide: false, order: 2 },
   Moonshot: { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
 };
 
@@ -44,12 +43,6 @@ jest.mock('../AttachFileMenu', () => {
   return function MockAttachFileMenu(props: Record<string, unknown>) {
     mockAttachFileMenuProps = props;
     return <div data-testid="attach-file-menu" data-endpoint-type={String(props.endpointType)} />;
-  };
-});
-
-jest.mock('../AttachFile', () => {
-  return function MockAttachFile() {
-    return <div data-testid="attach-file" />;
   };
 });
 
@@ -205,18 +198,6 @@ describe('AttachFileChat', () => {
       };
       renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
       expect(screen.getByTestId('attach-file-menu')).toBeInTheDocument();
-    });
-
-    it('renders null for assistants endpoint when fileConfig.assistants.disabled is true', () => {
-      mockFileConfig = mergeFileConfig({
-        endpoints: {
-          ['assistants']: { disabled: true },
-        },
-      });
-      const { container } = renderComponent({
-        endpoint: 'assistants',
-      });
-      expect(container.innerHTML).toBe('');
     });
   });
 

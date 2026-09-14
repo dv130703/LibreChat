@@ -81,7 +81,14 @@ const isMissingStorageError = (err) => {
  * @param {Set<string>} params.resolvedFileIds - File IDs whose storage delete succeeded.
  * @param {Set<string>} params.failedFileIds - File IDs whose storage delete failed.
  */
-function enqueueDeleteOperation({ req, file, deleteFile, promises, resolvedFileIds, failedFileIds }) {
+function enqueueDeleteOperation({
+  req,
+  file,
+  deleteFile,
+  promises,
+  resolvedFileIds,
+  failedFileIds,
+}) {
   promises.push(
     deleteFile(req, file)
       .then(() => resolvedFileIds.add(file.file_id))
@@ -450,6 +457,65 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
 };
 
 /**
+ * Whether `file` is eligible for OCR/document-parser text extraction, and if so,
+ * whether the admin's configured OCR strategy (vs. the built-in document parser)
+ * should be tried first. Shared by the `context` upload path and the file_search
+ * OCR-fallback (a scanned/image-only document that failed to embed as-is).
+ *
+ * @param {Object} params
+ * @param {Express.Multer.File} params.file
+ * @param {import('@librechat/data-schemas').AppConfig} params.appConfig
+ * @param {ReturnType<typeof mergeFileConfig>} params.fileConfig
+ * @returns {{ shouldUseConfiguredOCR: boolean, isDocumentParserEligible: boolean }}
+ */
+const getOcrEligibility = ({ file, appConfig, fileConfig }) => {
+  const shouldUseConfiguredOCR =
+    appConfig?.ocr != null &&
+    fileConfig.checkType(file.mimetype, fileConfig.ocr?.supportedMimeTypes || []);
+  const isDocumentParserEligible = documentParserMimeTypes.some((regex) =>
+    regex.test(file.mimetype),
+  );
+  return { shouldUseConfiguredOCR, isDocumentParserEligible };
+};
+
+/**
+ * Runs the configured OCR strategy (falling back to the built-in document parser on
+ * failure) and returns the extracted text, or `undefined` if both attempts failed.
+ * Does not check capabilities or eligibility - callers decide whether OCR should be
+ * attempted at all before calling this.
+ *
+ * @param {Object} params
+ * @param {ServerRequest} params.req
+ * @param {Express.Multer.File} params.file
+ * @param {import('@librechat/data-schemas').AppConfig} params.appConfig
+ * @param {boolean} params.shouldUseConfiguredOCR
+ * @returns {Promise<{ text: string, bytes: number, filepath?: string } | undefined>}
+ */
+const runOcrExtraction = async ({ req, file, appConfig, shouldUseConfiguredOCR }) => {
+  if (shouldUseConfiguredOCR) {
+    try {
+      const ocrStrategy = appConfig?.ocr?.strategy ?? FileSources.document_parser;
+      const { handleFileUpload } = getStrategyFunctions(ocrStrategy);
+      return await handleFileUpload({ req, file, loadAuthValues });
+    } catch (err) {
+      logger.error(
+        `[processAgentFileUpload] Configured OCR failed for "${file.originalname}", falling back to document_parser:`,
+        err,
+      );
+    }
+  }
+  try {
+    const { handleFileUpload } = getStrategyFunctions(FileSources.document_parser);
+    return await handleFileUpload({ req, file, loadAuthValues });
+  } catch (err) {
+    logger.error(
+      `[processAgentFileUpload] Document parser failed for "${file.originalname}":`,
+      err,
+    );
+  }
+};
+
+/**
  * Applies the current strategy for file uploads.
  * Saves file metadata to the database with an expiry TTL.
  * Files must be deleted from the server filesystem manually.
@@ -600,13 +666,11 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
 
     const fileConfig = mergeFileConfig(appConfig.fileConfig);
 
-    const shouldUseConfiguredOCR =
-      appConfig?.ocr != null &&
-      fileConfig.checkType(file.mimetype, fileConfig.ocr?.supportedMimeTypes || []);
-
-    const isDocumentParserEligible = documentParserMimeTypes.some((regex) =>
-      regex.test(file.mimetype),
-    );
+    const { shouldUseConfiguredOCR, isDocumentParserEligible } = getOcrEligibility({
+      file,
+      appConfig,
+      fileConfig,
+    });
 
     /**
      * When an admin narrows `fileConfig.text.supportedMimeTypes` to a non-permissive allowlist that
@@ -626,36 +690,12 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
 
     const shouldUseOCR = shouldUseConfiguredOCR || shouldUseDocumentParser;
 
-    const resolveDocumentText = async () => {
-      if (shouldUseConfiguredOCR) {
-        try {
-          const ocrStrategy = appConfig?.ocr?.strategy ?? FileSources.document_parser;
-          const { handleFileUpload } = getStrategyFunctions(ocrStrategy);
-          return await handleFileUpload({ req, file, loadAuthValues });
-        } catch (err) {
-          logger.error(
-            `[processAgentFileUpload] Configured OCR failed for "${file.originalname}", falling back to document_parser:`,
-            err,
-          );
-        }
-      }
-      try {
-        const { handleFileUpload } = getStrategyFunctions(FileSources.document_parser);
-        return await handleFileUpload({ req, file, loadAuthValues });
-      } catch (err) {
-        logger.error(
-          `[processAgentFileUpload] Document parser failed for "${file.originalname}":`,
-          err,
-        );
-      }
-    };
-
     if (shouldUseConfiguredOCR && !(await checkCapability(req, AgentCapabilities.ocr))) {
       throw new Error('OCR capability is not enabled for Agents');
     }
 
     if (shouldUseOCR) {
-      const ocrResult = await resolveDocumentText();
+      const ocrResult = await runOcrExtraction({ req, file, appConfig, shouldUseConfiguredOCR });
       if (ocrResult) {
         const { text, bytes, filepath: ocrFileURL } = ocrResult;
         return await createTextFile({ text, bytes, filepath: ocrFileURL });
@@ -701,7 +741,12 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
           `[processAgentFileUpload] Configured RAG text extraction unavailable for "${file.originalname}", using built-in document parser:`,
           err,
         );
-        const documentText = await resolveDocumentText();
+        const documentText = await runOcrExtraction({
+          req,
+          file,
+          appConfig,
+          shouldUseConfiguredOCR,
+        });
         if (!documentText) {
           throw new Error(
             `Unable to extract text from "${file.originalname}". RAG text extraction was unavailable and the built-in parser produced no result.`,
@@ -739,14 +784,43 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
     });
 
     // SECOND: Upload to Vector DB
-    const { uploadVectors } = require('./VectorDB/crud');
+    const { uploadVectors, NoExtractableTextError } = require('./VectorDB/crud');
 
-    embeddingResult = await uploadVectors({
-      req,
-      file,
-      file_id,
-      entity_id,
-    });
+    try {
+      embeddingResult = await uploadVectors({
+        req,
+        file,
+        file_id,
+        entity_id,
+      });
+    } catch (error) {
+      if (!(error instanceof NoExtractableTextError)) {
+        throw error;
+      }
+      /**
+       * The RAG API recognized the file type but found no extractable text - typically a
+       * scanned/image-only document. Retry once via OCR before surfacing the original error.
+       */
+      const fileConfig = mergeFileConfig(appConfig.fileConfig);
+      const { shouldUseConfiguredOCR, isDocumentParserEligible } = getOcrEligibility({
+        file,
+        appConfig,
+        fileConfig,
+      });
+      const ocrResult = isDocumentParserEligible
+        ? await runOcrExtraction({ req, file, appConfig, shouldUseConfiguredOCR })
+        : undefined;
+      if (!ocrResult) {
+        throw error;
+      }
+      embeddingResult = await uploadVectors({
+        req,
+        file,
+        file_id,
+        entity_id,
+        text: ocrResult.text,
+      });
+    }
 
     // Vector status will be stored at root level, no need for metadata
     fileInfoMetadata = {};

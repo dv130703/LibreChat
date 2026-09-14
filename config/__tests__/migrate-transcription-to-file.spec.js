@@ -113,7 +113,7 @@ describe('migrate-transcription-to-file (transcription/ARCHITECTURE.md §4.4)', 
     const { sourceFileId, transcriptFileId, diarizationDetailFileId } =
       await seedTranscribedConversation({
         conversationId: 'convo-2',
-        transcription: { model: 'large-v3-turbo', language: 'en', diarize: true, minSpeakers: 2 },
+        transcription: { model: 'large-v3-turbo', language: 'en', diarize: true, speakerCount: 2 },
       });
 
     const result = await migrateTranscriptionToFile({ dryRun: false });
@@ -125,7 +125,7 @@ describe('migrate-transcription-to-file (transcription/ARCHITECTURE.md §4.4)', 
       status: 'ready',
       transcriptFileId,
       diarizationDetailFileId,
-      effectiveOptions: expect.objectContaining({ model: 'large-v3-turbo', minSpeakers: 2 }),
+      effectiveOptions: expect.objectContaining({ model: 'large-v3-turbo', speakerCount: 2 }),
     });
     // The original request was never captured historically - only the
     // server-resolved values survived. Deliberately omitted rather than set

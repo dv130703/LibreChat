@@ -65,6 +65,16 @@ const loadProjectWorkspace = () =>
     Component: m.ProjectWorkspace,
   }));
 
+const loadAgentBuilderView = () =>
+  import('~/components/Agents/layouts/AgentBuilderView').then((m) => ({
+    Component: m.default,
+  }));
+
+const loadTransparencyView = () =>
+  import('~/components/Transparency/TransparencyView').then((m) => ({
+    Component: m.default,
+  }));
+
 const baseEl = document.querySelector('base');
 const baseHref = baseEl?.getAttribute('href') || '/';
 
@@ -203,6 +213,22 @@ export const router = createBrowserRouter(
                   <AgentMarketplace />
                 </MarketplaceProvider>
               ),
+            },
+            {
+              path: 'agents/builder',
+              element: <Navigate to="/agents/builder/new" replace={true} />,
+            },
+            {
+              path: 'agents/builder/new',
+              lazy: loadAgentBuilderView,
+            },
+            {
+              path: 'agents/builder/:agentId',
+              lazy: loadAgentBuilderView,
+            },
+            {
+              path: 'transparency/:conversationId/:messageId',
+              lazy: loadTransparencyView,
             },
           ],
         },

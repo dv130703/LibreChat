@@ -20,7 +20,6 @@ interface BadgeRowContextType {
   memory: ReturnType<typeof useToolToggle>;
   webSearch: ReturnType<typeof useToolToggle>;
   artifacts: ReturnType<typeof useToolToggle>;
-  fileSearch: ReturnType<typeof useToolToggle>;
   codeInterpreter: ReturnType<typeof useToolToggle>;
   searchApiKeyForm: ReturnType<typeof useSearchApiKeyForm>;
   mcpServerManager: ReturnType<typeof useMCPServerManager>;
@@ -98,14 +97,12 @@ export default function BadgeRowProvider({
 
       const codeToggleKey = `${LocalStorageKeys.LAST_CODE_TOGGLE_}${storageSuffix}`;
       const webSearchToggleKey = `${LocalStorageKeys.LAST_WEB_SEARCH_TOGGLE_}${storageSuffix}`;
-      const fileSearchToggleKey = `${LocalStorageKeys.LAST_FILE_SEARCH_TOGGLE_}${storageSuffix}`;
       const artifactsToggleKey = `${LocalStorageKeys.LAST_ARTIFACTS_TOGGLE_}${storageSuffix}`;
       const skillsToggleKey = `${LocalStorageKeys.LAST_SKILLS_TOGGLE_}${storageSuffix}`;
       const memoryToggleKey = `${LocalStorageKeys.LAST_MEMORY_TOGGLE_}${storageSuffix}`;
 
       const codeToggleValue = getTimestampedValue(codeToggleKey);
       const webSearchToggleValue = getTimestampedValue(webSearchToggleKey);
-      const fileSearchToggleValue = getTimestampedValue(fileSearchToggleKey);
       const artifactsToggleValue = getTimestampedValue(artifactsToggleKey);
       const skillsToggleValue = getTimestampedValue(skillsToggleKey);
       const memoryToggleValue = getTimestampedValue(memoryToggleKey);
@@ -125,14 +122,6 @@ export default function BadgeRowProvider({
           initialValues[Tools.web_search] = JSON.parse(webSearchToggleValue);
         } catch (e) {
           console.error('Failed to parse web search toggle value:', e);
-        }
-      }
-
-      if (fileSearchToggleValue !== null) {
-        try {
-          initialValues[Tools.file_search] = JSON.parse(fileSearchToggleValue);
-        } catch (e) {
-          console.error('Failed to parse file search toggle value:', e);
         }
       }
 
@@ -234,15 +223,6 @@ export default function BadgeRowProvider({
     },
   });
 
-  /** FileSearch hook */
-  const fileSearch = useToolToggle({
-    conversationId,
-    storageContextKey,
-    toolKey: Tools.file_search,
-    localStorageKey: LocalStorageKeys.LAST_FILE_SEARCH_TOGGLE_,
-    isAuthenticated: true,
-  });
-
   /** Artifacts hook - using a custom key since it's not a Tool but a capability */
   const artifacts = useToolToggle({
     conversationId,
@@ -277,7 +257,6 @@ export default function BadgeRowProvider({
     memory,
     webSearch,
     artifacts,
-    fileSearch,
     agentsConfig,
     conversationId,
     storageContextKey,

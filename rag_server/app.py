@@ -51,7 +51,7 @@ from auth import get_user_id
 from config import LOG_REQUESTS, embed_documents, embed_query
 from extract import UnsupportedFileType, chunk_text, extract_pages, is_supported
 from transcription.config import get_settings
-from transcription.speaker_bounds import MAX_ALLOWED_SPEAKERS
+from transcription.speaker_count import MAX_ALLOWED_SPEAKERS
 from transcription.vocabulary import SUGGESTED_TERMS
 from transcription.schemas import TranscriptionConfig, TranscriptionResponse
 from transcription.whisperx_service import NoSpeakerSegments, get_whisperx_service
@@ -341,20 +341,15 @@ async def transcribe_config(user_id: str = Depends(get_user_id)) -> Transcriptio
 async def transcribe_audio(
     file: UploadFile = File(...),
     diarize: bool = Form(True),
-    min_speakers: int | None = Form(None),
-    max_speakers: int | None = Form(None),
+    speaker_count: int | None = Form(None),
     # None uses this deployment's configured default
     # (WHISPERX_DIARIZATION_CLUSTERING_THRESHOLD, itself pipeline-default when
     # unset) - see WhisperXService.transcribe for what this actually tunes.
     clustering_threshold: float | None = Form(None),
     language: str | None = Form(None),
-    # Per-recording accuracy hints - see `WhisperXService.build_prompt`.
-    # `context_terms` (names/jargon the caller confirms) is packed into
-    # Whisper's initial_prompt first and always wins; `context` (free prose)
-    # is never sent to the model verbatim - only mined for proper nouns to
-    # fill whatever budget the confirmed terms didn't need.
+    # Per-recording accuracy hint - see `WhisperXService.build_prompt`. Names
+    # and jargon the caller confirms, packed into Whisper's initial_prompt.
     context_terms: str | None = Form(None),
-    context: str | None = Form(None),
     # None uses this deployment's configured default (WHISPERX_WHISPER_MODEL).
     model: str | None = Form(None),
     # None uses WHISPERX_SUPPRESS_NUMERALS. Digits are suppressed at the decoder
@@ -362,9 +357,9 @@ async def transcribe_audio(
     # needs numerals in the transcript can ask for them.
     suppress_numerals: bool | None = Form(None),
     # True when the caller confirmed splitting by audio channel instead of
-    # pyannote clustering (see /transcribe/probe-channels) - each channel is
-    # transcribed and labelled as its own speaker, bypassing diarization
-    # entirely.
+    # pyannote clustering (see LibreChat's own POST /api/transcribe/probe,
+    # not a route on this server) - each channel is transcribed and labelled
+    # as its own speaker, bypassing diarization entirely.
     channel_split: bool = Form(False),
     user_id: str = Depends(get_user_id),
 ) -> TranscriptionResponse:
@@ -403,11 +398,9 @@ async def transcribe_audio(
                 tmp_path,
                 language=language,
                 diarize=diarize,
-                min_speakers=min_speakers,
-                max_speakers=max_speakers,
+                speaker_count=speaker_count,
                 clustering_threshold=clustering_threshold,
                 context_terms=context_terms,
-                context=context,
                 model=model,
                 suppress_numerals=suppress_numerals,
                 channel_split=channel_split,

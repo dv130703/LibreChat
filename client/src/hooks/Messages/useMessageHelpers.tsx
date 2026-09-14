@@ -1,8 +1,8 @@
 import { useCallback, useMemo } from 'react';
 import throttle from 'lodash/throttle';
-import { isAssistantsEndpoint, isAgentsEndpoint } from 'librechat-data-provider';
+import { isAgentsEndpoint } from 'librechat-data-provider';
 import type { TMessageProps } from '~/common';
-import { useMessagesViewContext, useAssistantsMapContext, useAgentsMapContext } from '~/Providers';
+import { useMessagesViewContext, useAgentsMapContext } from '~/Providers';
 import useCopyToClipboard from './useCopyToClipboard';
 import { useGetAddedConvo } from '~/hooks/Chat';
 import { logger } from '~/utils';
@@ -21,7 +21,6 @@ export default function useMessageHelpers(props: TMessageProps) {
     latestMessageId,
   } = useMessagesViewContext();
   const agentsMap = useAgentsMapContext();
-  const assistantMap = useAssistantsMapContext();
 
   const getAddedConvo = useGetAddedConvo();
 
@@ -52,17 +51,6 @@ export default function useMessageHelpers(props: TMessageProps) {
     [isSubmitting, setAbortScroll],
   );
 
-  const assistant = useMemo(() => {
-    if (!isAssistantsEndpoint(conversation?.endpoint)) {
-      return undefined;
-    }
-
-    const endpointKey = conversation?.endpoint ?? '';
-    const modelKey = message?.model ?? '';
-
-    return assistantMap?.[endpointKey] ? assistantMap[endpointKey][modelKey] : undefined;
-  }, [conversation?.endpoint, message?.model, assistantMap]);
-
   const agent = useMemo(() => {
     if (!isAgentsEndpoint(conversation?.endpoint)) {
       return undefined;
@@ -89,7 +77,6 @@ export default function useMessageHelpers(props: TMessageProps) {
     agent,
     index,
     isLast,
-    assistant,
     enterEdit,
     conversation,
     isSubmitting,

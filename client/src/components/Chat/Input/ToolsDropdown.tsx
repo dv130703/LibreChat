@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import * as Ariakit from '@ariakit/react';
-import { TooltipAnchor, DropdownPopup, PinIcon, VectorIcon } from '@librechat/client';
+import { TooltipAnchor, DropdownPopup, PinIcon } from '@librechat/client';
 import { Brain, Globe, ScrollText, Settings, Settings2, TerminalSquareIcon } from 'lucide-react';
 import {
   AuthType,
@@ -33,14 +33,8 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const context = useBadgeRowContext();
   const { data: startupConfig } = useGetStartupConfig();
 
-  const {
-    codeEnabled,
-    memoryEnabled,
-    webSearchEnabled,
-    artifactsEnabled,
-    fileSearchEnabled,
-    skillsEnabled,
-  } = useAgentCapabilities(context?.agentsConfig?.capabilities ?? defaultAgentCapabilities);
+  const { codeEnabled, memoryEnabled, webSearchEnabled, artifactsEnabled, skillsEnabled } =
+    useAgentCapabilities(context?.agentsConfig?.capabilities ?? defaultAgentCapabilities);
 
   const canUseWebSearch = useHasAccess({
     permissionType: PermissionTypes.WEB_SEARCH,
@@ -49,11 +43,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
 
   const canRunCode = useHasAccess({
     permissionType: PermissionTypes.RUN_CODE,
-    permission: Permissions.USE,
-  });
-
-  const canUseFileSearch = useHasAccess({
-    permissionType: PermissionTypes.FILE_SEARCH,
     permission: Permissions.USE,
   });
 
@@ -77,7 +66,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     memory,
     webSearch,
     artifacts,
-    fileSearch,
     mcpServerManager,
     codeInterpreter,
     searchApiKeyForm,
@@ -91,7 +79,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     authData: webSearchAuthData,
   } = webSearch ?? {};
   const { isPinned: isCodePinned, setIsPinned: setIsCodePinned } = codeInterpreter ?? {};
-  const { isPinned: isFileSearchPinned, setIsPinned: setIsFileSearchPinned } = fileSearch ?? {};
   const { isPinned: isArtifactsPinned, setIsPinned: setIsArtifactsPinned } = artifacts ?? {};
   const { isPinned: isSkillsPinned, setIsPinned: setIsSkillsPinned } = skills ?? {};
   const { isPinned: isMemoryPinned, setIsPinned: setIsMemoryPinned } = memory ?? {};
@@ -111,11 +98,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
     const newValue = !codeInterpreter?.toggleState;
     codeInterpreter?.debouncedChange({ value: newValue });
   }, [codeInterpreter]);
-
-  const handleFileSearchToggle = useCallback(() => {
-    const newValue = !fileSearch?.toggleState;
-    fileSearch?.debouncedChange({ value: newValue });
-  }, [fileSearch]);
 
   const handleArtifactsToggle = useCallback(() => {
     const currentState = artifacts?.toggleState;
@@ -157,38 +139,6 @@ const ToolsDropdown = ({ disabled }: ToolsDropdownProps) => {
   const mcpPlaceholder = startupConfig?.interface?.mcpServers?.placeholder;
 
   const dropdownItems: MenuItemProps[] = [];
-
-  if (fileSearchEnabled && canUseFileSearch) {
-    dropdownItems.push({
-      onClick: handleFileSearchToggle,
-      hideOnClick: false,
-      render: (props) => (
-        <div {...props}>
-          <div className="flex items-center gap-2">
-            <VectorIcon className="icon-md" />
-            <span>{localize('com_assistants_file_search')}</span>
-          </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsFileSearchPinned?.(!isFileSearchPinned);
-            }}
-            className={cn(
-              'rounded p-1 transition-all duration-200',
-              'hover:bg-surface-secondary hover:shadow-sm',
-              !isFileSearchPinned && 'text-text-secondary hover:text-text-primary',
-            )}
-            aria-label={isFileSearchPinned ? 'Unpin' : 'Pin'}
-          >
-            <div className="h-4 w-4">
-              <PinIcon unpin={isFileSearchPinned} />
-            </div>
-          </button>
-        </div>
-      ),
-    });
-  }
 
   if (canUseWebSearch && webSearchEnabled) {
     dropdownItems.push({

@@ -30,49 +30,6 @@ const deprecatedVariables = [
   },
 ];
 
-export const deprecatedAzureVariables: {
-  key: string;
-  description: string;
-}[] = [
-  /* "related to" precedes description text */
-  { key: 'AZURE_OPENAI_DEFAULT_MODEL', description: 'setting a default model' },
-  { key: 'AZURE_OPENAI_MODELS', description: 'setting models' },
-  {
-    key: 'AZURE_USE_MODEL_AS_DEPLOYMENT_NAME',
-    description: 'using model names as deployment names',
-  },
-  { key: 'AZURE_API_KEY', description: 'setting a single Azure API key' },
-  { key: 'AZURE_OPENAI_API_INSTANCE_NAME', description: 'setting a single Azure instance name' },
-  {
-    key: 'AZURE_OPENAI_API_DEPLOYMENT_NAME',
-    description: 'setting a single Azure deployment name',
-  },
-  { key: 'AZURE_OPENAI_API_VERSION', description: 'setting a single Azure API version' },
-  {
-    key: 'AZURE_OPENAI_API_COMPLETIONS_DEPLOYMENT_NAME',
-    description: 'setting a single Azure completions deployment name',
-  },
-  {
-    key: 'AZURE_OPENAI_API_EMBEDDINGS_DEPLOYMENT_NAME',
-    description: 'setting a single Azure embeddings deployment name',
-  },
-  {
-    key: 'PLUGINS_USE_AZURE',
-    description: 'using Azure for Plugins',
-  },
-];
-
-export const conflictingAzureVariables: {
-  key: string;
-}[] = [
-  {
-    key: 'INSTANCE_NAME',
-  },
-  {
-    key: 'DEPLOYMENT_NAME',
-  },
-];
-
 /**
  * Checks the password reset configuration for security issues.
  */
@@ -172,28 +129,6 @@ export async function checkHealth(): Promise<void> {
   }
 }
 
-/**
- * Checks for the usage of deprecated and conflicting Azure variables.
- * Logs warnings for any deprecated or conflicting environment variables found, indicating potential issues with `azureOpenAI` endpoint configuration.
- */
-function checkAzureVariables() {
-  deprecatedAzureVariables.forEach(({ key, description }) => {
-    if (process.env[key]) {
-      logger.warn(
-        `The \`${key}\` environment variable (related to ${description}) should not be used in combination with the \`azureOpenAI\` endpoint configuration, as you will experience conflicts and errors.`,
-      );
-    }
-  });
-
-  conflictingAzureVariables.forEach(({ key }) => {
-    if (process.env[key]) {
-      logger.warn(
-        `The \`${key}\` environment variable should not be used in combination with the \`azureOpenAI\` endpoint configuration, as you may experience with the defined placeholders for mapping to the current model grouping using the same name.`,
-      );
-    }
-  });
-}
-
 export function checkInterfaceConfig(appConfig: AppConfig): void {
   const interfaceConfig = appConfig.interfaceConfig;
   let i = 0;
@@ -247,9 +182,6 @@ export function checkInterfaceConfig(appConfig: AppConfig): void {
  */
 export async function performStartupChecks(appConfig?: AppConfig): Promise<void> {
   checkVariables();
-  if (appConfig?.endpoints?.azureOpenAI) {
-    checkAzureVariables();
-  }
   if (appConfig) {
     checkInterfaceConfig(appConfig);
   }

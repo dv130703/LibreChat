@@ -181,7 +181,7 @@ export type AgentPanelProps = {
   setMcp: React.Dispatch<React.SetStateAction<t.MCP | undefined>>;
   setAction: React.Dispatch<React.SetStateAction<t.Action | undefined>>;
   endpointsConfig?: t.TEndpointsConfig;
-  setCurrentAgentId: React.Dispatch<React.SetStateAction<string | undefined>>;
+  setCurrentAgentId: (agentId: string | undefined) => void;
   agentsConfig?: t.TAgentsEndpoint | null;
 };
 
@@ -205,7 +205,7 @@ export type AgentPanelContextType = {
   activePanel?: string;
   regularTools?: t.TPlugin[];
   setActivePanel: React.Dispatch<React.SetStateAction<Panel>>;
-  setCurrentAgentId: React.Dispatch<React.SetStateAction<string | undefined>>;
+  setCurrentAgentId: (agentId: string | undefined) => void;
   agent_id?: string;
   startupConfig?: t.TStartupConfig | null;
   agentsConfig?: t.TAgentsEndpoint | null;
@@ -223,7 +223,6 @@ export type AgentModelPanelProps = {
   agent_id?: string;
   providers: Option[];
   models: Record<string, string[] | undefined>;
-  setActivePanel: React.Dispatch<React.SetStateAction<Panel>>;
 };
 
 export type AugmentedColumnDef<TData, TValue> = ColumnDef<TData, TValue> & DataColumnMeta;

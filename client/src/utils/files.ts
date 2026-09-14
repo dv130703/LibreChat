@@ -401,14 +401,26 @@ export const getViableUploadOptions = (
     types.every((type) => predicate(type as string));
 
   const options: (EToolResources | undefined)[] = [];
-  if (every((type) => isProviderAttachType(type, ctx))) {
-    options.push(undefined);
-  }
-  if (
+  const fileSearchViable =
     ctx.fileSearchEnabled &&
     ctx.fileSearchAllowedByAgent &&
-    every((type) => !type.startsWith('image/') && checkType(type, retrievalMimeTypes))
-  ) {
+    every((type) => !type.startsWith('image/') && checkType(type, retrievalMimeTypes));
+  /**
+   * Plain provider attachment (`undefined`) is only offered when `file_search` isn't
+   * viable for this file set. `isProviderAttachType` treats any document-supported
+   * provider (e.g. an OpenAI-compatible custom endpoint - which is how Ollama is
+   * typically configured) as able to natively attach a PDF/document, but most such
+   * providers can't actually read it; without this gate, a document-type upload would
+   * offer both destinations, and a caller with no tie-breaker (the drag/paste "which
+   * destination?" modal) could let the user pick plain attachment - silently storing
+   * the file with no content ever reaching the model. Images are unaffected:
+   * `fileSearchViable` already excludes them, so native attachment stays the only
+   * outcome there.
+   */
+  if (!fileSearchViable && every((type) => isProviderAttachType(type, ctx))) {
+    options.push(undefined);
+  }
+  if (fileSearchViable) {
     options.push(EToolResources.file_search);
   }
   if (
@@ -418,7 +430,14 @@ export const getViableUploadOptions = (
   ) {
     options.push(EToolResources.execute_code);
   }
-  if (ctx.contextEnabled && every((type) => isContextType(type, ctx.fileConfig))) {
+  /**
+   * `context` (OCR/text-extraction, full-content injection) is only offered when
+   * `file_search` (chunked/embedded, on-demand semantic search) isn't viable for
+   * this file set - e.g. audio/video needing STT, or file_search disabled/disallowed.
+   * Every document-type file that qualifies for both now goes to file_search alone,
+   * so there's no "which destination?" prompt for the common case.
+   */
+  if (!fileSearchViable && ctx.contextEnabled && every((type) => isContextType(type, ctx.fileConfig))) {
     options.push(EToolResources.context);
   }
   return options;

@@ -2,7 +2,6 @@ import { useCallback } from 'react';
 import { useSetRecoilState, useRecoilValue } from 'recoil';
 import { PlusCircle } from 'lucide-react';
 import { TooltipAnchor } from '@librechat/client';
-import { isAssistantsEndpoint } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
 import { useGetConversation, useLocalize } from '~/hooks';
 import { mainTextareaId } from '~/common';
@@ -29,10 +28,6 @@ function AddMultiConvo() {
   }, [getConversation, setAddedConvo]);
 
   if (!endpoint) {
-    return null;
-  }
-
-  if (isAssistantsEndpoint(endpoint)) {
     return null;
   }
 

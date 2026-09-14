@@ -9,7 +9,6 @@ import { isImageURL } from '~/utils/icons';
 export default function ConvoIcon({
   conversation,
   endpointsConfig,
-  assistantMap,
   agentsMap,
   className = '',
   containerClassName = '',
@@ -18,7 +17,6 @@ export default function ConvoIcon({
 }: {
   conversation: t.TConversation | t.TPreset | null;
   endpointsConfig: t.TEndpointsConfig;
-  assistantMap: t.TAssistantsMap | undefined;
   agentsMap: t.TAgentsMap | undefined;
   containerClassName?: string;
   context?: 'message' | 'nav' | 'landing' | 'menu-item';
@@ -34,17 +32,13 @@ export default function ConvoIcon({
       getEntity({
         endpoint,
         agentsMap,
-        assistantMap,
         agent_id: conversation?.agent_id,
-        assistant_id: conversation?.assistant_id,
       }),
-    [endpoint, conversation?.agent_id, conversation?.assistant_id, agentsMap, assistantMap],
+    [endpoint, conversation?.agent_id, agentsMap],
   );
 
   const name = entity?.name ?? '';
-  const avatar = isAgent
-    ? (entity as t.Agent | undefined)?.avatar?.filepath
-    : ((entity as t.Assistant | undefined)?.metadata?.avatar as string);
+  const avatar = isAgent ? (entity as t.Agent | undefined)?.avatar?.filepath : undefined;
 
   const endpointIconURL = getEndpointField(endpointsConfig, endpoint, 'iconURL');
   const iconKey = getIconKey({ endpoint, endpointsConfig, endpointIconURL });
@@ -57,8 +51,6 @@ export default function ConvoIcon({
           iconURL={iconURL}
           modelLabel={conversation?.chatGptLabel ?? conversation?.modelLabel ?? ''}
           endpointIconURL={endpointIconURL}
-          assistantAvatar={avatar}
-          assistantName={name}
           agentAvatar={avatar}
           agentName={name}
           context={context}
@@ -72,7 +64,6 @@ export default function ConvoIcon({
               endpoint={endpoint}
               className={className}
               iconURL={endpointIconURL}
-              assistantName={name}
               agentName={name}
               avatar={avatar}
             />

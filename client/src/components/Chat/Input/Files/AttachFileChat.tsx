@@ -5,7 +5,6 @@ import {
   mergeFileConfig,
   isAgentsEndpoint,
   resolveEndpointType,
-  isAssistantsEndpoint,
   getEndpointFileConfig,
 } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
@@ -13,7 +12,6 @@ import type { ExtendedFile, FileSetter } from '~/common';
 import { useGetFileConfig, useGetEndpointsQuery, useGetAgentByIdQuery } from '~/data-provider';
 import { useAgentsMapContext } from '~/Providers';
 import AttachFileMenu from './AttachFileMenu';
-import AttachFile from './AttachFile';
 
 function AttachFileChat({
   disableInputs,
@@ -35,7 +33,6 @@ function AttachFileChat({
   const conversationId = conversation?.conversationId ?? Constants.NEW_CONVO;
   const { endpoint } = conversation ?? { endpoint: null };
   const isAgents = useMemo(() => isAgentsEndpoint(endpoint), [endpoint]);
-  const isAssistants = useMemo(() => isAssistantsEndpoint(endpoint), [endpoint]);
 
   const agentsMap = useAgentsMapContext();
 
@@ -91,19 +88,7 @@ function AttachFileChat({
     [disableInputs, endpointFileConfig?.disabled],
   );
 
-  if (isAssistants && endpointSupportsFiles && !isUploadDisabled) {
-    return (
-      <AttachFile
-        disabled={disableInputs}
-        files={files}
-        setFiles={setFiles}
-        setFilesLoading={setFilesLoading}
-        conversation={conversation}
-        setConversation={setConversation}
-        latestMessageId={latestMessageId}
-      />
-    );
-  } else if ((isAgents || endpointSupportsFiles) && !isUploadDisabled) {
+  if ((isAgents || endpointSupportsFiles) && !isUploadDisabled) {
     return (
       <AttachFileMenu
         endpoint={endpoint}

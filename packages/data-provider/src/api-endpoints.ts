@@ -1,5 +1,4 @@
 import type { StartupConfigContext } from './config';
-import type { AssistantsEndpoint } from './schemas';
 import { ResourceType } from './accessPermissions';
 import * as q from './types/queries';
 
@@ -66,6 +65,9 @@ export const messages = (params: q.MessagesListParams) => {
 };
 
 export const messagesArtifacts = (messageId: string) => `${messagesRoot}/artifact/${messageId}`;
+
+export const messageTransparency = (conversationId: string, messageId: string) =>
+  `${messagesRoot}/${conversationId}/${messageId}/transparency`;
 
 export const messagesBranch = () => `${messagesRoot}/branch`;
 
@@ -242,40 +244,6 @@ export const prompts = () => `${BASE_URL}/api/prompts`;
 
 export const addPromptToGroup = (groupId: string) =>
   `${BASE_URL}/api/prompts/groups/${groupId}/prompts`;
-
-export const assistants = ({
-  path = '',
-  options,
-  version,
-  endpoint,
-  isAvatar,
-}: {
-  path?: string;
-  options?: object;
-  endpoint?: AssistantsEndpoint;
-  version: number | string;
-  isAvatar?: boolean;
-}) => {
-  let url = isAvatar === true ? `${images()}/assistants` : `${BASE_URL}/api/assistants/v${version}`;
-
-  if (path && path !== '') {
-    url += `/${path}`;
-  }
-
-  if (endpoint) {
-    options = {
-      ...(options ?? {}),
-      endpoint,
-    };
-  }
-
-  if (options && Object.keys(options).length > 0) {
-    const queryParams = new URLSearchParams(options as Record<string, string>).toString();
-    url += `?${queryParams}`;
-  }
-
-  return url;
-};
 
 export const agents = ({ path = '', options }: { path?: string; options?: object }) => {
   let url = `${BASE_URL}/api/agents`;

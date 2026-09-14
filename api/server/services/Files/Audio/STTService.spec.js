@@ -1,12 +1,10 @@
 // Mock all external dependencies so we can test getFileExtensionFromMime in isolation
 jest.mock('axios');
-jest.mock('form-data');
 jest.mock('https-proxy-agent');
 jest.mock('@librechat/data-schemas', () => ({ logger: { warn: jest.fn(), error: jest.fn() } }));
-jest.mock('@librechat/api', () => ({ genAzureEndpoint: jest.fn(), logAxiosError: jest.fn() }));
-jest.mock('librechat-data-provider', () => ({
-  extractEnvVariable: jest.fn(),
-  STTProviders: {},
+jest.mock('@librechat/api', () => ({
+  logAxiosError: jest.fn(),
+  applyAxiosProxyConfig: jest.fn(),
 }));
 jest.mock('~/server/services/Config', () => ({ getAppConfig: jest.fn() }));
 
@@ -55,7 +53,7 @@ describe('STT audio format validation with MIME normalization', () => {
   const acceptedFormats = ['flac', 'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'ogg', 'wav', 'webm'];
 
   /**
-   * Mirrors the format validation logic in azureOpenAIProvider.
+   * Mirrors the audio-format validation logic used when preparing an STT request.
    * Only uses MIME_TO_EXTENSION_MAP for normalization so unknown audio
    * subtypes are not silently accepted via the webm default fallback.
    * Raw subtype matching is gated on audio/video prefix to prevent

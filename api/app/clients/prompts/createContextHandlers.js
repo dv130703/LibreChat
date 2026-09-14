@@ -1,5 +1,10 @@
 const axios = require('axios');
-const { isEnabled, generateShortLivedToken, logAxiosError } = require('@librechat/api');
+const {
+  isEnabled,
+  logAxiosError,
+  isNeverInlinedFileContext,
+  generateShortLivedToken,
+} = require('@librechat/api');
 
 const footer = `Use the context as your learned knowledge to better answer the user.
 
@@ -9,7 +14,7 @@ In your response, remember to follow these guidelines:
 - Avoid mentioning that you obtained the information from the context.
 `;
 
-function createContextHandlers(req, userMessageContent) {
+function createContextHandlers(req, userMessageContent, { hasFileSearchTool = false } = {}) {
   if (!process.env.RAG_API_URL) {
     return;
   }
@@ -19,9 +24,16 @@ function createContextHandlers(req, userMessageContent) {
   const processedIds = new Set();
   const jwtToken = generateShortLivedToken(req.user.id);
   const useFullContext = isEnabled(process.env.RAG_USE_FULL_CONTEXT);
+  // A transcript's full reassembled text must never ride along in a prompt
+  // unmediated (see `isNeverInlinedFileContext`) - even when the admin has
+  // opted every other embedded file into RAG_USE_FULL_CONTEXT, a transcript
+  // still falls back to chunk-level `/query` search instead of the whole-
+  // document GET below. Both call sites below share this one check so they
+  // can't drift out of sync with each other.
+  const usesFullContext = (file) => useFullContext && !isNeverInlinedFileContext(file.context);
 
   const query = async (file) => {
-    if (useFullContext) {
+    if (usesFullContext(file)) {
       return axios.get(`${process.env.RAG_API_URL}/documents/${file.file_id}/context`, {
         headers: {
           Authorization: `Bearer ${jwtToken}`,
@@ -46,15 +58,29 @@ function createContextHandlers(req, userMessageContent) {
   };
 
   const processFile = async (file) => {
-    if (file.embedded && !processedIds.has(file.file_id)) {
-      try {
-        const promise = query(file);
-        queryPromises.push(promise);
-        processedFiles.push(file);
-        processedIds.add(file.file_id);
-      } catch (error) {
+    // A file the model can already reach through a live `file_search` tool
+    // must not ALSO be queried here - every embedded file is unconditionally
+    // categorized into `tool_resources.file_search` regardless of whether
+    // that tool made it onto this turn's list (see the call site in
+    // client.js), so `hasFileSearchTool` is what actually distinguishes
+    // "the tool can reach this" from "this is the only path left".
+    if (file.embedded && !hasFileSearchTool && !processedIds.has(file.file_id)) {
+      // `query(file)` is itself `async`, so calling it never throws
+      // synchronously - a real failure (RAG server down, network error, a
+      // non-2xx response) only ever surfaces later as a REJECTED PROMISE,
+      // which a plain try/catch around this call can never see. Attaching
+      // `.catch` here converts that failure into a value (`null`) instead of
+      // an unhandled rejection left sitting in `queryPromises`, so one
+      // file's transient RAG failure degrades to "no results for this file"
+      // in `createContext` below rather than rejecting its `Promise.all`
+      // and losing the context for every OTHER attached file too.
+      const promise = query(file).catch((error) => {
         logAxiosError({ message: `Error processing file ${file.filename}`, error });
-      }
+        return null;
+      });
+      queryPromises.push(promise);
+      processedFiles.push(file);
+      processedIds.add(file.file_id);
     }
   };
 
@@ -91,12 +117,18 @@ function createContextHandlers(req, userMessageContent) {
 
       const resolvedQueries = await Promise.all(queryPromises);
 
+      // A `null` entry is a file whose query failed (see the `.catch` in
+      // `processFile`) - paired with its file and dropped here, rather than
+      // one failure blanking out every other attached file's context.
+      const succeeded = resolvedQueries
+        .map((queryResult, index) => ({ queryResult, file: processedFiles[index] }))
+        .filter(({ queryResult }) => queryResult != null);
+
       const context =
-        resolvedQueries.length === 0
+        succeeded.length === 0
           ? '\n\tThe semantic search did not return any results.'
-          : resolvedQueries
-              .map((queryResult, index) => {
-                const file = processedFiles[index];
+          : succeeded
+              .map(({ queryResult, file }) => {
                 let contextItems = queryResult.data;
 
                 const generateContext = (currentContext) =>
@@ -107,7 +139,7 @@ function createContextHandlers(req, userMessageContent) {
             </context>
           </file>`;
 
-                if (useFullContext) {
+                if (usesFullContext(file)) {
                   return generateContext(`\n${contextItems}`);
                 }
 

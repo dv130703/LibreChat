@@ -1,11 +1,9 @@
 import { memo, useEffect, useCallback } from 'react';
 import { useRecoilState } from 'recoil';
-import { isAssistantsEndpoint } from 'librechat-data-provider';
 import type { TMessage } from 'librechat-data-provider';
 import type { ReactElement } from 'react';
 import type { TMessageProps } from '~/common';
 import MessageContent from '~/components/Messages/MessageContent';
-import MessageParts from './MessageParts';
 import Message from './Message';
 import store from '~/store';
 
@@ -71,9 +69,7 @@ function MultiMessage({
   };
 
   let row: ReactElement;
-  if (isAssistantsEndpoint(message.endpoint) && message.content) {
-    row = <MessageParts {...sharedProps} />;
-  } else if (message.content) {
+  if (message.content) {
     row = <MessageContent {...sharedProps} />;
   } else {
     row = <Message {...sharedProps} />;

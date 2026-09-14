@@ -26,7 +26,10 @@ server:
     - POST   /query # semantic search within one file
     - DELETE /documents # drop every chunk of the given files
     - GET    /documents/{file_id}/context # whole document, if RAG_USE_FULL_CONTEXT
+    - POST   /guidance # authoring rules for the create_document tool
     - POST   /text # plain-text extraction, no embedding
+    - GET    /transcribe/config # this deployment's transcription defaults
+    - POST   /transcribe # speaker-labelled audio/video transcription
     - GET    /health # readiness probe, checked at LibreChat startup
 
 # Requests are authenticated with the short-lived HS256 token LibreChat signs for

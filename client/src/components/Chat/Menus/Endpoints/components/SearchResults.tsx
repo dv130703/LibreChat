@@ -1,7 +1,7 @@
 import React, { Fragment } from 'react';
 import { VisuallyHidden } from '@ariakit/react';
 import { CheckCircle2, EarthIcon } from 'lucide-react';
-import { isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
+import { isAgentsEndpoint } from 'librechat-data-provider';
 import type { TModelSpec } from 'librechat-data-provider';
 import type { Endpoint } from '~/common';
 import MarketplaceItem, { marketplaceSearchMatches } from './Marketplace';
@@ -124,12 +124,6 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
                     endpoint.agentNames[model.name]
                   ) {
                     modelName = endpoint.agentNames[model.name];
-                  } else if (
-                    isAssistantsEndpoint(endpoint.value) &&
-                    endpoint.assistantNames &&
-                    endpoint.assistantNames[model.name]
-                  ) {
-                    modelName = endpoint.assistantNames[model.name];
                   }
                   return modelName.toLowerCase().includes(lowerQuery);
                 });
@@ -167,12 +161,6 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
                     modelName = endpoint.agentNames[modelId];
                     const modelInfo = endpoint?.models?.find((m) => m.name === modelId);
                     isGlobal = modelInfo?.isGlobal ?? false;
-                  } else if (
-                    isAssistantsEndpoint(endpoint.value) &&
-                    endpoint.assistantNames &&
-                    endpoint.assistantNames[modelId]
-                  ) {
-                    modelName = endpoint.assistantNames[modelId];
                   }
 
                   const isModelSelected =

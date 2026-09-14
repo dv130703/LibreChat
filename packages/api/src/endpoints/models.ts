@@ -33,8 +33,6 @@ export interface FetchModelsParams {
   name?: string;
   /** Whether directEndpoint was configured */
   direct?: boolean;
-  /** Whether to fetch from Azure */
-  azure?: boolean;
   /** Whether to send user ID as query parameter */
   userIdQuery?: boolean;
   /** Whether to create token configuration from API response */
@@ -137,7 +135,7 @@ export function splitAndTrim(input: string | null | undefined): string[] {
 }
 
 /**
- * Fetches models from the specified base API path or Azure, based on the provided configuration.
+ * Fetches models from the specified base API path, based on the provided configuration.
  *
  * @param params - The parameters for fetching the models.
  * @returns A promise that resolves to an array of model identifiers.
@@ -150,7 +148,6 @@ export async function fetchModels({
   allowedAddresses,
   name = 'custom',
   direct = false,
-  azure = false,
   userIdQuery = false,
   createTokenConfig = true,
   tokenKey,
@@ -161,7 +158,7 @@ export async function fetchModels({
   let models: string[] = [];
   const baseURL = direct ? extractBaseURL(_baseURL ?? '') : _baseURL;
 
-  if (!baseURL && !azure) {
+  if (!baseURL) {
     return models;
   }
 
@@ -255,11 +252,7 @@ export async function fetchModels({
       options.headers.Authorization = `Bearer ${apiKey}`;
     }
 
-    if (process.env.OPENAI_ORGANIZATION && baseURL?.includes('openai')) {
-      options.headers['OpenAI-Organization'] = process.env.OPENAI_ORGANIZATION;
-    }
-
-    const url = new URL(`${(baseURL ?? '').replace(/\/+$/, '')}${azure ? '' : '/models'}`);
+    const url = new URL(`${(baseURL ?? '').replace(/\/+$/, '')}/models`);
     if (user && userIdQuery) {
       url.searchParams.append('user', user);
     }
@@ -280,7 +273,7 @@ export async function fetchModels({
     }
     models = input.data.map((item: { id: string }) => item.id);
   } catch (error) {
-    const logMessage = `Failed to fetch models from ${azure ? 'Azure ' : ''}${name} API`;
+    const logMessage = `Failed to fetch models from ${name} API`;
     logAxiosError({ message: logMessage, error: error as Error });
   }
 

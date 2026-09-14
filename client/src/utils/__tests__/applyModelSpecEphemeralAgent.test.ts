@@ -149,9 +149,8 @@ describe('applyModelSpecEphemeralAgent', () => {
     const convoId = 'convo-abc-123';
 
     it('should preserve user tool modifications across navigation', () => {
-      // User previously toggled off code execution and enabled file search
+      // User previously toggled off code execution
       writeToolToggle(LocalStorageKeys.LAST_CODE_TOGGLE_, convoId, false);
-      writeToolToggle(LocalStorageKeys.LAST_FILE_SEARCH_TOGGLE_, convoId, true);
 
       const modelSpec = createModelSpec({
         executeCode: true,
@@ -163,8 +162,20 @@ describe('applyModelSpecEphemeralAgent', () => {
 
       const agent = updateEphemeralAgent.mock.calls[0][1] as TEphemeralAgent;
       expect(agent.execute_code).toBe(false); // user override
-      expect(agent.file_search).toBe(true); // user override
       expect(agent.web_search).toBe(true); // not overridden, spec value
+    });
+
+    it('should not honor a stale file_search localStorage override - File Search is no longer a manual toggle', () => {
+      // Legacy value from before File Search became upload-driven; must not resurrect
+      // as a per-conversation override now that nothing writes this key anymore.
+      writeToolToggle(LocalStorageKeys.LAST_FILE_SEARCH_TOGGLE_, convoId, true);
+
+      const modelSpec = createModelSpec({ fileSearch: false });
+
+      applyModelSpecEphemeralAgent({ convoId, modelSpec, updateEphemeralAgent });
+
+      const agent = updateEphemeralAgent.mock.calls[0][1] as TEphemeralAgent;
+      expect(agent.file_search).toBe(false); // spec value, not the stale localStorage value
     });
 
     it('should preserve user-added MCP servers across navigation', () => {

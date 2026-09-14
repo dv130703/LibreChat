@@ -1,6 +1,6 @@
 const { tool } = require('@librechat/agents/langchain/tools');
 const { logger, getTenantId } = require('@librechat/data-schemas');
-const { Providers, Constants: AgentConstants } = require('@librechat/agents');
+const { Constants: AgentConstants } = require('@librechat/agents');
 const {
   sendEvent,
   PENDING_STALE_MS,
@@ -10,7 +10,6 @@ const {
   normalizeJsonSchema,
   GenerationJobManager,
   resolveJsonSchemaRefs,
-  sanitizeGeminiSchema,
   buildMCPAuthStepId,
   buildMCPAuthToolCall,
   processMCPEnv,
@@ -22,14 +21,7 @@ const {
   requiresEphemeralUserConnection,
   containsGraphTokenPlaceholder,
 } = require('@librechat/api');
-const {
-  Time,
-  CacheKeys,
-  Constants,
-  Permissions,
-  PermissionTypes,
-  isAssistantsEndpoint,
-} = require('librechat-data-provider');
+const { Time, CacheKeys, Constants, Permissions, PermissionTypes } = require('librechat-data-provider');
 const {
   getOAuthReconnectionManager,
   getMCPServersRegistry,
@@ -226,16 +218,6 @@ function createUnavailableToolStub(toolName, serverName) {
   toolInstance.mcp = true;
   toolInstance.mcpRawServerName = serverName;
   return toolInstance;
-}
-
-function isEmptyObjectSchema(jsonSchema) {
-  return (
-    jsonSchema != null &&
-    typeof jsonSchema === 'object' &&
-    jsonSchema.type === 'object' &&
-    (jsonSchema.properties == null || Object.keys(jsonSchema.properties).length === 0) &&
-    !jsonSchema.additionalProperties
-  );
 }
 
 /**
@@ -743,17 +725,10 @@ function createToolInstance({
 }) {
   /** @type {LCTool} */
   const { description, parameters } = toolDefinition;
-  const isGoogle = capturedProvider === Providers.VERTEXAI || capturedProvider === Providers.GOOGLE;
 
   let schema = parameters ? normalizeJsonSchema(resolveJsonSchemaRefs(parameters)) : null;
 
-  if (schema && isGoogle) {
-    // Gemini/Vertex AI accept only a subset of JSON Schema; sanitize so MCP tools with
-    // unions, non-string enums, etc. don't 400 (they work as-is on OpenAI/Claude).
-    schema = sanitizeGeminiSchema(schema);
-  }
-
-  if (!schema || (isGoogle && isEmptyObjectSchema(schema))) {
+  if (!schema) {
     schema = {
       type: 'object',
       properties: {
@@ -845,9 +820,6 @@ function createToolInstance({
         oboTrustChecker: createOboTrustChecker(),
       });
 
-      if (isAssistantsEndpoint(provider) && Array.isArray(result)) {
-        return result[0];
-      }
       return result;
     } catch (error) {
       logger.error(
@@ -895,9 +867,7 @@ function createToolInstance({
   toolInstance.mcpRequiresEphemeralConnection = capturedServerConfig
     ? requiresEphemeralUserConnection(capturedServerConfig)
     : true;
-  // On Google/Vertex, propagate the union-flattened schema so definitions extracted
-  // from this instance don't reach the Gemini converter with unsupported unions.
-  toolInstance.mcpJsonSchema = isGoogle ? schema : parameters;
+  toolInstance.mcpJsonSchema = parameters;
   return toolInstance;
 }
 

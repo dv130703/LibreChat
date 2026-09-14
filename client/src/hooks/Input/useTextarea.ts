@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useMemo } from 'react';
 import debounce from 'lodash/debounce';
 import { useToastContext } from '@librechat/client';
 import { useRecoilValue, useRecoilState } from 'recoil';
-import { EToolResources, isAssistantsEndpoint } from 'librechat-data-provider';
+import { EToolResources } from 'librechat-data-provider';
 import type { TEndpointOption } from 'librechat-data-provider';
 import type { KeyboardEvent } from 'react';
 import {
@@ -18,7 +18,6 @@ import {
   getEntity,
   checkIfScrollable,
 } from '~/utils';
-import { useAssistantsMapContext } from '~/Providers/AssistantsMapContext';
 import { useLatestMessageMeta } from '~/hooks/Messages/useLatestMessage';
 import useFileUploadRouter from '~/hooks/Files/useFileUploadRouter';
 import { useAgentsMapContext } from '~/Providers/AgentsMapContext';
@@ -67,7 +66,6 @@ export default function useTextarea({
   const { getOptions: getUploadOptions, uploadsDisabled } = useUploadOptions();
   const routeFiles = useFileUploadRouter();
   const { openModal } = useUploadModalContext();
-  const assistantMap = useAssistantsMapContext();
   const checkHealth = useInteractionHealthCheck();
   const enterToSend = useRecoilValue(store.enterToSend);
   const customShortcuts = useRecoilValue(store.customShortcuts);
@@ -91,17 +89,14 @@ export default function useTextarea({
   const [activePrompt, setActivePrompt] = useRecoilState(store.activePromptByIndex(index));
 
   const { endpoint = '' } = conversation || {};
-  const { entity, isAgent, isAssistant } = getEntity({
+  const { entity, isAgent } = getEntity({
     endpoint,
     agentsMap,
-    assistantMap,
     agent_id: conversation?.agent_id,
-    assistant_id: conversation?.assistant_id,
   });
   const entityName = entity?.name ?? '';
 
-  const isNotAppendable =
-    latestMessage?.error === true && latestMessage.isCreatedByUser === true && !isAssistant;
+  const isNotAppendable = latestMessage?.error === true && latestMessage.isCreatedByUser === true;
   // && (conversationId?.length ?? 0) > 6; // also ensures that we don't show the wrong placeholder
 
   useEffect(() => {
@@ -123,16 +118,9 @@ export default function useTextarea({
       if (disabled) {
         return disabledPlaceholder ?? localize('com_endpoint_config_placeholder');
       }
-      const currentEndpoint = conversation?.endpoint ?? '';
       const currentAgentId = conversation?.agent_id ?? '';
-      const currentAssistantId = conversation?.assistant_id ?? '';
       if (isAgent && (!currentAgentId || !agentsMap?.[currentAgentId])) {
         return localize('com_endpoint_agent_placeholder');
-      } else if (
-        isAssistant &&
-        (!currentAssistantId || !assistantMap?.[currentEndpoint]?.[currentAssistantId])
-      ) {
-        return localize('com_endpoint_assistant_placeholder');
       }
 
       if (isNotAppendable) {
@@ -143,10 +131,9 @@ export default function useTextarea({
         return placeholder;
       }
 
-      const sender =
-        isAssistant || isAgent
-          ? getEntityName({ name: entityName, isAgent, localize })
-          : getSender(conversation as TEndpointOption);
+      const sender = isAgent
+        ? getEntityName({ name: entityName, isAgent, localize })
+        : getSender(conversation as TEndpointOption);
 
       return `${localize('com_endpoint_message_new', {
         0: sender ? sender : localize('com_endpoint_ai'),
@@ -181,8 +168,6 @@ export default function useTextarea({
     agentsMap,
     entityName,
     textAreaRef,
-    isAssistant,
-    assistantMap,
     conversation,
     latestMessage,
     isNotAppendable,
@@ -334,12 +319,6 @@ export default function useTextarea({
         if (uploadsDisabled) {
           showToast({ message: localize('com_ui_attach_error_disabled'), status: 'error' });
           setFilesLoading(false);
-          return;
-        }
-
-        /** Assistants use their own upload path; bypass option resolution like drag-and-drop does */
-        if (isAssistantsEndpoint(conversation?.endpoint)) {
-          routeFiles(timestampedFiles);
           return;
         }
 

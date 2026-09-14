@@ -7,11 +7,21 @@ import useSharePointDownload from './useSharePointDownload';
 
 interface UseSharePointFileHandlingProps {
   fileSetter?: any;
-  toolResource?: string;
+  /** Either a fixed tool_resource, or a resolver called with the actually-downloaded
+   *  files once known - callers that don't know the tool_resource until the real
+   *  file types are available (e.g. auto-routing to File Search) pass a function. */
+  toolResource?: string | ((files: File[]) => string | undefined);
   fileFilter?: (file: File) => boolean;
   additionalMetadata?: Record<string, string | undefined>;
   endpointOverride?: EModelEndpoint | string;
   endpointTypeOverride?: EModelEndpoint | string;
+}
+
+function resolveToolResource(
+  toolResource: UseSharePointFileHandlingProps['toolResource'],
+  files: File[],
+): string | undefined {
+  return typeof toolResource === 'function' ? toolResource(files) : toolResource;
 }
 
 interface UseSharePointFileHandlingReturn {
@@ -29,7 +39,7 @@ export default function useSharePointFileHandling(
     {
       onFilesDownloaded: async (downloadedFiles: File[]) => {
         const fileArray = Array.from(downloadedFiles);
-        await handleFiles(fileArray, props?.toolResource);
+        await handleFiles(fileArray, resolveToolResource(props?.toolResource, fileArray));
       },
       onError: (error) => {
         console.error('SharePoint download failed:', error);
@@ -67,7 +77,7 @@ export function useSharePointFileHandlingNoChatContext(
     {
       onFilesDownloaded: async (downloadedFiles: File[]) => {
         const fileArray = Array.from(downloadedFiles);
-        await handleFiles(fileArray, props?.toolResource);
+        await handleFiles(fileArray, resolveToolResource(props?.toolResource, fileArray));
       },
       onError: (error) => {
         console.error('SharePoint download failed:', error);

@@ -1,4 +1,4 @@
-import type { Agent, Assistant } from 'librechat-data-provider';
+import type { Agent } from 'librechat-data-provider';
 import type { TMessageIcon } from '~/common';
 
 // Mock all module-level imports so we can import the pure arePropsEqual function
@@ -28,14 +28,6 @@ const makeAgent = (overrides?: Partial<Agent>): Agent =>
     avatar: { filepath: '/avatars/atlas.png' },
     ...overrides,
   }) as Agent;
-
-const makeAssistant = (overrides?: Partial<Assistant>): Assistant =>
-  ({
-    id: 'asst_123',
-    name: 'Helper',
-    metadata: { avatar: '/avatars/helper.png' },
-    ...overrides,
-  }) as Assistant;
 
 describe('MessageIcon arePropsEqual', () => {
   it('returns true when agent reference changes but display fields are identical', () => {
@@ -74,36 +66,6 @@ describe('MessageIcon arePropsEqual', () => {
     ).toBe(false);
   });
 
-  it('returns true when assistant reference changes but display fields are identical', () => {
-    const asst1 = makeAssistant();
-    const asst2 = makeAssistant();
-    expect(asst1).not.toBe(asst2);
-    expect(
-      arePropsEqual(
-        { iconData: baseIconData, assistant: asst1 },
-        { iconData: baseIconData, assistant: asst2 },
-      ),
-    ).toBe(true);
-  });
-
-  it('returns false when assistant name changes', () => {
-    expect(
-      arePropsEqual(
-        { iconData: baseIconData, assistant: makeAssistant({ name: 'Helper' }) },
-        { iconData: baseIconData, assistant: makeAssistant({ name: 'Wizard' }) },
-      ),
-    ).toBe(false);
-  });
-
-  it('returns false when assistant avatar changes', () => {
-    expect(
-      arePropsEqual(
-        { iconData: baseIconData, assistant: makeAssistant({ metadata: { avatar: '/a.png' } }) },
-        { iconData: baseIconData, assistant: makeAssistant({ metadata: { avatar: '/b.png' } }) },
-      ),
-    ).toBe(false);
-  });
-
   it('returns true when iconData reference changes but fields are identical', () => {
     const iconData1 = { ...baseIconData };
     const iconData2 = { ...baseIconData };
@@ -133,7 +95,7 @@ describe('MessageIcon arePropsEqual', () => {
     ).toBe(false);
   });
 
-  it('returns true when both agent and assistant are undefined', () => {
+  it('returns true when agent is undefined', () => {
     expect(arePropsEqual({ iconData: baseIconData }, { iconData: baseIconData })).toBe(true);
   });
 

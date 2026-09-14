@@ -43,15 +43,23 @@ export default function useAgentToolPermissions(
   );
 
   const fileSearchAllowedByAgent = useMemo(() => {
-    // Check ephemeral agent settings
+    /**
+     * Unlike `execute_code` below, File Search has no manual pre-toggle for ephemeral
+     * (non-saved) agents to check here - it's auto-enabled by the upload itself once
+     * embedding succeeds (see `useFileHandling.ts`'s upload `onSuccess`). Gating
+     * routing on `ephemeralAgent.file_search` would be circular: that flag only
+     * becomes true AFTER a successful file_search upload, which itself needs this
+     * check to pass first. Saved agents are unaffected below - their configured
+     * tools list is a real, independent restriction unrelated to this per-upload flag.
+     */
     if (isEphemeralAgent(agentId)) {
-      return ephemeralAgent?.[EToolResources.file_search] ?? false;
+      return true;
     }
     // If agentId exists but agent not found, disallow
     if (!selectedAgent) return false;
     // Check if the agent has the file_search tool
     return tools?.includes(Tools.file_search) ?? false;
-  }, [agentId, selectedAgent, tools, ephemeralAgent]);
+  }, [agentId, selectedAgent, tools]);
 
   const codeAllowedByAgent = useMemo(() => {
     // Check ephemeral agent settings

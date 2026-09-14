@@ -27,7 +27,6 @@ import {
   megabyte,
   mergeFileConfig,
   checkOpenAIStorage,
-  isAssistantsEndpoint,
   getEndpointFileConfig,
   fileConfig as defaultFileConfig,
 } from 'librechat-data-provider';
@@ -111,21 +110,13 @@ export default function DataTable<TData, TValue>({ columns, data }: DataTablePro
       }
 
       const isOpenAIStorage = checkOpenAIStorage(fileData.source);
-      const isAssistants = isAssistantsEndpoint(endpoint);
 
-      if (isOpenAIStorage && !isAssistants) {
+      if (isOpenAIStorage) {
         showToast({
           message: localize('com_ui_attach_error_openai'),
           status: 'error',
         });
         return;
-      }
-
-      if (!isOpenAIStorage && isAssistants) {
-        showToast({
-          message: localize('com_ui_attach_warn_endpoint'),
-          status: 'warning',
-        });
       }
 
       const endpointFileConfig = getEndpointFileConfig({

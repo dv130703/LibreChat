@@ -15,12 +15,10 @@ export interface ITranscriptionMeta {
   requestedModel?: string;
   language?: string;
   diarize?: boolean;
-  minSpeakers?: number;
-  maxSpeakers?: number;
+  speakerCount?: number;
   clusteringThreshold?: number;
   includeTimestamps?: boolean;
   contextTerms?: string;
-  context?: string;
   suppressNumerals?: boolean;
   channelSplit?: boolean;
   diarizationBackend?: string;

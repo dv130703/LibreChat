@@ -82,6 +82,22 @@ function hasActiveJob(queryClient: QueryClient, id: string) {
   return activeJobs?.activeJobIds?.includes(id) === true;
 }
 
+export const useGetMessageTransparencyQuery = (
+  conversationId: string,
+  messageId: string,
+  config?: UseQueryOptions<t.TMessageTransparency>,
+): QueryObserverResult<t.TMessageTransparency> => {
+  return useQuery<t.TMessageTransparency>(
+    [QueryKeys.messageTransparency, conversationId, messageId],
+    () => dataService.getMessageTransparency(conversationId, messageId),
+    {
+      enabled: !!conversationId && !!messageId,
+      refetchOnWindowFocus: false,
+      ...config,
+    },
+  );
+};
+
 export const useGetMessagesByConvoId = <TData = t.TMessage[]>(
   id: string,
   config?: UseQueryOptions<t.TMessage[], unknown, TData>,

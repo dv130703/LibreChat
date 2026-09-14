@@ -16,6 +16,7 @@ import type { TPlugin } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import type { AgentItem } from './items/types';
 import type { AgentForm } from '~/common';
+import AgentBuilderCard from '~/components/Agents/layouts/AgentBuilderCard';
 import {
   useAgentItems,
   useResolvedSkills,
@@ -263,57 +264,61 @@ export default function ToolsSection({ agentId }: Props) {
 
   return (
     <>
-      <SelectedSection
-        title={localize('com_ui_tools_section_title')}
-        addLabel={localize('com_ui_add_tools')}
-        emptyLabel={localize('com_ui_tools_empty')}
-        emptyHint={localize('com_ui_tools_empty_hint')}
-        items={toolItems}
-        onAdd={() => setOpen(true)}
-        onInfo={setDialogItem}
-        onRemove={handleQuickRemove}
-      />
-      {showSkills && (
+      <AgentBuilderCard id="section-tools">
         <SelectedSection
-          title={localize('com_ui_skills')}
-          addLabel={localize('com_ui_add_skills')}
-          emptyLabel={localize('com_ui_skills_empty')}
-          emptyHint={localize('com_ui_skills_empty_hint')}
-          items={skillItems}
-          onAdd={() => setSkillsOpen(true)}
+          title={localize('com_ui_tools_section_title')}
+          addLabel={localize('com_ui_add_tools')}
+          emptyLabel={localize('com_ui_tools_empty')}
+          emptyHint={localize('com_ui_tools_empty_hint')}
+          items={toolItems}
+          onAdd={() => setOpen(true)}
           onInfo={setDialogItem}
           onRemove={handleQuickRemove}
-          badgeText={useAllSkills ? localize('com_ui_all_proper') : undefined}
-          showAdd={!useAllSkills}
-          showBody={!useAllSkills}
-        >
-          <div className="mb-1.5 flex items-center justify-between gap-3 px-1">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span
-                id="use-all-skills-label"
-                className="truncate text-[13px] font-medium text-text-primary"
-              >
-                {localize('com_ui_skills_use_all')}
-              </span>
-              <HoverCard openDelay={50}>
-                <InfoTrigger />
-                <HoverCardPortal>
-                  <HoverCardContent side={ESide.Top} className="w-80">
-                    <p className="text-sm text-text-secondary">
-                      {localize('com_ui_skills_use_all_hint')}
-                    </p>
-                  </HoverCardContent>
-                </HoverCardPortal>
-              </HoverCard>
+        />
+      </AgentBuilderCard>
+      {showSkills && (
+        <AgentBuilderCard id="section-skills">
+          <SelectedSection
+            title={localize('com_ui_skills')}
+            addLabel={localize('com_ui_add_skills')}
+            emptyLabel={localize('com_ui_skills_empty')}
+            emptyHint={localize('com_ui_skills_empty_hint')}
+            items={skillItems}
+            onAdd={() => setSkillsOpen(true)}
+            onInfo={setDialogItem}
+            onRemove={handleQuickRemove}
+            badgeText={useAllSkills ? localize('com_ui_all_proper') : undefined}
+            showAdd={!useAllSkills}
+            showBody={!useAllSkills}
+          >
+            <div className="mb-1.5 flex items-center justify-between gap-3 px-1">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span
+                  id="use-all-skills-label"
+                  className="truncate text-[13px] font-medium text-text-primary"
+                >
+                  {localize('com_ui_skills_use_all')}
+                </span>
+                <HoverCard openDelay={50}>
+                  <InfoTrigger />
+                  <HoverCardPortal>
+                    <HoverCardContent side={ESide.Top} className="w-80">
+                      <p className="text-sm text-text-secondary">
+                        {localize('com_ui_skills_use_all_hint')}
+                      </p>
+                    </HoverCardContent>
+                  </HoverCardPortal>
+                </HoverCard>
+              </div>
+              <Switch
+                id="use-all-skills-toggle"
+                checked={useAllSkills}
+                onCheckedChange={handleUseAllSkillsChange}
+                aria-labelledby="use-all-skills-label"
+              />
             </div>
-            <Switch
-              id="use-all-skills"
-              checked={useAllSkills}
-              onCheckedChange={handleUseAllSkillsChange}
-              aria-labelledby="use-all-skills-label"
-            />
-          </div>
-        </SelectedSection>
+          </SelectedSection>
+        </AgentBuilderCard>
       )}
       {open && <ToolsMarketplaceDialog open={open} onOpenChange={setOpen} agentId={agentId} />}
       {skillsOpen && (
@@ -439,11 +444,11 @@ function SelectedSection({
           <button
             type="button"
             onClick={onAdd}
-            className="flex w-full flex-col items-center gap-1 rounded-xl border border-dashed border-border-light px-2 py-4 text-text-secondary transition-colors hover:border-border-medium hover:bg-surface-secondary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary"
+            className="flex w-full flex-col items-center gap-1.5 rounded-xl border border-dashed border-border-light px-2 py-7 text-text-secondary transition-colors hover:border-border-medium hover:bg-surface-secondary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary"
           >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            <span className="text-xs">{emptyLabel}</span>
-            <span className="text-[11px] text-text-secondary">{emptyHint}</span>
+            <Plus className="h-5 w-5" aria-hidden="true" />
+            <span className="text-sm font-medium text-text-primary">{emptyLabel}</span>
+            <span className="text-xs text-text-secondary">{emptyHint}</span>
           </button>
         ) : (
           <ul className="flex flex-col gap-1.5">

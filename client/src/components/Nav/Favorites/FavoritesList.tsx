@@ -15,7 +15,7 @@ import {
   useNewConvo,
 } from '~/hooks';
 import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
-import { useAssistantsMapContext, useAgentsMapContext } from '~/Providers';
+import { useAgentsMapContext } from '~/Providers';
 import useSelectMention from '~/hooks/Input/useSelectMention';
 import FavoriteItem from './FavoriteItem';
 import store from '~/store';
@@ -150,7 +150,6 @@ function FavoritesList({
   const showAgentMarketplace = useShowMarketplace();
 
   const { newConversation } = useNewConvo();
-  const assistantsMap = useAssistantsMapContext();
   const agentsMap = useAgentsMapContext();
   const { data: endpointsConfig = {} as TEndpointsConfig, isLoading: isEndpointsLoading } =
     useGetEndpointsQuery();
@@ -171,7 +170,6 @@ function FavoritesList({
 
   const { onSelectEndpoint: _onSelectEndpoint, onSelectSpec: _onSelectSpec } = useSelectMention({
     modelSpecs,
-    assistantsMap,
     endpointsConfig,
     getConversation,
     newConversation,
