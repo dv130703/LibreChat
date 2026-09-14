@@ -966,6 +966,13 @@ export function getMessagesByConvoId(conversationId: string): Promise<s.TMessage
   return request.get(endpoints.messages({ conversationId }));
 }
 
+export function getMessageTransparency(
+  conversationId: string,
+  messageId: string,
+): Promise<q.TMessageTransparency> {
+  return request.get(endpoints.messageTransparency(conversationId, messageId));
+}
+
 export function getPrompt(id: string): Promise<{ prompt: t.TPrompt }> {
   return request.get(endpoints.getPrompt(id));
 }

@@ -677,12 +677,10 @@ export const tConversationSchema = z.object({
       requestedModel: z.string().nullable().optional(),
       language: z.string().optional(),
       diarize: z.boolean().optional(),
-      minSpeakers: z.number().optional(),
-      maxSpeakers: z.number().optional(),
+      speakerCount: z.number().optional(),
       clusteringThreshold: z.number().optional(),
       includeTimestamps: z.boolean().optional(),
       contextTerms: z.string().optional(),
-      context: z.string().optional(),
       suppressNumerals: z.boolean().optional(),
       /** Whether the user accepted channel-based speaker separation for this
        *  recording after being notified it has multiple audio channels. */

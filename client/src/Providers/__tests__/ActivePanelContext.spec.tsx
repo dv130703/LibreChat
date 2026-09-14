@@ -64,7 +64,12 @@ describe('ActivePanelContext', () => {
 });
 
 describe('resolveActivePanel', () => {
-  const links = [{ id: 'conversations' }, { id: 'prompts' }, { id: 'files' }];
+  const noop = () => {};
+  const links = [
+    { id: 'conversations', Component: noop },
+    { id: 'prompts', Component: noop },
+    { id: 'files', Component: noop },
+  ];
 
   it('returns active when it matches a link', () => {
     expect(resolveActivePanel('prompts', links)).toBe('prompts');
@@ -79,6 +84,18 @@ describe('resolveActivePanel', () => {
   });
 
   it('falls back to the only link when active is stale', () => {
-    expect(resolveActivePanel('agents', [{ id: 'conversations' }])).toBe('conversations');
+    expect(resolveActivePanel('agents', [{ id: 'conversations', Component: noop }])).toBe(
+      'conversations',
+    );
+  });
+
+  it('falls back when active matches a link that has no Component (e.g. an onClick-only navigation link)', () => {
+    const linksWithNavOnly = [...links, { id: 'agents' }];
+    expect(resolveActivePanel('agents', linksWithNavOnly)).toBe('conversations');
+  });
+
+  it('returns active unchanged when no link has a Component', () => {
+    const allNavOnly = [{ id: 'hide-panel' }, { id: 'agents' }];
+    expect(resolveActivePanel('agents', allNavOnly)).toBe('agents');
   });
 });

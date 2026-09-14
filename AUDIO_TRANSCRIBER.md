@@ -80,7 +80,7 @@ Two-step wizard, reused for both initial upload and Re-transcribe (seeded with p
 | Include timestamps | Toggle, default on | Controls `[start-end]` prefix in formatted lines (client-side formatting decision, not sent to the Python service). |
 | Include speaker labels (diarize) | Toggle, default on | Hidden when channel-split is active. |
 | Transcribe numbers as digits | Toggle | Inverse of `suppressNumerals`; default from server's `default_suppress_numerals`. |
-| Number of speakers | Free-text numeric input | Placeholder "Auto (recommended)"; clamped client-side to server's `max_speakers` (default fallback 8); sets both `minSpeakers` and `maxSpeakers` to the same value (no asymmetric range UI even though the type supports it). Hidden when channel-split active. |
+| Number of speakers | Free-text numeric input | Placeholder "Auto (recommended)"; clamped client-side to server's `max_speakers` (default fallback 8); blank means fully automatic detection, a number means an exact known speaker count (`speakerCount`) — there is no min/max range, by design. Hidden when channel-split active. |
 | "If speakers get mixed up" (grouping) | Dropdown, 3 presets → `clusteringThreshold` | "Merge similar voices" = 0.72, "Balanced" = unset (server default), "Tell voices apart more" = 0.48. Hidden when channel-split active. |
 
 When channel-split was accepted, a note replaces the diarize/speaker-count/grouping controls: speakers come from the audio's separate channels automatically.
@@ -89,8 +89,6 @@ When channel-split was accepted, a note replaces the diarize/speaker-count/group
 | Option | Control | Notes |
 |---|---|---|
 | Names, jargon, or terms to expect (`contextTerms`) | Chip-list editor | Type + Enter/Add to add a chip, ✕ to remove, "Clear all". Joined as a comma-separated string before sending. Server-suggested terms (`transcribeConfig.suggested_terms`) show as dashed "+ term" add-back chips and auto-seed the list on first open. |
-
-**Known dead key:** a free-text `context` field (`com_ui_transcribe_options_context_label`/`_placeholder`, "What's this recording about?") exists in the type system and localization strings but is **not rendered by any current component** — a leftover from a prior UI iteration. Don't describe it as a live feature; the type/API still supports it (harvested server-side for proper nouns, see §5.6) if a caller sends it directly.
 
 ### 3.4 Step 2 — Workspace (`Workspace.tsx` + `TranscriptPanel.tsx`)
 
@@ -140,7 +138,7 @@ Loading (spinner) · Convo error (retry button) · Transcript processing failed 
 - `useRenameTranscriptSpeakerMutation` / `useReassignTranscriptSegmentMutation` / `useEditTranscriptTextMutation` / `useEditTranscriptTimeMutation` / `useInsertTranscriptLineMutation` → the five correction endpoints under `/api/transcript-corrections/:transcriptFileId/...`
 
 ### 3.7 Key shared types (`packages/data-provider/src/types/files.ts` and siblings)
-- **`TTranscribeOptions`**: `includeTimestamps?`, `diarize?`, `minSpeakers?`, `maxSpeakers?`, `clusteringThreshold?`, `language?`, `contextTerms?`, `context?`, `model?`, `suppressNumerals?`, `channelSplit?` — all optional; absence = server default.
+- **`TTranscribeOptions`**: `includeTimestamps?`, `diarize?`, `speakerCount?`, `clusteringThreshold?`, `language?`, `contextTerms?`, `model?`, `suppressNumerals?`, `channelSplit?` — all optional; absence = server default.
 - **`TTranscribeConfig`**: server's effective defaults (`models`, `default_model`, `default_language`, `default_suppress_numerals`, `default_clustering_threshold`, `hotwords_configured`, `suggested_terms`, `max_speakers`).
 - **`TTranscribeResponse`**: `conversationId`, `segments` (stripped of forensic detail), `language`, `diagnostics`, `sourceFile`, `transcriptFile`, `diarizationDetailFile`.
 - **`TTranscriptSegment`** (plain) vs the richer diarization-detail-only fields (`words`, `assignmentMethod`, `assignmentDistanceS`) — kept out of normal responses to keep payloads small.
@@ -162,10 +160,9 @@ Loading (spinner) · Convo error (retry button) · Transcript processing failed 
 1. **Re-transcribe wipes all corrections** (line indices no longer address the new text).
 2. **No progress signal for transcription/embedding** — only the upload leg has real percentage progress.
 3. **Multi-channel detection is a client-side heuristic** on a possibly-truncated decoded chunk — can silently miss on large/undecodable files.
-4. Two dead-code localization keys for an unused `context` field in the options dialog.
-5. **Speaker color is bound to id, not name** — duplicate names are actively blocked.
-6. **Export to .txt is client-side; both .docx exports are server-authoritative**, re-deriving corrected text from the stored correction log rather than trusting the client.
-7. Switching model/agent from the chat header navigates away from the two-pane workspace to plain `/c/:id` chat (an accepted tradeoff — `file_search` stays forced on via persisted ephemeral-agent state).
+4. **Speaker color is bound to id, not name** — duplicate names are actively blocked.
+5. **Export to .txt is client-side; both .docx exports are server-authoritative**, re-deriving corrected text from the stored correction log rather than trusting the client.
+6. Switching model/agent from the chat header navigates away from the two-pane workspace to plain `/c/:id` chat (an accepted tradeoff — `file_search` stays forced on via persisted ephemeral-agent state).
 
 ---
 
@@ -193,12 +190,10 @@ Every conversation-scoped route calls `db.getConvo(req.user.id, conversationId)`
 |---|---|---|---|
 | `diarize` | `diarize` | always | default `true` |
 | `channelSplit` | `channel_split` | truthy only | disables clustering hints below |
-| `minSpeakers` | `min_speakers` | `diarize && !channelSplit && != null` | |
-| `maxSpeakers` | `max_speakers` | same | |
+| `speakerCount` | `speaker_count` | `diarize && !channelSplit && != null` | absent = fully automatic; a number = exact known count |
 | `clusteringThreshold` | `clustering_threshold` | same | |
 | `language` | `language` | truthy only | |
 | `contextTerms` | `context_terms` | non-empty after trim | |
-| `context` | `context` | non-empty after trim | free prose, mined server-side for proper nouns |
 | `model` | `model` | truthy only | validated server-side against an allowlist |
 | `suppressNumerals` | `suppress_numerals` | whenever not null/undefined, **including explicit `false`** | `false` is a real instruction, not "absent" |
 | `includeTimestamps` | *(not sent)* | — | client-side formatting decision only |
@@ -262,7 +257,7 @@ Converts the Python service's raw response into the app's typed shapes (`toWordS
 | `GET /transcribe/config` | JWT | Returns effective defaults (`models` allowlist, `default_model`, `default_language`, `default_suppress_numerals`, `default_clustering_threshold`, `hotwords_configured`, `suggested_terms`, `max_speakers`). Reads `Settings` only — never loads a model. |
 | `POST /transcribe` | JWT | The actual pipeline call, run via `run_in_threadpool` (blocking/GPU-bound work, keeps the server able to answer other requests concurrently). See request/response shapes below. |
 
-`POST /transcribe` request (multipart): `file` (required, must be `audio/*` or `video/*`), `diarize=True`, `min_speakers`/`max_speakers`, `clustering_threshold`, `language`, `context_terms`, `context`, `model` (must be in the server allowlist `{tiny, small, medium, large-v2, large-v3, large-v3-turbo}` — deliberately restricted, since `whisperx.load_model()` would otherwise accept **any** HF repo id and attempt to download it), `suppress_numerals`, `channel_split=False`.
+`POST /transcribe` request (multipart): `file` (required, must be `audio/*` or `video/*`), `diarize=True`, `speaker_count`, `clustering_threshold`, `language`, `context_terms`, `model` (must be in the server allowlist `{tiny, small, medium, large-v2, large-v3, large-v3-turbo}` — deliberately restricted, since `whisperx.load_model()` would otherwise accept **any** HF repo id and attempt to download it), `suppress_numerals`, `channel_split=False`.
 
 Response (`TranscriptionResponse`): `segments`, `language`, `diagnostics`, `diarization_turns`, `speaker_embeddings`, `recording_profile` — see schema detail below.
 
@@ -297,7 +292,7 @@ Errors from `service.transcribe` → 500 with `str(error)` as the detail (this i
 - **`WordSpan`**: one aligned word with its *own* independently-computed speaker (`word`, `start`, `end`, `speaker`, `assignment_method`, `assignment_distance_s`) — kept because a word disagreeing with its segment is itself diagnostic.
 - **`DiarizationTurn`**: one raw pyannote turn, pre-renumbering. Empty for channel-split.
 - **`TranscriptSegment`**: `id`, `start`, `end`, `speaker`, `text`, `assignment_method` (`overlap`/`nearest`/`unknown`/`channel_split`/`none`), `assignment_distance_s`, `words[]`.
-- **`TranscriptionDiagnostics`**: full per-request run report — alignment stats, diarization backend/speaker count, model requested/used, suppress_numerals, context-terms used/dropped/harvested + token accounting, hotwords term count, speaker-hint accounting, speaker label map, and the 5 diarization-retry fields (`diarization_retry_attempted`, `_kept`, `_threshold`, `_original_suspicious_ratio`, `_retry_suspicious_ratio`).
+- **`TranscriptionDiagnostics`**: full per-request run report — alignment stats, diarization backend/speaker count, model requested/used, suppress_numerals, context-terms used/dropped + token accounting, hotwords term count, speaker-hint accounting, speaker label map, and the 5 diarization-retry fields (`diarization_retry_attempted`, `_kept`, `_threshold`, `_original_suspicious_ratio`, `_retry_suspicious_ratio`).
 - **`RecordingProfile`**: the statistical fingerprint — see §5.7.
 - **`TranscriptionResponse`** / **`TranscriptionConfig`**: top-level response/config shapes (mirrored above).
 
@@ -314,12 +309,14 @@ Token budget constants: `DECODER_CONTEXT_TOKENS=448` (combined prompt+output bud
 
 Three channels into the decoder:
 1. **Deployment-wide `hotwords`** (`Settings.hotwords`) — baked into every recording at model-load time.
-2. **Per-recording `initial_prompt`** — built fresh per request from `context_terms` (always wins) + proper nouns harvested from free-text `context` if budget remains (`build_initial_prompt`). Harvesting is precision-first: bare acronyms and runs of ≥2 adjacent capitalized words only, skipping known sentence-opener stopwords; single capitalized words and lowercase-bridged names ("Bank of England") are deliberately missed.
+2. **Per-recording `initial_prompt`** — built fresh per request from `context_terms` (`build_initial_prompt`), packed first and always wins.
 3. **Experimental per-recording `hotwords`** — this recording's confirmed terms *also* pushed through the more direct hotwords decode channel (`_build_request_hotwords`), layered after the deployment glossary — a deliberate exception to "never cost the window twice," accepted because confirmed lists are typically a handful of names.
 
 Packing (`_pack`) is greedy-front-loaded (keeps the head of the list) because faster-whisper itself keeps only the *last* 223 tokens of an overlong prompt — packing front-first inverts that so the user's first-listed (presumably highest-priority) terms survive.
 
-Everything used/dropped/harvested is reported back via `TranscriptionDiagnostics` so a term the user typed that never reached the model is visible, not silently lost.
+Everything used/dropped is reported back via `TranscriptionDiagnostics` so a term the user typed that never reached the model is visible, not silently lost.
+
+A previous iteration also supported a free-text `context` field, mined server-side for proper nouns as a fallback when no confirmed term list was given. It was never wired into the UI and added nothing a diligent user filling in `context_terms` couldn't already do better, so it (and the harvesting logic behind it) has been removed entirely rather than kept as dead code.
 
 `transcription/vocabulary.py`: `SUGGESTED_TERMS` — a small curated list of domain terms (fraud/investigation vocabulary, e.g. "Serious Fraud Office", "forensic accountant") served via `/transcribe/config` purely as client-side pre-fill suggestions, not auto-applied.
 
@@ -338,8 +335,8 @@ Key metrics:
 
 `_classify` (priority order): `turn_count==0` → `insufficient_data`; `speaker_count<=1` → `monologue`; then (checked *before* rapid_dialogue deliberately) any of `overlap_ratio>=0.15`, `unassigned_audio_ratio>=0.25`, `short_turn_ratio>=0.4`, `boundary_conflict_ratio>=0.1`, `word_segment_disagreement_ratio>=0.1` → `difficult` (triggers the retry); else `speaker_switches_per_minute>=15` or `median_turn_duration_s<3.0` → `rapid_dialogue`; else `conversation`. All thresholds explicitly flagged as illustrative, not calibrated against labelled data.
 
-### 5.8 `transcription/speaker_bounds.py`
-`MIN_ALLOWED_SPEAKERS=1`, `MAX_ALLOWED_SPEAKERS=8`. `resolve_speaker_bounds` clamps into range and swaps (not errors) if `min > max`, logging every adjustment (surfaces as `speaker_hint_adjustments` in diagnostics). When `min_speakers == max_speakers`, diarization is called with an exact `num_speakers=` (a more direct clustering path than equal min/max, which still estimates via threshold and only clamps after).
+### 5.8 `transcription/speaker_count.py`
+`MIN_ALLOWED_SPEAKERS=1`, `MAX_ALLOWED_SPEAKERS=8`. `resolve_speaker_count` clamps a single optional exact-count hint into that range, logging any adjustment (surfaces as `speaker_hint_adjustments` in diagnostics). There is no min/max range — an unset hint means fully automatic detection; a set hint calls diarization with an exact `num_speakers=`, forcing pyannote's clustering to cut into precisely that many groups instead of estimating the count itself.
 
 ### 5.9 `transcription/channels.py` — channel-split mode
 `probe_channel_count` (ffprobe) + `load_audio_channel` (ffmpeg `-map_channel`, deliberately not `whisperx.load_audio` which downmixes). Used when `channel_split=True`: **fully replaces pyannote** — no HF token needed, each channel transcribed+aligned independently, tagged `speaker=CHANNEL_N`, `assignment_method="channel_split"`, then all channels' segments merged and re-sorted by time (read order, not grouped by channel). Requires ≥2 channels or raises. In this mode: `diarization_backend="channel_split"`, empty `diarization_turns`, `speaker_embeddings=None`, retry logic never applies (nothing to retry).
@@ -361,9 +358,10 @@ Offline dev tooling for scoring diarization output against hand-labelled ground 
    - Diarization (if enabled): clustering threshold instantiation, `assign_word_speakers`, then per-segment/word resolution (overlap → nearest-within-5s → unknown).
    - Retry-and-compare (§5.5).
 6. Renumber raw speaker ids into sequential `"Speaker N"` (first-appearance order); `unknown`-method items get literal `"Unknown"`.
-7. Assemble full diagnostics.
-8. Compute the final recording profile (on real segments, not the retry preview).
-9. Return the 6-tuple consumed directly by the FastAPI handler.
+7. **Re-segment into speaker-pure output segments** (`_build_speaker_segments`): a single Whisper ASR decode chunk (up to 30s, a VAD-driven *linguistic* boundary, not a speaker boundary) can contain several real speaker turns — common in fast interview back-and-forth, since VAD merges continuous speech with only brief pauses into one window. Rather than emitting one blended line per chunk, output segments are built from contiguous same-resolved-speaker **word** runs instead: a segment boundary falls exactly where the word-level speaker changes (a run can also merge two adjacent Whisper chunks when the same speaker continues across them). Each segment's `assignment_method`/`assignment_distance_s` is the least-confident value among its words (never overstates confidence), and `text` is reconstructed via `"".join(word)` (not space-joined — word tokens already carry their own leading space per `faster_whisper`'s tokenizer convention).
+8. Assemble full diagnostics.
+9. Compute the final recording profile (on the re-segmented output, not the retry preview) — `boundary_conflict_ratio`/`word_segment_disagreement_ratio`/`suspicious_segment_ids` now measure genuine *remaining* ambiguity after reconciliation, not the raw pre-fix disagreement between Whisper's chunking and diarization (which step 7 already resolves for chunk/speaker mismatches — it does not fix a genuinely wrong diarization cluster).
+10. Return the 6-tuple consumed directly by the FastAPI handler.
 
 ### 5.13 Concurrency notes
 Process-wide singleton service, one resident ASR model + per-language alignment-model cache + one diarization pipeline. Three separate locks, deliberately not merged: `_lock` (model loading), `_options_lock` (guards the shared ASR pipeline's per-call prompt/hotwords swap — prevents one concurrent request's names/context leaking into another's transcript), `_diarize_lock` (guards clustering-threshold mutation + inference as one atomic unit).
@@ -379,12 +377,10 @@ Process-wide singleton service, one resident ASR model + per-language alignment-
   requestedModel: string;     // diagnostics.model_requested
   language: string;           // detected
   diarize: boolean;
-  minSpeakers: number;
-  maxSpeakers: number;
+  speakerCount: number;       // absent = fully automatic; a number = exact known count
   clusteringThreshold: number;
   includeTimestamps: boolean;
   contextTerms: string;
-  context: string;
   suppressNumerals: boolean;  // server-resolved
   channelSplit: boolean;
   diarizationBackend: string; // diagnostics.diarization_backend
@@ -435,7 +431,7 @@ Methods: `createTranscriptCorrection` (append only), `getTranscriptCorrections` 
 - Model choice from tiny to large-v3-turbo, or auto (server default).
 - Speaker diarization (pyannote, community-1 model) with optional min/max speaker count hints and adjustable clustering "grouping" behavior (merge vs. split bias), including one automatic retry at a fixed alternate threshold when the recording is statistically flagged difficult.
 - **Channel-split mode**: bypass diarization entirely for recordings where each speaker is on their own audio channel (e.g. call recordings) — client auto-detects this and offers it.
-- Custom vocabulary/hotwords: per-recording confirmed terms (chips) plus free-text context prose mined for proper nouns, layered with a deployment-wide glossary, all budget-managed against Whisper's prompt token limit and reported back diagnostically.
+- Custom vocabulary/hotwords: per-recording confirmed terms (chips), layered with a deployment-wide glossary, all budget-managed against Whisper's prompt token limit and reported back diagnostically.
 - Numeral handling toggle (spelled out vs. digits).
 - Optional timestamps in the output text.
 - Automatic RAG embedding of the transcript into the conversation, so the user can chat with an LLM about the recording's contents (`file_search`) in a real, full-featured LibreChat conversation alongside it.
@@ -456,4 +452,4 @@ Methods: `createTranscriptCorrection` (append only), `getTranscriptCorrections` 
 
 **Shared types/logic**: `packages/data-provider/src/types/files.ts`, `interviewTranscript.ts`, `meetingMinutes.ts`, `api-endpoints.ts`, `data-service.ts`; `packages/api/src/transcription/diarizationDetail.ts`, `corrections.ts`, `interviewDocx.ts`, `meetingMinutesDocx.ts`; `packages/data-schemas/src/schema/convo.ts`, `transcriptCorrection.ts`, `file.ts`; `packages/data-schemas/src/methods/transcriptCorrection.ts`.
 
-**Python microservice**: `rag_server/app.py` (FastAPI routes), `transcription/whisperx_service.py` (the pipeline), `config.py`, `schemas.py`, `speaker_bounds.py`, `channels.py`, `recording_profile.py`, `transcription_prompt.py`, `vocabulary.py`, `offline.py`, `evaluation.py`, `evaluate_diarization.py`.
+**Python microservice**: `rag_server/app.py` (FastAPI routes), `transcription/whisperx_service.py` (the pipeline), `config.py`, `schemas.py`, `speaker_count.py`, `channels.py`, `recording_profile.py`, `transcription_prompt.py`, `vocabulary.py`, `offline.py`, `evaluation.py`, `evaluate_diarization.py`.

@@ -183,6 +183,13 @@ function UnifiedSidebar() {
             width: expanded ? sidebarWidth : COLLAPSED_WIDTH,
             minWidth: expanded ? EXPANDED_MIN : COLLAPSED_WIDTH,
             maxWidth: expanded ? '40%' : COLLAPSED_WIDTH,
+            // Hints the browser to promote this to its own compositing layer
+            // only while it's actually animating - width/min-width/max-width
+            // are layout-affecting properties, so this keeps the collapse/
+            // expand transition smooth without paying that cost while the
+            // sidebar is just sitting at rest (or being live-dragged, which
+            // has no transition to smooth in the first place).
+            willChange: isResizing ? undefined : 'width',
             transition: isResizing
               ? 'none'
               : `width ${TRANSITION_MS}ms ${EASING}, min-width ${TRANSITION_MS}ms ${EASING}, max-width ${TRANSITION_MS}ms ${EASING}`,

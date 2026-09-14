@@ -7,7 +7,11 @@ const fsPromises = require('fs/promises');
 const axios = require('axios');
 const FormData = require('form-data');
 const { logger } = require('@librechat/data-schemas');
-const { generateShortLivedToken, logAxiosError, getTranscriptionApiUrl } = require('@librechat/api');
+const {
+  generateShortLivedToken,
+  logAxiosError,
+  getTranscriptionApiUrl,
+} = require('@librechat/api');
 const {
   formatTranscriptLine: formatLine,
   formatTranscriptTimestamp: formatTimestamp,
@@ -89,7 +93,7 @@ async function embedTranscript({ req, file_id, filename, text }) {
  * @param {string} params.sourceFileId - id of the persisted source file; the transcript's
  *   own id is derived from it (`${sourceFileId}-transcript`) so re-transcribing the same
  *   source overwrites its transcript instead of leaking a duplicate.
- * @param {{includeTimestamps?: boolean; diarize?: boolean; minSpeakers?: number; maxSpeakers?: number; clusteringThreshold?: number; language?: string; contextTerms?: string; context?: string; model?: string; suppressNumerals?: boolean; channelSplit?: boolean}} [params.options]
+ * @param {{includeTimestamps?: boolean; diarize?: boolean; speakerCount?: number; clusteringThreshold?: number; language?: string; contextTerms?: string; model?: string; suppressNumerals?: boolean; channelSplit?: boolean}} [params.options]
  * @param {AbortSignal} [params.signal] - lets a best-effort cancel abort the underlying request
  * @returns {Promise<{
  *   segments: Array<{start: number; end: number; speaker: string; text: string; assignmentMethod?: string; words?: Array<{word: string; start?: number; end?: number; speaker?: string; assignmentMethod: string}>}>,
@@ -114,12 +118,10 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
   const {
     includeTimestamps = true,
     diarize = true,
-    minSpeakers,
-    maxSpeakers,
+    speakerCount,
     clusteringThreshold,
     language,
     contextTerms,
-    context,
     model,
     suppressNumerals,
     channelSplit,
@@ -133,16 +135,14 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
   });
   formData.append('diarize', String(diarize));
   // Channel-split replaces pyannote clustering outright (each channel is its
-  // own speaker) - the min/max/threshold hints exist to tune clustering, so
-  // they have nothing to apply to here and are left off the request.
+  // own speaker) - the speaker-count/threshold hints exist to tune
+  // clustering, so they have nothing to apply to here and are left off the
+  // request.
   if (channelSplit) {
     formData.append('channel_split', 'true');
   }
-  if (diarize && !channelSplit && minSpeakers != null) {
-    formData.append('min_speakers', String(minSpeakers));
-  }
-  if (diarize && !channelSplit && maxSpeakers != null) {
-    formData.append('max_speakers', String(maxSpeakers));
+  if (diarize && !channelSplit && speakerCount != null) {
+    formData.append('speaker_count', String(speakerCount));
   }
   if (diarize && !channelSplit && clusteringThreshold != null) {
     formData.append('clustering_threshold', String(clusteringThreshold));
@@ -150,15 +150,10 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
   if (language) {
     formData.append('language', language);
   }
-  // Per-recording accuracy hints - see `build_prompt` in the RAG server's
-  // WhisperX service. `contextTerms` is packed into the ASR prompt directly;
-  // `context` (free-text prose) is only mined for proper nouns, never sent
-  // to the model verbatim.
+  // Per-recording accuracy hint - see `build_prompt` in the RAG server's
+  // WhisperX service. `contextTerms` is packed into the ASR prompt directly.
   if (contextTerms && contextTerms.trim()) {
     formData.append('context_terms', contextTerms.trim());
-  }
-  if (context && context.trim()) {
-    formData.append('context', context.trim());
   }
   // Undefined/omitted uses the RAG server's own configured default
   // (WHISPERX_WHISPER_MODEL) - the server is also the one place that

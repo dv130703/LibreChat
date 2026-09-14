@@ -111,12 +111,12 @@ describe('transcribeAndEmbed', () => {
     expect(uploadVectors).toHaveBeenCalled();
   });
 
-  it('posts diarize/min/max speakers from options, reading from the multer file path', async () => {
+  it('posts diarize/speaker count from options, reading from the multer file path', async () => {
     await transcribeAndEmbed({
       req,
       file: multerFile,
       sourceFileId: 'source-1',
-      options: { diarize: true, minSpeakers: 2, maxSpeakers: 4 },
+      options: { diarize: true, speakerCount: 3 },
     });
 
     expect(fs.createReadStream).toHaveBeenCalledWith(multerFile.path);

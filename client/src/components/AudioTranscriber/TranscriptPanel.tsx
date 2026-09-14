@@ -435,11 +435,9 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
     return {
       includeTimestamps: meta.includeTimestamps ?? true,
       diarize: meta.diarize ?? true,
-      minSpeakers: meta.minSpeakers,
-      maxSpeakers: meta.maxSpeakers,
+      speakerCount: meta.speakerCount,
       clusteringThreshold: meta.clusteringThreshold,
       contextTerms: meta.contextTerms,
-      context: meta.context,
       model: meta.requestedModel,
       language: meta.language,
       suppressNumerals: meta.suppressNumerals,

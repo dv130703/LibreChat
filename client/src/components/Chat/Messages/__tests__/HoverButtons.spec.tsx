@@ -1,4 +1,5 @@
 import { RecoilRoot } from 'recoil';
+import { MemoryRouter } from 'react-router-dom';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { EModelEndpoint } from 'librechat-data-provider';
 import type { TConversation, TMessage } from 'librechat-data-provider';
@@ -62,9 +63,11 @@ describe('HoverButtons - transcription retry icon', () => {
 
   it('shows no retry icon when the message has no audio/video files', () => {
     render(
-      <RecoilRoot>
-        <HoverButtons {...defaultProps} message={{ ...baseMessage, files: [] }} />
-      </RecoilRoot>,
+      <MemoryRouter>
+        <RecoilRoot>
+          <HoverButtons {...defaultProps} message={{ ...baseMessage, files: [] }} />
+        </RecoilRoot>
+      </MemoryRouter>,
     );
     expect(screen.queryByTestId('retry-transcription-button')).not.toBeInTheDocument();
   });
@@ -72,9 +75,11 @@ describe('HoverButtons - transcription retry icon', () => {
   it('shows no retry icon when the file exists but has not failed', () => {
     mockTranscribeStatusData = { files: [{ file_id: 'source-file-1', status: 'transcribing' }] };
     render(
-      <RecoilRoot>
-        <HoverButtons {...defaultProps} message={baseMessage} />
-      </RecoilRoot>,
+      <MemoryRouter>
+        <RecoilRoot>
+          <HoverButtons {...defaultProps} message={baseMessage} />
+        </RecoilRoot>
+      </MemoryRouter>,
     );
     expect(screen.queryByTestId('retry-transcription-button')).not.toBeInTheDocument();
   });
@@ -85,9 +90,11 @@ describe('HoverButtons - transcription retry icon', () => {
     () => {
       mockTranscribeStatusData = { files: [{ file_id: 'source-file-1', status: 'failed' }] };
       render(
-        <RecoilRoot>
-          <HoverButtons {...defaultProps} message={baseMessage} />
-        </RecoilRoot>,
+        <MemoryRouter>
+          <RecoilRoot>
+            <HoverButtons {...defaultProps} message={baseMessage} />
+          </RecoilRoot>
+        </MemoryRouter>,
       );
 
       const retryButton = screen.getByTestId('retry-transcription-button');

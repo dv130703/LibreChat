@@ -36,10 +36,15 @@ export function useActivePanel() {
   return context;
 }
 
-/** Returns `active` when it matches a known link, otherwise the first link's id. */
-export function resolveActivePanel(active: string, links: { id: string }[]): string {
-  if (links.length > 0 && links.some((l) => l.id === active)) {
+/** Returns `active` when it matches a known link that renders in-panel content,
+ * otherwise the first such link's id. Links without a `Component` (e.g. `onClick`-only
+ * navigation links) never count as "open," so a stale `active` pointing at one falls back. */
+export function resolveActivePanel(
+  active: string,
+  links: { id: string; Component?: unknown }[],
+): string {
+  if (links.some((l) => l.id === active && l.Component != null)) {
     return active;
   }
-  return links[0]?.id ?? active;
+  return links.find((l) => l.Component != null)?.id ?? active;
 }

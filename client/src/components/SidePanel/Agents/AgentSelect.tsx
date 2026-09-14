@@ -20,7 +20,7 @@ function AgentSelect({
 }: {
   selectedAgentId: string | null;
   agentQuery: QueryObserverResult<Agent>;
-  setCurrentAgentId: React.Dispatch<React.SetStateAction<string | undefined>>;
+  setCurrentAgentId: (agentId: string | undefined) => void;
   createMutation: UseMutationResult<Agent, Error, AgentCreateParams>;
 }) {
   const localize = useLocalize();

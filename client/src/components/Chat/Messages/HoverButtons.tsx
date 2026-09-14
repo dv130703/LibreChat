@@ -1,6 +1,7 @@
 import React, { useState, useMemo, memo } from 'react';
 import { useRecoilState } from 'recoil';
-import { RotateCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { RotateCw, Waypoints } from 'lucide-react';
 import { EditIcon, Clipboard, CheckMark, ContinueIcon, RegenerateIcon } from '@librechat/client';
 import type { TConversation, TMessage, TFeedback } from 'librechat-data-provider';
 import { useTranscribeStatusQuery, useRetryTranscriptionMutation } from '~/data-provider';
@@ -130,6 +131,7 @@ const HoverButtons = ({
   handleFeedback,
 }: THoverButtons) => {
   const localize = useLocalize();
+  const navigate = useNavigate();
   const [isCopied, setIsCopied] = useState(false);
   const [TextToSpeech] = useRecoilState<boolean>(store.textToSpeech);
 
@@ -292,6 +294,19 @@ const HoverButtons = ({
           isDisabled={retryTranscription.isLoading}
           isLast={isLast}
           dataTestId="retry-transcription-button"
+        />
+      )}
+
+      {/* Transparency Button */}
+      {!isCreatedByUser && !isSubmitting && (
+        <HoverButton
+          onClick={() =>
+            navigate(`/transparency/${conversation.conversationId}/${message.messageId}`)
+          }
+          title={localize('com_transparency_title')}
+          icon={<Waypoints size="19" />}
+          isLast={isLast}
+          dataTestId="transparency-button"
         />
       )}
 

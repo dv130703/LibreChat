@@ -125,18 +125,29 @@ jest.mock('~/common', () => ({
     model: 'model',
     builder: 'builder',
     advanced: 'advanced',
+    version: 'version',
   },
 }));
 
 // Mock child components to simplify testing
-jest.mock('./AgentPanelSkeleton', () => ({
+jest.mock('~/components/Agents/layouts/AgentBuilderSkeleton', () => ({
   __esModule: true,
   default: () => <div>{`Loading...`}</div>,
+}));
+
+jest.mock('~/components/Agents/layouts/AgentBuilderTabs', () => ({
+  __esModule: true,
+  default: () => <div>{`Agent Builder Tabs`}</div>,
 }));
 
 jest.mock('./Advanced/AdvancedPanel', () => ({
   __esModule: true,
   default: () => <div>{`Advanced Panel`}</div>,
+}));
+
+jest.mock('./Version/VersionPanel', () => ({
+  __esModule: true,
+  default: () => <div>{`Version Panel`}</div>,
 }));
 
 jest.mock('./AgentConfig', () => ({

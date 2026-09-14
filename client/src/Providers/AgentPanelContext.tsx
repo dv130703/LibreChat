@@ -26,14 +26,28 @@ export function useAgentPanelContext() {
   return context;
 }
 
+interface AgentPanelProviderProps {
+  children: React.ReactNode;
+  /** When provided alongside `onAgentIdChange`, the current agent id is externally
+   * controlled (e.g. driven by a route param) instead of tracked in local state. */
+  agentId?: string;
+  onAgentIdChange?: (agentId: string | undefined) => void;
+}
+
 /** Houses relevant state for the Agent Form Panels (formerly 'commonProps') */
-export function AgentPanelProvider({ children }: { children: React.ReactNode }) {
+export function AgentPanelProvider({
+  children,
+  agentId,
+  onAgentIdChange,
+}: AgentPanelProviderProps) {
   const localize = useLocalize();
   const [mcp, setMcp] = useState<MCP | undefined>(undefined);
   const [mcps, setMcps] = useState<MCP[] | undefined>(undefined);
   const [action, setAction] = useState<Action | undefined>(undefined);
   const [activePanel, setActivePanel] = useState<Panel>(Panel.builder);
-  const [agent_id, setCurrentAgentId] = useState<string | undefined>(undefined);
+  const [internalAgentId, setInternalAgentId] = useState<string | undefined>(undefined);
+  const agent_id = onAgentIdChange !== undefined ? agentId : internalAgentId;
+  const setCurrentAgentId = onAgentIdChange ?? setInternalAgentId;
   const { availableMCPServers, isLoading, availableMCPServersMap } = useMCPServerManager();
   const { data: startupConfig } = useGetStartupConfig();
   const { data: actions } = useGetActionsQuery(EModelEndpoint.agents, {

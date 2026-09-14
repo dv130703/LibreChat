@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { logger } = require('@librechat/data-schemas');
-const { ContentTypes } = require('librechat-data-provider');
+const { ContentTypes, EModelEndpoint } = require('librechat-data-provider');
 const {
   unescapeLaTeX,
   countTokens,
@@ -345,6 +345,104 @@ router.get('/:conversationId/:messageId', validateMessageReq, async (req, res) =
     res.status(200).json(message);
   } catch (error) {
     logger.error('Error fetching message:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Replays what actually happened for one message: every persisted tool call
+ * (name/args/output - already complete data, see `Agents.ToolCall`), plus the
+ * agent configuration that produced it. That configuration is only known
+ * EXACTLY when the agent hasn't been edited since - otherwise this returns the
+ * nearest-preceding version snapshot as a best-effort reconstruction, flagged
+ * as such (`source: 'reconstructed'`), never presented as if it were exact.
+ * See transcription/schemas.py's TranscriptionDiagnostics for the same
+ * "persist what happened, flag what's uncertain" precedent elsewhere in this
+ * codebase.
+ *
+ * @route GET /:conversationId/:messageId/transparency
+ */
+router.get('/:conversationId/:messageId/transparency', validateMessageReq, async (req, res) => {
+  try {
+    const { conversationId, messageId } = req.params;
+    const messages = await db.getMessages(
+      { conversationId, messageId, user: req.user.id },
+      '-_id -__v -user',
+    );
+    const message = messages?.[0];
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    const toolCalls = Array.isArray(message.content)
+      ? message.content
+          .filter((part) => part?.type === ContentTypes.TOOL_CALL && part.tool_call)
+          .map((part) => ({
+            id: part.tool_call.id,
+            name: part.tool_call.name,
+            args: part.tool_call.args,
+            output: part.tool_call.output,
+            // The SDK auto-generates `transfer_to_<agent>` tools for handoffs;
+            // `subagent` is the delegate-and-return tool - both are ordinary
+            // tool calls data-wise, just worth labeling distinctly in the UI.
+            isHandoff:
+              typeof part.tool_call.name === 'string' &&
+              part.tool_call.name.startsWith('transfer_to_'),
+            isSubagent: part.tool_call.name === 'subagent',
+          }))
+      : [];
+
+    let agent = null;
+    if (message.endpoint === EModelEndpoint.agents && message.model) {
+      const agentDoc = await db.getAgent({ id: message.model });
+      if (agentDoc) {
+        const versions = Array.isArray(agentDoc.versions) ? agentDoc.versions : [];
+        const messageTime = new Date(message.createdAt).getTime();
+
+        let matchedVersion = null;
+        for (const version of versions) {
+          const versionTime = version?.updatedAt ? new Date(version.updatedAt).getTime() : null;
+          if (versionTime == null || versionTime > messageTime) {
+            continue;
+          }
+          if (!matchedVersion || new Date(matchedVersion.updatedAt).getTime() < versionTime) {
+            matchedVersion = version;
+          }
+        }
+
+        const latestVersion = versions.length > 0 ? versions[versions.length - 1] : null;
+        const isReconstructed =
+          matchedVersion != null &&
+          latestVersion != null &&
+          new Date(matchedVersion.updatedAt).getTime() !==
+            new Date(latestVersion.updatedAt).getTime();
+
+        const source = isReconstructed ? matchedVersion : agentDoc;
+        agent = {
+          id: agentDoc.id,
+          name: agentDoc.name,
+          provider: source.provider,
+          model: source.model,
+          instructions: source.instructions,
+          tools: source.tools ?? [],
+          source: isReconstructed ? 'reconstructed' : 'current',
+          versionUpdatedAt: matchedVersion?.updatedAt ?? null,
+        };
+      }
+    }
+
+    res.status(200).json({
+      messageId: message.messageId,
+      conversationId: message.conversationId,
+      isCreatedByUser: message.isCreatedByUser,
+      createdAt: message.createdAt,
+      model: message.model,
+      endpoint: message.endpoint,
+      toolCalls,
+      agent,
+    });
+  } catch (error) {
+    logger.error('Error fetching message transparency:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

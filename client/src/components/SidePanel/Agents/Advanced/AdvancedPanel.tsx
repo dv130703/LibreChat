@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { useToastContext } from '@librechat/client';
-import { ChevronLeft, Check, Copy } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { AgentCapabilities } from 'librechat-data-provider';
 import type { AgentForm } from '~/common';
 import { sectionLabelClass, groupHeadingClass } from './ui';
@@ -10,7 +10,6 @@ import StatefulSessions from './StatefulSessions';
 import OrchestrationHub from './OrchestrationHub';
 import MaxAgentSteps from './MaxAgentSteps';
 import { useLocalize } from '~/hooks';
-import { Panel } from '~/common';
 
 export default function AdvancedPanel() {
   const localize = useLocalize();
@@ -19,7 +18,7 @@ export default function AdvancedPanel() {
   const currentAgentId = watch('id');
   const [copied, setCopied] = useState(false);
 
-  const { agentsConfig, setActivePanel } = useAgentPanelContext();
+  const { agentsConfig } = useAgentPanelContext();
   const statefulSessionsEnabled = useMemo(
     () => agentsConfig?.capabilities.includes(AgentCapabilities.stateful_code_sessions) ?? false,
     [agentsConfig],
@@ -39,32 +38,12 @@ export default function AdvancedPanel() {
 
   return (
     <div className="mb-1 flex w-full flex-col gap-4 text-sm">
-      <header className="grid grid-cols-[auto_1fr_auto] items-center gap-2 pt-1">
-        <button
-          type="button"
-          onClick={() => setActivePanel(Panel.builder)}
-          aria-label={localize('com_ui_back_to_builder')}
-          className="inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-border-light text-text-secondary transition-colors hover:bg-surface-secondary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring-primary"
-        >
-          <ChevronLeft className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />
-        </button>
-        <h2 className="text-center text-base font-semibold text-text-primary">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-base font-semibold text-text-primary">
           {localize('com_ui_advanced_settings')}
         </h2>
-        <span aria-hidden="true" className="h-10 w-10" />
-      </header>
-
-      <div className="flex flex-col gap-5 px-2 pb-2">
-        <section className="flex flex-col gap-3">
-          <span className={groupHeadingClass}>{localize('com_ui_essentials')}</span>
-          <MaxAgentSteps />
-          {statefulSessionsEnabled && <StatefulSessions />}
-        </section>
-
-        <OrchestrationHub currentAgentId={currentAgentId} />
-
         {currentAgentId && (
-          <div className="flex items-center justify-between gap-2 border-t border-border-light pt-3">
+          <div className="flex items-center gap-2">
             <span className={sectionLabelClass}>{localize('com_ui_agent_id')}</span>
             <button
               type="button"
@@ -85,6 +64,16 @@ export default function AdvancedPanel() {
             </button>
           </div>
         )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-x-8 gap-y-5 px-2 pb-2 lg:grid-cols-2">
+        <section className="flex flex-col gap-3">
+          <span className={groupHeadingClass}>{localize('com_ui_essentials')}</span>
+          <MaxAgentSteps />
+          {statefulSessionsEnabled && <StatefulSessions />}
+        </section>
+
+        <OrchestrationHub currentAgentId={currentAgentId} />
       </div>
     </div>
   );

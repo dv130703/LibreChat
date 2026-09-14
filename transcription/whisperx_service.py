@@ -26,7 +26,7 @@ from .channels import load_audio_channel, probe_channel_count
 from .config import Settings, get_settings
 from .offline import ensure_offline_mode
 from .recording_profile import UNKNOWN_SPEAKER_LABEL, compute_recording_profile
-from .speaker_bounds import SpeakerBounds, resolve_speaker_bounds
+from .speaker_count import SpeakerCountHint, resolve_speaker_count
 from .transcription_prompt import (
     PromptBuild,
     build_initial_prompt,
@@ -385,9 +385,7 @@ class WhisperXService:
 
         return count
 
-    def build_prompt(
-        self, context_terms: str | None, context: str | None = None, model_name: str | None = None
-    ) -> PromptBuild:
+    def build_prompt(self, context_terms: str | None, model_name: str | None = None) -> PromptBuild:
         """Budget and assemble the per-recording prompt.
 
         Lives here rather than in the router because the budget depends on two
@@ -399,7 +397,7 @@ class WhisperXService:
         budget against the wrong model, and worse, load it just to immediately
         evict it in favor of the real one (see `_get_model`).
         """
-        if not (context_terms or "").strip() and not (context or "").strip():
+        if not (context_terms or "").strip():
             return PromptBuild(prompt=None)
 
         model = self._get_model(model_name)
@@ -410,7 +408,6 @@ class WhisperXService:
 
         return build_initial_prompt(
             context_terms,
-            context=context,
             count_tokens=count_tokens,
             budget=prompt_budget(hotwords_tokens=hotwords_tokens),
         )
@@ -582,7 +579,7 @@ class WhisperXService:
         self,
         audio,
         asr_segments: list[dict],
-        bounds: SpeakerBounds,
+        hint: SpeakerCountHint,
         clustering_threshold: float | None,
     ) -> dict:
         """One full diarize-and-assign pass over already-transcribed+aligned
@@ -642,21 +639,16 @@ class WhisperXService:
             # computes per-cluster embeddings as part of its own clustering
             # step; this just asks the pipeline to hand them back instead of
             # discarding them.
-            if bounds.min_speakers is not None and bounds.min_speakers == bounds.max_speakers:
+            if hint.count is not None:
                 # An exact count forces pyannote's clustering to cut into
-                # precisely that many groups. An equal min/max pair instead
-                # still runs its threshold-based count *estimation* and only
-                # clamps the result afterward - a different, less direct path
-                # even though the number given is identical.
+                # precisely that many groups, rather than estimating the
+                # count itself.
                 diarize_segments, speaker_embeddings = diarize_model(
-                    audio, num_speakers=bounds.min_speakers, return_embeddings=True
+                    audio, num_speakers=hint.count, return_embeddings=True
                 )
             else:
                 diarize_segments, speaker_embeddings = diarize_model(
-                    audio,
-                    min_speakers=bounds.min_speakers,
-                    max_speakers=bounds.max_speakers,
-                    return_embeddings=True,
+                    audio, return_embeddings=True
                 )
 
         if len(diarize_segments) == 0:
@@ -664,7 +656,7 @@ class WhisperXService:
                 "No speech could be detected in this recording, so there are no speakers "
                 "to label. This usually means the audio is silent, too quiet, or too short. "
                 "Check that the file actually contains audible speech - if it does, try "
-                "setting min_speakers/max_speakers explicitly."
+                "setting an exact speaker count explicitly."
             )
 
         # The raw ground truth everything else here is derived from -
@@ -702,16 +694,14 @@ class WhisperXService:
         audio_path: str,
         language: str | None = None,
         diarize: bool = True,
-        min_speakers: int | None = None,
-        max_speakers: int | None = None,
+        speaker_count: int | None = None,
         clustering_threshold: float | None = None,
         context_terms: str | None = None,
-        context: str | None = None,
         model: str | None = None,
         suppress_numerals: bool | None = None,
         channel_split: bool = False,
     ) -> tuple[list[dict], str, dict, list[dict], dict[str, list[float]] | None, dict]:
-        prompt_build = self.build_prompt(context_terms, context, model_name=model)
+        prompt_build = self.build_prompt(context_terms, model_name=model)
         # Experimental: also boost this recording's confirmed terms through
         # hotwords, not just initial_prompt - see _build_request_hotwords.
         request_hotwords = self._build_request_hotwords(
@@ -725,11 +715,11 @@ class WhisperXService:
         # actually honours, the UI-configured terms still reach it.
         initial_prompt = prompt_build.prompt or self.settings.initial_prompt or request_hotwords
 
-        # Put the hint in range and the right way round before any diarizer sees
-        # it. pyannote takes these at face value, so an inverted pair silently
-        # produces a worse result than passing nothing.
-        bounds = resolve_speaker_bounds(min_speakers, max_speakers)
-        for adjustment in bounds.adjustments:
+        # Put the hint in range before any diarizer sees it. pyannote takes it
+        # at face value, so an out-of-range value silently produces a worse
+        # result than passing nothing.
+        hint = resolve_speaker_count(speaker_count)
+        for adjustment in hint.adjustments:
             logger.warning("Speaker-count hint adjusted: %s", adjustment)
 
         # Channel-split mode replaces pyannote outright (see below), so it
@@ -891,8 +881,8 @@ class WhisperXService:
             }
 
             if diarize:
-                diarize_result = self._run_diarization(audio, asr_segments, bounds, clustering_threshold)
-                speaker_hint_applied = bounds.is_set
+                diarize_result = self._run_diarization(audio, asr_segments, hint, clustering_threshold)
+                speaker_hint_applied = hint.is_set
 
                 # Selective retry: a "difficult" first pass most often means
                 # clustering merged two real speakers together or fragmented
@@ -920,7 +910,7 @@ class WhisperXService:
                     )
                     try:
                         retry_result = self._run_diarization(
-                            audio, asr_segments, bounds, DIFFICULT_RETRY_CLUSTERING_THRESHOLD
+                            audio, asr_segments, hint, DIFFICULT_RETRY_CLUSTERING_THRESHOLD
                         )
                         retry_profile = compute_recording_profile(
                             _preview_label(retry_result["segments"]), retry_result["diarization_turns"]
@@ -960,65 +950,15 @@ class WhisperXService:
                 # A hint is a hint, not a constraint - clustering can still land
                 # outside it. Saying so is the difference between a transcript the
                 # user can trust and one they have to re-check by hand.
-                if bounds.is_set and diarization_speaker_count and not bounds.contains(diarization_speaker_count):
+                if hint.is_set and diarization_speaker_count and not hint.matches(diarization_speaker_count):
                     logger.warning(
                         "Diarization found %d speakers, outside the requested %s.",
                         diarization_speaker_count,
-                        bounds.describe(),
+                        hint.describe(),
                     )
 
         speaker_numbers: dict[str, int] = {}
-        segments = []
-        for index, segment in enumerate(result["segments"]):
-            # Segment's own label resolved first, before any of its words -
-            # numbering order stays exactly what it was before this change
-            # (segment-appearance order) unless a word's raw speaker never
-            # appears as any segment's own speaker, which is itself the kind
-            # of disagreement this whole record exists to make visible.
-            # "unknown" bypasses the numbered sequence entirely - it isn't a
-            # distinct speaker, it's "no evidence was close enough to trust",
-            # and numbering it would falsely imply otherwise.
-            raw_speaker = segment.get("speaker")
-            speaker_label = (
-                UNKNOWN_SPEAKER_LABEL
-                if segment.get("_assignment_method") == "unknown"
-                else self._speaker_label(raw_speaker, speaker_numbers)
-            )
-
-            words = []
-            for word in segment.get("words", []):
-                raw_word_speaker = word.get("speaker")
-                if word.get("_assignment_method") == "unknown":
-                    word_speaker_label = UNKNOWN_SPEAKER_LABEL
-                elif raw_word_speaker is not None:
-                    word_speaker_label = self._speaker_label(raw_word_speaker, speaker_numbers)
-                else:
-                    word_speaker_label = None
-                words.append(
-                    {
-                        "word": (word.get("word") or "").strip(),
-                        "start": word.get("start"),
-                        "end": word.get("end"),
-                        "speaker": word_speaker_label,
-                        "assignment_method": word.get("_assignment_method", "none"),
-                        "assignment_distance_s": word.get("_assignment_distance_s"),
-                        "vad_confidence": word.get("_vad_confidence"),
-                    }
-                )
-
-            segments.append(
-                {
-                    "id": f"segment-{index}",
-                    "start": round(float(segment["start"]), 2),
-                    "end": round(float(segment["end"]), 2),
-                    "speaker": speaker_label,
-                    "text": segment["text"].strip(),
-                    "assignment_method": segment.get("_assignment_method", "none"),
-                    "assignment_distance_s": segment.get("_assignment_distance_s"),
-                    "words": words,
-                    "vad_borderline": bool(segment.get("_vad_borderline")),
-                }
-            )
+        segments = self._build_speaker_segments(result["segments"], speaker_numbers)
 
         # Raw pyannote/channel id -> this transcript's renumbered label, so a
         # raw turn or embedding (both keyed by the raw id) can be traced back
@@ -1043,7 +983,6 @@ class WhisperXService:
             # model is worth saying out loud.
             "context_terms_used": len(prompt_build.used_terms),
             "context_terms_dropped": prompt_build.dropped_terms,
-            "context_terms_harvested": prompt_build.harvested_terms,
             "context_prompt_tokens": prompt_build.used_tokens,
             "context_prompt_budget": prompt_build.budget_tokens,
             # Whether this recording's confirmed terms also reached the
@@ -1056,13 +995,12 @@ class WhisperXService:
             # The speaker-count hint, end to end: what was asked for after
             # normalisation, whether the backend could take it, and whether the
             # result actually landed inside it.
-            "speaker_min_requested": bounds.min_speakers,
-            "speaker_max_requested": bounds.max_speakers,
+            "speaker_count_requested": hint.count,
             "speaker_hint_applied": speaker_hint_applied,
-            "speaker_hint_adjustments": bounds.adjustments,
+            "speaker_hint_adjustments": hint.adjustments,
             "speaker_count_within_hint": (
-                bounds.contains(diarization_speaker_count)
-                if bounds.is_set and diarize and diarization_speaker_count
+                hint.matches(diarization_speaker_count)
+                if hint.is_set and diarize and diarization_speaker_count
                 else None
             ),
             "speaker_label_map": speaker_label_map,
@@ -1101,6 +1039,105 @@ class WhisperXService:
         if raw_speaker not in speaker_numbers:
             speaker_numbers[raw_speaker] = len(speaker_numbers) + 1
         return f"Speaker {speaker_numbers[raw_speaker]}"
+
+    # Confidence ranking for `_build_speaker_segments`' least-confident-wins
+    # aggregation, best to worst. `channel_split` sits with `overlap`: a
+    # channel-split word's speaker is certain by construction (one channel is
+    # one speaker), not a clustering estimate, so it is not a lesser form of
+    # evidence than a genuine diarization-turn overlap.
+    _ASSIGNMENT_METHOD_SEVERITY = {"overlap": 0, "channel_split": 0, "nearest": 1, "unknown": 2, "none": 3}
+
+    @staticmethod
+    def _build_speaker_segments(asr_segments: list[dict], speaker_numbers: dict[str, int]) -> list[dict]:
+        """Re-derives output segments from contiguous same-speaker word runs,
+        instead of Whisper's own ASR decode-chunk boundaries.
+
+        `asr_segments` is WhisperX's own segment shape (each with a `"words"`
+        list) after `assign_word_speakers` and per-word
+        `_resolve_speaker_assignment` have already run - every word already
+        carries a resolved `_assignment_method`/`speaker`; this only decides
+        how those words are grouped into displayed lines.
+
+        A single Whisper segment can span several real speaker turns - VAD
+        merges continuous speech with only brief pauses into one decode
+        window, which is exactly what fast interview back-and-forth looks
+        like - so treating that whole span as one speaker line silently
+        blends turns together. Grouping by the words' own resolved speaker
+        instead puts a segment boundary exactly where the speaker actually
+        changes, and can also merge two adjacent Whisper segments when the
+        same speaker continues across them - both are correct, because the
+        output unit here is a speaker turn, not a Whisper decode chunk.
+        """
+        flat_words: list[dict] = []
+        for segment in asr_segments:
+            vad_borderline = bool(segment.get("_vad_borderline"))
+            for word in segment.get("words", []):
+                raw_word_speaker = word.get("speaker")
+                if word.get("_assignment_method") == "unknown":
+                    word_speaker_label = UNKNOWN_SPEAKER_LABEL
+                elif raw_word_speaker is not None:
+                    word_speaker_label = WhisperXService._speaker_label(raw_word_speaker, speaker_numbers)
+                else:
+                    word_speaker_label = None
+                flat_words.append(
+                    {
+                        "raw_word": word.get("word") or "",
+                        "start": word.get("start"),
+                        "end": word.get("end"),
+                        "speaker": word_speaker_label,
+                        "assignment_method": word.get("_assignment_method", "none"),
+                        "assignment_distance_s": word.get("_assignment_distance_s"),
+                        "vad_confidence": word.get("_vad_confidence"),
+                        "vad_borderline": vad_borderline,
+                    }
+                )
+
+        runs: list[list[dict]] = []
+        for word in flat_words:
+            if runs and runs[-1][0]["speaker"] == word["speaker"]:
+                runs[-1].append(word)
+            else:
+                runs.append([word])
+
+        severity = WhisperXService._ASSIGNMENT_METHOD_SEVERITY
+        segments: list[dict] = []
+        for index, run in enumerate(runs):
+            starts = [w["start"] for w in run if w["start"] is not None]
+            ends = [w["end"] for w in run if w["end"] is not None]
+            distances = [w["assignment_distance_s"] for w in run if w["assignment_distance_s"] is not None]
+            # A run is only as trustworthy as its least-trustworthy word - its
+            # reported method/distance must never overstate what's actually
+            # known about who's speaking.
+            worst_method = max(run, key=lambda w: severity.get(w["assignment_method"], 3))[
+                "assignment_method"
+            ]
+
+            segments.append(
+                {
+                    "id": f"segment-{index}",
+                    "start": round(float(min(starts)), 2) if starts else 0.0,
+                    "end": round(float(max(ends)), 2) if ends else 0.0,
+                    "speaker": run[0]["speaker"] if run[0]["speaker"] is not None else UNKNOWN_SPEAKER_LABEL,
+                    "text": "".join(w["raw_word"] for w in run).strip(),
+                    "assignment_method": worst_method,
+                    "assignment_distance_s": max(distances) if distances else None,
+                    "words": [
+                        {
+                            "word": w["raw_word"].strip(),
+                            "start": w["start"],
+                            "end": w["end"],
+                            "speaker": w["speaker"],
+                            "assignment_method": w["assignment_method"],
+                            "assignment_distance_s": w["assignment_distance_s"],
+                            "vad_confidence": w["vad_confidence"],
+                        }
+                        for w in run
+                    ],
+                    "vad_borderline": any(w["vad_borderline"] for w in run),
+                }
+            )
+
+        return segments
 
     @staticmethod
     def _nearest_turn(
