@@ -55,10 +55,51 @@ EXEC_MAX_OUTPUT_FILE_MB = int(os.getenv("CODEAPI_EXEC_MAX_FILE_MB", 100))
 # process is allowed to WRITE to disk (via `ulimit -f`).
 EXEC_MAX_OUTPUT_CHARS = int(os.getenv("CODEAPI_EXEC_MAX_OUTPUT_CHARS", 200_000))
 
+def _resolve_sandbox_interpreter(name: str) -> str:
+    """Resolve an interpreter binary to a path the sandbox can actually see.
+
+    `_build_bwrap_argv` (sandbox.py) only ever bind-mounts the host's `/usr`
+    into the sandbox (read-only, at the same path) - nothing else on the
+    filesystem is reachable from inside `bwrap`. `shutil.which(name)`
+    searches this *process's* PATH, which can easily have a venv/pyenv/conda
+    `bin` directory ahead of `/usr/bin` (e.g. a shell that had some other
+    project's virtualenv active before `npm run dev` was started) - `which`
+    would then happily return a real, working binary that is nonetheless
+    invisible inside the sandbox, so every execution fails with a cryptic
+    `execvp ...: No such file or directory` from `bwrap` instead of a clear
+    error here at startup.
+
+    Prefer the canonical `/usr/bin/<name>` path outright, since that's
+    guaranteed to resolve identically inside and outside the sandbox. Only
+    fall back to `shutil.which` if that doesn't exist, and only accept the
+    result if it's actually under `/usr` for the same reason.
+    """
+    canonical = f"/usr/bin/{name}"
+    if os.path.isfile(canonical):
+        return canonical
+    found = shutil.which(name)
+    if found and found.startswith("/usr/"):
+        return found
+    raise RuntimeError(
+        f"Could not find a sandbox-visible '{name}' interpreter. "
+        + (
+            f"PATH resolved it to {found!r}, which is outside /usr and won't "
+            "exist inside the bwrap sandbox (only /usr is bind-mounted in) - "
+            "this usually means a virtualenv/pyenv/conda environment was "
+            "active in the shell that started this server, shadowing the "
+            "system binary. Start codeapi_server from a shell with no "
+            "virtualenv active, or ensure /usr/bin/"
+            f"{name} exists."
+            if found
+            else f"Expected it at {canonical} or somewhere on PATH."
+        )
+    )
+
+
 BWRAP_PATH = shutil.which("bwrap")
 TIMEOUT_PATH = shutil.which("timeout")
-PYTHON3_PATH = shutil.which("python3")
-BASH_PATH = shutil.which("bash")
+PYTHON3_PATH = _resolve_sandbox_interpreter("python3")
+BASH_PATH = _resolve_sandbox_interpreter("bash")
 
 if not BWRAP_PATH:
     raise RuntimeError(
