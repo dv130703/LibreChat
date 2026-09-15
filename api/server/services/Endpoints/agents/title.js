@@ -136,7 +136,7 @@ const addTitle = async (
   let timeoutId;
   try {
     const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error('Title generation timeout')), 45000);
+      timeoutId = setTimeout(() => reject(new Error('Title generation timeout')), 90000);
     }).catch((error) => {
       logger.error('Title error:', error);
     });
