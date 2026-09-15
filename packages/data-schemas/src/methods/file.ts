@@ -571,16 +571,24 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
       entry.unqueryableReason = reason;
     }
 
-    // A recording with no transcript file yet has nothing to index, so its
-    // reason comes from the job instead - "still running" and "it failed"
-    // are different things to tell a user, and neither is "not indexed".
+    // The job status on the source file is the one authoritative "is this
+    // recording still running" signal, and it must win outright - not only
+    // when no transcript file exists yet. `runTranscriptionCore` persists
+    // the transcript file (already carrying a terminal `indexStatus`) and
+    // *then* flips `transcription.status` to `ready` in a later, separate
+    // write, so a poll landing between those two writes used to see a
+    // transcript file that already reads as queryable while the job itself
+    // still said `transcribing`. Gating this on `transcriptFileId == null`
+    // let that in-between state read as "settled", which permanently
+    // stopped the client's poll (`refetchInterval` keys off exactly this
+    // field) while the UI was still frozen on "Transcribing..." - only a
+    // full page reload's fresh fetch would ever see the job actually finish.
     for (const entry of bySourceId.values()) {
-      if (entry.transcriptFileId != null) {
-        continue;
-      }
       if (entry.jobStatus === 'queued' || entry.jobStatus === 'transcribing') {
+        entry.isQueryable = false;
         entry.unqueryableReason = 'in_progress';
       } else if (entry.jobStatus === 'failed') {
+        entry.isQueryable = false;
         entry.unqueryableReason = 'job_failed';
       }
     }

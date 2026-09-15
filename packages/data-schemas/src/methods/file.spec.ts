@@ -504,6 +504,36 @@ describe('File Methods', () => {
       });
     });
 
+    it('keeps reporting in_progress if the transcript file lands before the job status flips to ready', async () => {
+      // Reproduces the write-ordering race in `runTranscriptionCore`: the
+      // transcript file (already terminally indexed) is persisted before
+      // the source file's `transcription.status` is flipped to `ready`. A
+      // read landing between those two writes must not report this
+      // recording as settled - doing so is exactly what let the client's
+      // poll stop while the UI was still stuck on "Transcribing...".
+      const userId = new mongoose.Types.ObjectId();
+      const sourceFileId = uuidv4();
+      await seedRecording(userId, sourceFileId, {
+        jobStatus: 'transcribing',
+        transcript: {
+          embedded: true,
+          indexStatus: 'indexed',
+          indexVersion: 1,
+          transcriptVersion: 1,
+        },
+      });
+
+      const result = await fileMethods.getConversationTranscripts(conversationId, {
+        userId: userId.toString(),
+      });
+
+      expect(result[0]).toMatchObject({
+        jobStatus: 'transcribing',
+        isQueryable: false,
+        unqueryableReason: 'in_progress',
+      });
+    });
+
     it('distinguishes a failed job from an unindexed transcript', async () => {
       const userId = new mongoose.Types.ObjectId();
       const failedId = uuidv4();
