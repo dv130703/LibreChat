@@ -4,6 +4,7 @@ import {
   buildSandpackOptions,
   detectArtifactTypeFromFile,
   fileToArtifact,
+  injectDialogShim,
   isCodeOnlyArtifact,
   isPreviewOnlyArtifact,
   languageForFilename,
@@ -44,6 +45,32 @@ describe('buildSandpackOptions', () => {
   it('returns base options without bundlerURL when no config is provided', () => {
     const options = buildSandpackOptions('react-ts');
     expect(options?.bundlerURL).toBeUndefined();
+  });
+});
+
+describe('injectDialogShim', () => {
+  it('overrides alert/confirm/prompt before the document head closes', () => {
+    const html = '<html><head><title>Game</title></head><body>hi</body></html>';
+    const result = injectDialogShim(html);
+    expect(result).toContain('window.alert = function');
+    expect(result).toContain('window.confirm = function');
+    expect(result).toContain('window.prompt = function');
+    // Injected right after <head>, ahead of the rest of the document.
+    expect(result.indexOf('window.alert')).toBeLessThan(result.indexOf('<title>'));
+  });
+
+  it('synthesizes a <head> when the document only has an <html> tag', () => {
+    const html = '<html><body>hi</body></html>';
+    const result = injectDialogShim(html);
+    expect(result).toContain('<head><script>');
+    expect(result).toContain('window.alert = function');
+  });
+
+  it('prepends the shim to a bare fragment with no head/html tag', () => {
+    const html = '<body>hi</body>';
+    const result = injectDialogShim(html);
+    expect(result.endsWith(html)).toBe(true);
+    expect(result.indexOf('window.alert')).toBeLessThan(result.indexOf(html));
   });
 });
 

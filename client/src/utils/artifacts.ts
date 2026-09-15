@@ -239,6 +239,49 @@ const STORAGE_SHIM = `<script>
 })();
 </script>`;
 
+/**
+ * Native-dialog shim for HTML artifacts rendered live through Sandpack.
+ *
+ * Sandpack's `static` template serves the artifact from a real,
+ * unsandboxed cross-origin iframe (`*.sandpack-static-server.codesandbox.io`),
+ * not a `srcdoc` frame - so `window.alert`/`confirm`/`prompt` inside the
+ * artifact surface as genuine native browser dialogs stamped with that
+ * third-party origin ("An embedded page at ... says"). That's jarring
+ * inside a chat UI and leaks an unfamiliar domain to the user for what
+ * looks like an in-app message (a game's "Game Over" notice, say).
+ * Replace them with an in-page banner that reads the same message without
+ * blocking the page or exposing the iframe's real origin. `confirm`/
+ * `prompt` can't reproduce native the blocking-with-a-return-value
+ * semantics from a same-thread override, so they resolve to the
+ * conventional "user did nothing" defaults (true / null) - scripts that
+ * branch on them still get a sensible outcome instead of hanging.
+ */
+const DIALOG_SHIM = `<script>
+(function () {
+  function showBanner(text) {
+    try {
+      var el = document.createElement('div');
+      el.setAttribute('role', 'alert');
+      el.textContent = text;
+      el.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);' +
+        'max-width:85%;padding:10px 16px;background:#1a1a1a;color:#fff;' +
+        'font:14px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;border-radius:8px;' +
+        'box-shadow:0 2px 12px rgba(0,0,0,.35);z-index:2147483647;opacity:0;' +
+        'transition:opacity .15s ease;';
+      document.body.appendChild(el);
+      requestAnimationFrame(function () { el.style.opacity = '1'; });
+      setTimeout(function () {
+        el.style.opacity = '0';
+        setTimeout(function () { el.remove(); }, 200);
+      }, 3000);
+    } catch (noDocumentYet) { /* nothing to show before <body> exists */ }
+  }
+  window.alert = function (message) { showBanner(String(message)); };
+  window.confirm = function (message) { showBanner(String(message)); return true; };
+  window.prompt = function (message) { showBanner(String(message)); return null; };
+})();
+</script>`;
+
 const HEAD_OPEN = /<head[^<>]*>/i;
 const HTML_OPEN = /<html[^<>]*>/i;
 
@@ -250,6 +293,18 @@ const insertAfterMatch = (regex: RegExp, content: string, insertable: string): s
   const offset = match.index + match[0].length;
   return `${content.slice(0, offset)}\n${insertable}${content.slice(offset)}`;
 };
+
+/** Inject {@link DIALOG_SHIM} ahead of the artifact's own scripts so its
+ *  override wins the assignment race against any inline `<script>` in the
+ *  document. Falls back to prepending the whole document when there's no
+ *  `<head>`/`<html>` tag to anchor on (a bare HTML fragment). */
+export function injectDialogShim(html: string): string {
+  return (
+    insertAfterMatch(HEAD_OPEN, html, DIALOG_SHIM) ??
+    insertAfterMatch(HTML_OPEN, html, `<head>${DIALOG_SHIM}</head>`) ??
+    `${DIALOG_SHIM}\n${html}`
+  );
+}
 
 /**
  * `<link>`/`<script>` tag for one external-resource URL, or `null` when

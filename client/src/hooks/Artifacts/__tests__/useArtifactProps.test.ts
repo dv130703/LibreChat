@@ -182,6 +182,18 @@ describe('useArtifactProps', () => {
       expect(result.current.fileKey).toBe('index.html');
       expect(result.current.template).toBe('static');
     });
+
+    it('injects the native-dialog shim so alert/confirm/prompt do not surface as intrusive browser popups', () => {
+      const artifact = createArtifact({
+        type: 'text/html',
+        content: '<html><body><script>alert("Game Over")</script></body></html>',
+      });
+
+      const { result } = renderHook(() => useArtifactProps({ artifact }));
+
+      expect(result.current.files['index.html']).toContain('window.alert = function');
+      expect(result.current.files['index.html']).toContain('alert("Game Over")');
+    });
   });
 
   describe('edge cases', () => {

@@ -9,6 +9,7 @@ import {
   getArtifactFilename,
   languageForFilename,
   wrapAsFencedCodeBlock,
+  injectDialogShim,
   TOOL_ARTIFACT_TYPES,
 } from '~/utils/artifacts';
 import { getMarkdownFiles } from '~/utils/markdown';
@@ -61,6 +62,19 @@ export default function useArtifactProps({ artifact }: { artifact: Artifact }) {
     }
 
     const fileKey = getArtifactFilename(artifact.type ?? '', artifact.language);
+    /* Raw HTML documents render live in Sandpack's real, unsandboxed
+     * cross-origin preview iframe - `window.alert`/`confirm`/`prompt`
+     * inside them surface as native browser dialogs stamped with that
+     * third-party origin. Inject the in-page shim so a script's own
+     * dialogs read as part of the artifact instead of an intrusive,
+     * unfamiliar popup. Scoped to the HTML bucket only - React sources
+     * are TSX, not a document, and would corrupt under HTML injection. */
+    if (type === TOOL_ARTIFACT_TYPES.HTML) {
+      const files = removeNullishValues({
+        [fileKey]: injectDialogShim(artifact.content ?? ''),
+      });
+      return [fileKey, files];
+    }
     const files = removeNullishValues({
       [fileKey]: artifact.content,
     });
