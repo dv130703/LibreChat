@@ -193,7 +193,29 @@ RAG-specific overrides (`RAG_PORT`, `LANCEDB_PATH`, etc. — see
 > history) — that script and its `/guidance` endpoint are currently unused.
 > No need to run it unless you reintroduce a tool that reads that table.
 
-## 8. Build the workspaces
+## 8. Code Interpreter / sandbox server (optional)
+
+Only needed if you want agents to use `execute_code` (already enabled by
+default — see `defaultAgentCapabilities` in
+`packages/data-provider/src/config.ts` — this step is what makes it
+actually work rather than fail every call). See
+[`codeapi_server/README.md`](codeapi_server/README.md) for the full
+contract and its deliberate limitations (Python + bash only, no Docker —
+sandboxed via `bwrap`/bubblewrap instead).
+
+```bash
+cd codeapi_server
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+Requires `bwrap` on PATH (`apt install bubblewrap` if missing). Reads the
+**root** `.env` first, then `codeapi_server/.env` (if present) with
+override, same pattern as `rag_server`. Make sure `LIBRECHAT_CODE_BASEURL`
+in the root `.env` matches `CODEAPI_PORT` (default
+`http://localhost:1235`).
+
+## 9. Build the workspaces
 
 ```bash
 npm run build:packages   # data-provider, data-schemas, api, client package
@@ -201,9 +223,9 @@ npm run build:packages   # data-provider, data-schemas, api, client package
 npm run build            # turbo, parallel + cached
 ```
 
-## 9. Run it
+## 10. Run it
 
-All-in-one (RAG + backend + frontend, if you did step 7):
+All-in-one (RAG + code sandbox + backend + frontend, if you did steps 7-8):
 
 ```bash
 npm run dev
@@ -215,12 +237,13 @@ Or piece by piece:
 npm run backend:dev      # Express server, port 3080, file-watching
 npm run frontend:dev     # Vite dev server, port 3090, HMR (needs backend running)
 npm run rag              # only if you set up rag_server in step 7
+npm run codeapi          # only if you set up codeapi_server in step 8
 ```
 
 Production-style (no watching): `npm run backend` + `npm run frontend`
 (builds client assets, then serve from the backend).
 
-## 10. Create your first user
+## 11. Create your first user
 
 With `ALLOW_REGISTRATION=true` (the default), just sign up through the UI at
 `http://localhost:3080` (or `:3090` in dev). To create one from the CLI
@@ -230,7 +253,7 @@ instead:
 npm run create-user -- <email> <name> <username>
 ```
 
-## 11. Verify
+## 12. Verify
 
 - Backend: `http://localhost:3080` — should serve the app (or JSON from
   `/api/...` routes) once Mongo is reachable.
@@ -238,6 +261,8 @@ npm run create-user -- <email> <name> <username>
 - Startup log should show the RAG health check either passing or being
   skipped (`RAG_API_URL` unset) — it no longer blocks server startup either
   way (see commit `049594f9d`).
+- Code sandbox: `curl http://localhost:1235/health` should return
+  `{"status":"ok",...}` if you set up step 8.
 
 ## Tests
 
@@ -257,6 +282,9 @@ cd packages/api && npx jest <pattern>
   must already be running before `npm run backend`/`npm run dev`.
 - The RAG server binds loopback only (`RAG_HOST` must be `127.0.0.1` /
   `localhost` / `::1`) — it refuses to start otherwise, by design.
+- Same for the code sandbox (`CODEAPI_HOST`) — it has no request
+  authentication at all, so loopback-only is the only thing stopping anyone
+  who can reach the port from running arbitrary code on this machine.
 - `JWT_SECRET` must be byte-identical between the root `.env` and
   `rag_server/.env` (if you override it there) — otherwise every RAG request
   401s.

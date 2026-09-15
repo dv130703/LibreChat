@@ -105,14 +105,15 @@ class TranscriptionDiagnostics(BaseModel):
     # back to what the transcript actually displays for it.
     speaker_label_map: dict[str, str] = Field(default_factory=dict)
     # Whether a "difficult" first diarization pass triggered one automatic
-    # retry at a different clustering threshold, and what happened - see
-    # DIFFICULT_RETRY_CLUSTERING_THRESHOLD in whisperx_service.py.
-    # `diarization_retry_kept` is "retry" (the retry measurably reduced
-    # suspicious_segment_ratio), "original" (it didn't, or the retry itself
-    # failed), or None (no retry was attempted).
+    # retry forcing an explicit speaker count, and what happened - see the
+    # retry block in whisperx_service.py. (It used to retry at a different
+    # clustering threshold; that knob is inert on this pipeline, see
+    # CLUSTERING_THRESHOLD_IS_INERT.) `diarization_retry_kept` is "retry" (the
+    # retry measurably reduced suspicious_segment_ratio), "original" (it
+    # didn't, or the retry itself failed), or None (no retry was attempted).
     diarization_retry_attempted: bool = False
     diarization_retry_kept: str | None = None
-    diarization_retry_threshold: float | None = None
+    diarization_retry_speaker_count: int | None = None
     diarization_original_suspicious_ratio: float | None = None
     diarization_retry_suspicious_ratio: float | None = None
     # Share of the recording the confident tier called speech.

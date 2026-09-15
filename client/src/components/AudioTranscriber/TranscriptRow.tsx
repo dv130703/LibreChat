@@ -81,21 +81,6 @@ function TranscriptRow({
    *  to exactly one open-to-close cycle. */
   const timeEditSessionRef = useRef<'editing' | 'settled'>('settled');
 
-  const autoResize = (el: HTMLTextAreaElement | null) => {
-    if (!el) {
-      return;
-    }
-    // Grows with content instead of exposing the browser's own resize grip,
-    // which looks like stray chrome next to the rest of this styled row.
-    el.style.height = 'auto';
-    // `scrollHeight` is border-exclusive; `height` isn't, under this
-    // element's (Tailwind preflight default) `box-sizing: border-box`.
-    // Assigning scrollHeight straight to height under-sizes the box by
-    // exactly the border width, clipping a sliver off the last line.
-    const borderHeight = el.offsetHeight - el.clientHeight;
-    el.style.height = `${el.scrollHeight + borderHeight}px`;
-  };
-
   useEffect(() => {
     setText(line.text);
   }, [line.text]);
@@ -106,25 +91,11 @@ function TranscriptRow({
   }, [line.seconds, line.endSeconds]);
 
   useEffect(() => {
-    autoResize(textareaRef.current);
-  }, [text]);
-
-  useEffect(() => {
     if (isEditingTime) {
       startInputRef.current?.focus();
       startInputRef.current?.select();
     }
   }, [isEditingTime]);
-
-  // Resizing the transcript panel is handled one level up, in
-  // `TranscriptPanel` - not here. A `ResizeObserver` per row (one was tried)
-  // means every row does its own read-write-read-write height dance on
-  // every resize tick; with a transcript of any real length, that's
-  // hundreds of forced synchronous reflows per frame while dragging, which
-  // is exactly the kind of layout thrashing that tanks frame rate. The
-  // panel-level observer instead resets every row's height in one pass,
-  // reads every scrollHeight in a second pass, then writes every final
-  // height in a third - one reflow total instead of one per row.
 
   // A draft appears with nothing to type over yet - jump straight into it
   // instead of making the user click first, since the whole point is typing
@@ -290,18 +261,51 @@ function TranscriptRow({
         )}
       </div>
 
-      <textarea
-        ref={textareaRef}
-        value={text}
-        rows={1}
-        aria-label={localize('com_ui_transcript_line_text', { timestamp: line.timestamp ?? '' })}
-        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value)}
-        onBlur={commitText}
-        placeholder={
-          isDraft ? localize('com_ui_transcript_insert_dialogue_text_placeholder') : undefined
-        }
-        className="-mx-2 -my-1 w-[calc(100%+1rem)] resize-none overflow-hidden rounded-md border border-transparent bg-transparent px-2 py-1 text-sm leading-relaxed text-text-primary transition-colors hover:border-border-medium hover:bg-surface-hover focus:border-blue-500 focus:bg-surface-primary focus:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:border-blue-400"
-      />
+      {/* Auto-grows to fit its text with NO JavaScript: an invisible mirror of
+       *  the same string shares a single grid cell with the textarea, so the
+       *  cell - and therefore this whole row - is sized by the text's own
+       *  natural height as soon as it paints.
+       *
+       *  This has to be CSS rather than the `scrollHeight` measure-and-assign
+       *  effect it replaces, because the row list is virtualized:
+       *  `CellMeasurer` records a row's height in `componentDidMount`, which
+       *  React runs BEFORE any child's `useEffect`. A textarea sized by an
+       *  effect is therefore still one line tall at the moment it's measured,
+       *  so every multi-line row got cached at one line's height and the rows
+       *  below it were laid out overlapping it. Sizing in CSS means the
+       *  height is already correct when `CellMeasurer` looks.
+       *
+       *  The mirror carries a trailing space so a trailing newline (or empty
+       *  text) still reserves a final line box, and must keep the textarea's
+       *  exact font/padding/border/wrapping so the two wrap identically.
+       *
+       *  `grid-cols-[minmax(0,1fr)]` + `min-w-0` cap the column at the
+       *  available width. Without them the track sizes to `max-content`, and
+       *  `break-words` (unlike `overflow-wrap: anywhere`) does not lower an
+       *  item's intrinsic minimum width - so one long unbroken run of text
+       *  stretches the row instead of wrapping. Transcripts hit this
+       *  constantly: a mis-segmented line can be hundreds of characters with
+       *  no space in it. */}
+      <div className="-mx-2 -my-1 grid w-[calc(100%+1rem)] grid-cols-[minmax(0,1fr)]">
+        <div
+          aria-hidden="true"
+          className="invisible col-start-1 row-start-1 min-w-0 whitespace-pre-wrap break-words border border-transparent px-2 py-1 text-sm leading-relaxed"
+        >
+          {text + ' '}
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={text}
+          rows={1}
+          aria-label={localize('com_ui_transcript_line_text', { timestamp: line.timestamp ?? '' })}
+          onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value)}
+          onBlur={commitText}
+          placeholder={
+            isDraft ? localize('com_ui_transcript_insert_dialogue_text_placeholder') : undefined
+          }
+          className="col-start-1 row-start-1 min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent bg-transparent px-2 py-1 text-sm leading-relaxed text-text-primary transition-colors hover:border-border-medium hover:bg-surface-hover focus:border-blue-500 focus:bg-surface-primary focus:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:border-blue-400"
+        />
+      </div>
 
       {isPreviewing && (
         <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-border-medium">

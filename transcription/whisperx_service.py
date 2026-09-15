@@ -1,5 +1,6 @@
 import copy
 import logging
+import re
 import warnings
 from dataclasses import asdict, replace
 from functools import lru_cache
@@ -17,6 +18,21 @@ warnings.filterwarnings(
     "ignore", message=r".*degrees of freedom is <= 0.*", category=UserWarning
 )
 
+# Lightning's "automatically upgraded your loaded checkpoint from v1.5.4 to
+# v2.6.5" notice, repeated on every VAD/diarization model load. It is not a
+# warnings.warn - it is logged - so filterwarnings cannot reach it, hence the
+# logger-level suppression here.
+#
+# Nothing is wrong: it reports that a checkpoint shipped inside whisperx was
+# migrated in memory on load. The permanent fix it suggests
+# (`upgrade_checkpoint` on the bundled pytorch_model.bin) rewrites a file
+# inside site-packages, which any reinstall would undo - so the notice is
+# silenced rather than acted on.
+logging.getLogger("lightning.pytorch.utilities.migration.utils").setLevel(logging.WARNING)
+logging.getLogger("pytorch_lightning.utilities.migration.utils").setLevel(logging.WARNING)
+
+import numpy as np
+import pandas as pd
 import torch
 import whisperx
 from whisperx.diarize import DiarizationPipeline, Segment as SegmentX
@@ -26,7 +42,12 @@ from .channels import load_audio_channel, probe_channel_count
 from .config import Settings, get_settings
 from .offline import ensure_offline_mode
 from .recording_profile import UNKNOWN_SPEAKER_LABEL, compute_recording_profile
-from .speaker_count import SpeakerCountHint, resolve_speaker_count
+from .speaker_count import (
+    MAX_ALLOWED_SPEAKERS,
+    MIN_ALLOWED_SPEAKERS,
+    SpeakerCountHint,
+    resolve_speaker_count,
+)
 from .transcription_prompt import (
     PromptBuild,
     build_initial_prompt,
@@ -56,19 +77,331 @@ class NoSpeakerSegments(Exception):
 # against labelled data (same caveat as the recording-profile thresholds).
 MAX_NEAREST_FALLBACK_DISTANCE_S = 5.0
 
-# Clustering threshold tried on an automatic diarization retry - see
-# `WhisperXService.transcribe`'s retry block. A recording flagged "difficult"
-# (see recording_profile.py) most often means clustering merged two real
-# speakers together or fragmented one speaker's voice into false splits;
-# splitting further is the more common fix of the two, so this leans that
-# way rather than trying both directions. Illustrative, not calibrated.
-DIFFICULT_RETRY_CLUSTERING_THRESHOLD = 0.48
+# Boundaries used to break one speaker's continuous speech into readable
+# lines - see `WhisperXService._split_into_runs`. Grouping by speaker alone
+# produced 250-second single-paragraph lines on real interview audio, because
+# holding the floor for minutes is normal and says nothing about where a line
+# should end.
+#
+# The pause threshold is the one value here with direct empirical support:
+# against a 3-hour interview's own word timings, inter-word gaps sat at ~0.04s
+# median and ~0.94s p95, so a gap at or past this is a real beat rather than
+# ordinary spacing. The length caps are readability choices (roughly a
+# paragraph), not measured quantities.
+SEGMENT_SPLIT_PAUSE_S = 1.5
+MAX_SEGMENT_DURATION_S = 45.0
+MAX_SEGMENT_WORDS = 120
+
+# How far past the soft limits a run may grow while waiting for a sentence to
+# end, before it is broken mid-sentence regardless. Without this, speech with
+# no detected sentence punctuation would ignore the caps entirely.
+SEGMENT_HARD_CAP_FACTOR = 2.0
+
+SENTENCE_END_PATTERN = re.compile(r"[.?!…][\"'”’)\]]*$")
+
+# Diarization is clustered GLOBALLY over whatever audio it is handed, and that
+# is what makes a long recording fail: over 3.7 hours of a four-person forensic
+# interview, a participant who speaks for only ~2 minutes (a lawyer introducing
+# himself) is absorbed into whichever large cluster he most resembles, so his
+# lines are attributed to the interviewer and the transcript reads as one
+# person asking and answering their own questions.
+#
+# Measured on that recording, holding everything else fixed and varying only
+# how much audio was clustered at once (interviewer / interviewee's name /
+# lawyer, all three of which must land on different speakers):
+#
+#     2 min  + num_speakers -> separated
+#     5 min  + num_speakers -> separated
+#     10 min + num_speakers -> merged
+#     20 min + num_speakers -> merged
+#     30 min + num_speakers -> merged
+#     full file             -> merged
+#
+# So the audio is diarized in windows this long and the per-window speakers are
+# stitched back together by comparing the embedding pyannote returns for each
+# one. 0 disables windowing and restores the single global pass.
+DIARIZATION_WINDOW_S = 300.0
+
+# Windows overlap so a turn spanning a boundary is seen whole by at least one
+# window, and so consecutive windows share speech to anchor their speakers to
+# each other.
+DIARIZATION_WINDOW_OVERLAP_S = 30.0
+
+# Cosine similarity at which a window-local speaker is considered the same
+# person as an already-seen global speaker. Illustrative, not calibrated:
+# measured embeddings of two clusters that were genuinely the same voice sat at
+# 0.957, and clearly different voices at 0.10-0.30, so the gap either side of
+# this is wide.
+SPEAKER_MATCH_MIN_SIMILARITY = 0.55
+
+# How much of the context-term prompt a segment must reproduce, contiguously
+# and in order, before it is treated as Whisper reciting its prompt rather
+# than transcribing speech - see `_is_prompt_echo`. Six is deliberately
+# conservative: a single listed term appearing in real speech is the entire
+# reason for listing it, and must never be dropped.
+MIN_PROMPT_ECHO_WORDS = 6
+
+# Whisper usually cuts the recital off mid-term; a few words past where the
+# prompt match ends are tolerated so a truncated echo is still caught.
+PROMPT_ECHO_TRAILING_SLACK_WORDS = 3
+
+# Speech the VAD found but the ASR pass returned nothing for is re-transcribed
+# in isolation - see `WhisperXService._recover_missed_speech`.
+#
+# The batched decoder concatenates VAD regions into ~30s chunks. A short, quiet
+# utterance sitting alone between long silences ends up buried in such a chunk
+# and Whisper skips it. Measured on a real interview: a 65-second stretch that
+# the VAD scored as speech (peak 0.929, well past the 0.5 onset) contributed a
+# single 0.4s line to the transcript, while the same audio decoded on its own
+# yielded "Oh, there's that. Please please go back to showering. Sorry.
+# Impressive. What's it doing?" - four utterances that were simply never
+# decoded. For an interview record, silently losing speech the VAD already
+# identified is the worst failure this pipeline can have.
+MIN_RECOVERY_INTERVAL_S = 0.3
+
+# Unclaimed regions closer together than this are recovered in one slice, so a
+# fumbled exchange is decoded with its own context rather than word by word.
+RECOVERY_GROUP_GAP_S = 20.0
+
+# Bounds on the extra work: no single slice longer than this, and recovery
+# gives up past this share of the recording (a run needing more than that is
+# not "a few missed asides" - it is a broken pass, and quietly re-decoding half
+# the file would hide that).
+MAX_RECOVERY_SLICE_S = 120.0
+MAX_RECOVERY_FRACTION = 0.15
+
+# The `clustering_threshold` parameter plumbed through this module (and
+# exposed in the UI) is INERT on pyannote community-1 / speaker-diarization-3.1
+# and is kept only so existing callers and stored options keep working.
+#
+# Measured directly against the installed pipeline: diarizing the same audio
+# at thresholds 0.05, 0.30, 0.40, 0.48, 0.60 and 0.95 returns byte-identical
+# turns and speaker distributions every time. `Pipeline.instantiate()` accepts
+# the value without error, which is what made this look like a working knob;
+# community-1's clustering is VBx-based, and `threshold` is not what governs
+# merging there. The automatic retry therefore varies `num_speakers` instead,
+# which does change the result substantially - see the retry block in
+# `transcribe`.
+CLUSTERING_THRESHOLD_IS_INERT = True
 
 # Only retry once, ever, per transcription - an unbounded "keep retrying
 # until it looks good" loop would turn one slow GPU pass into an unbounded
 # number of them for exactly the recordings that already took the longest to
 # get through diarization once.
-_RETRY_TRIGGER_CLASSIFICATION = "difficult"
+#
+# "monologue" is in here because it is the signature of the worst failure this
+# pipeline has, not because one-speaker recordings need special handling:
+# `_classify` returns it whenever diarization resolved to a single speaker, and
+# on difficult audio that is what a total clustering collapse looks like.
+# Measured on an 80-second window of a three-person phone interview, auto mode
+# returned ONE speaker for the entire excerpt; the same audio with an explicit
+# `num_speakers` separated the turns correctly. Before this, that outcome was
+# classified "monologue" and so was the one case never retried.
+#
+# A genuinely single-speaker recording still costs one extra diarization pass,
+# but cannot be damaged by it: the retry is kept only if it measurably lowers
+# the suspicious-segment ratio, so a real monologue's forced 2-speaker split
+# is discarded.
+_RETRY_TRIGGER_CLASSIFICATIONS = frozenset({"difficult", "monologue"})
+
+
+def find_unclaimed_speech(
+    speech: list[Interval],
+    segments: list[dict],
+    min_interval_s: float = MIN_RECOVERY_INTERVAL_S,
+) -> list[Interval]:
+    """Speech regions the ASR pass returned nothing for.
+
+    A region counts as claimed as soon as any transcript segment overlaps it at
+    all - the question is only whether the decoder looked there, not whether it
+    produced a proportionate amount of text.
+    """
+    if not speech:
+        return []
+    spans = sorted((float(s.start), float(s.end)) for s in map(_as_span, segments))
+    unclaimed: list[Interval] = []
+    for start, end in speech:
+        if end - start < min_interval_s:
+            continue
+        if not any(span_end > start and span_start < end for span_start, span_end in spans):
+            unclaimed.append((start, end))
+    return unclaimed
+
+
+class _Span:
+    __slots__ = ("start", "end")
+
+    def __init__(self, start: float, end: float):
+        self.start = start
+        self.end = end
+
+
+def _as_span(segment: dict) -> _Span:
+    return _Span(float(segment.get("start") or 0.0), float(segment.get("end") or 0.0))
+
+
+def group_recovery_slices(
+    unclaimed: list[Interval],
+    gap_s: float = RECOVERY_GROUP_GAP_S,
+    max_slice_s: float = MAX_RECOVERY_SLICE_S,
+) -> list[Interval]:
+    """Bundles nearby unclaimed regions into slices worth decoding as a unit."""
+    slices: list[Interval] = []
+    for start, end in sorted(unclaimed):
+        if slices and start - slices[-1][1] <= gap_s and end - slices[-1][0] <= max_slice_s:
+            slices[-1] = (slices[-1][0], end)
+            continue
+        slices.append((start, end))
+    return slices
+
+
+def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom <= 0:
+        return -1.0
+    return float(np.dot(a, b) / denom)
+
+
+class _SpeakerRegistry:
+    """Keeps one identity per real person across independently-diarized
+    windows.
+
+    Each window is clustered on its own, so its `SPEAKER_00` has nothing to do
+    with the previous window's `SPEAKER_00` - only the embedding does. A
+    window-local speaker is matched to the closest global speaker seen so far
+    and, if nothing is close enough, becomes a new one. Matched speakers have
+    their centroid updated as a running mean so an identity built from a
+    two-second greeting is refined by every later window that hears more of
+    that voice.
+    """
+
+    def __init__(self, min_similarity: float = SPEAKER_MATCH_MIN_SIMILARITY):
+        self._min_similarity = min_similarity
+        self._centroids: list[np.ndarray] = []
+        self._weights: list[float] = []
+
+    def resolve_window(self, candidates: list[tuple[np.ndarray | None, float]]) -> list[str]:
+        """Global labels for all speakers found in ONE window, at once.
+
+        Resolved together rather than one at a time because a window's
+        speakers are, by construction, different people: the diarizer already
+        decided they were distinct within this window. Matching them
+        independently lets two of them claim the same global identity - which
+        is what happened on a real interview, where the lawyer and the
+        interviewer, cleanly separated inside the window, were both matched
+        back to the interviewer and re-merged during stitching.
+
+        So each global speaker may be claimed at most once per window, taking
+        the most similar pair first; whoever is left over starts a new
+        identity.
+        """
+        pairs: list[tuple[float, int, int]] = []
+        for local_index, (embedding, _duration) in enumerate(candidates):
+            if embedding is None or not np.all(np.isfinite(embedding)):
+                continue
+            for global_index, centroid in enumerate(self._centroids):
+                if self._weights[global_index] <= 0:
+                    continue
+                similarity = _cosine_similarity(embedding, centroid)
+                if similarity >= self._min_similarity:
+                    pairs.append((similarity, local_index, global_index))
+
+        pairs.sort(reverse=True)
+        assigned: dict[int, int] = {}
+        claimed_global: set[int] = set()
+        for _similarity, local_index, global_index in pairs:
+            if local_index in assigned or global_index in claimed_global:
+                continue
+            assigned[local_index] = global_index
+            claimed_global.add(global_index)
+
+        labels: list[str] = []
+        for local_index, (embedding, duration) in enumerate(candidates):
+            global_index = assigned.get(local_index)
+            if global_index is None:
+                labels.append(self._append(embedding, duration))
+                continue
+            weight = self._weights[global_index]
+            total = weight + duration
+            if total > 0 and embedding is not None:
+                self._centroids[global_index] = (
+                    self._centroids[global_index] * weight + embedding * duration
+                ) / total
+                self._weights[global_index] = total
+            labels.append(f"SPEAKER_{global_index:02d}")
+        return labels
+
+    def _append(self, embedding: np.ndarray | None, duration: float) -> str:
+        index = len(self._centroids)
+        self._centroids.append(
+            np.zeros(1) if embedding is None else np.array(embedding, dtype=np.float64)
+        )
+        self._weights.append(0.0 if embedding is None else max(duration, 0.0))
+        return f"SPEAKER_{index:02d}"
+
+
+def _merge_adjacent_turns(turns: list[dict], max_gap_s: float = 0.0) -> list[dict]:
+    """Rejoins turns that windowing split at a boundary - same speaker, and
+    touching (or within `max_gap_s`)."""
+    merged: list[dict] = []
+    for turn in sorted(turns, key=lambda t: (t["start"], t["end"])):
+        if (
+            merged
+            and merged[-1]["speaker"] == turn["speaker"]
+            and turn["start"] - merged[-1]["end"] <= max_gap_s
+        ):
+            merged[-1]["end"] = max(merged[-1]["end"], turn["end"])
+            continue
+        merged.append(dict(turn))
+    return merged
+
+
+def _normalize_for_echo(text: str) -> list[str]:
+    """Words only, lowercased - so a prompt echo is recognised regardless of
+    how Whisper punctuated or cased it."""
+    return re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower()).split()
+
+
+def _is_prompt_echo(text: str, prompt_words: list[str]) -> bool:
+    """Whether `text` is Whisper reciting its own prompt back.
+
+    Deliberately strict - it must be a CONTIGUOUS run of the prompt's own
+    words, in the prompt's own order, and at least
+    `MIN_PROMPT_ECHO_WORDS` long. A glossary is a comma-separated list of
+    unrelated terms ("Serious Fraud Office, SFO, Counter Fraud Centre, Quay
+    Street, ..."), so a speaker reproducing six or more of them contiguously
+    and in that exact order is not something that happens by accident,
+    whereas any one term appearing in real speech (which is the whole point
+    of listing it) is left completely untouched.
+    """
+    if not prompt_words:
+        return False
+    words = _normalize_for_echo(text)
+    if len(words) < MIN_PROMPT_ECHO_WORDS:
+        return False
+    span = len(words)
+    for start in range(len(prompt_words) - span + 1):
+        if prompt_words[start : start + span] == words:
+            return True
+    # Whisper often truncates the recital mid-term, so also accept a run that
+    # matches the prompt from some point onward for as far as it goes.
+    for start in range(len(prompt_words)):
+        overlap = min(span, len(prompt_words) - start)
+        if overlap >= MIN_PROMPT_ECHO_WORDS and prompt_words[start : start + overlap] == words[:overlap]:
+            return len(words) - overlap <= PROMPT_ECHO_TRAILING_SLACK_WORDS
+    return False
+
+
+def _drop_prompt_echoes(segments: list[dict], initial_prompt: str | None) -> int:
+    """Removes hallucinated prompt recitals in place; returns how many went."""
+    prompt_words = _normalize_for_echo(initial_prompt or "")
+    if not prompt_words:
+        return 0
+    kept = [segment for segment in segments if not _is_prompt_echo(segment.get("text", ""), prompt_words)]
+    dropped = len(segments) - len(kept)
+    if dropped:
+        segments[:] = kept
+    return dropped
 
 
 def _preview_label(segments: list[dict]) -> list[dict]:
@@ -443,6 +776,93 @@ class WhisperXService:
         combined = [*deployment_terms, *(term for term in used_terms if term.casefold() not in seen)]
         return pack_hotwords(combined, self._token_counter(model))
 
+    def _recover_missed_speech(
+        self,
+        model,
+        audio,
+        result: dict,
+        speech: list[Interval],
+        language: str | None,
+        initial_prompt: str | None,
+        hotwords: str | None,
+        suppress_numerals: bool,
+    ) -> tuple[int, float]:
+        """Re-decodes VAD speech the main pass produced nothing for.
+
+        Returns `(recovered_segment_count, recovered_audio_seconds)`. Mutates
+        `result["segments"]` in place, keeping it in time order.
+
+        See MIN_RECOVERY_INTERVAL_S for why this is needed at all: the batched
+        decoder buries short, quiet utterances that sit alone between silences,
+        and those same regions decode correctly when given their own pass.
+        """
+        unclaimed = find_unclaimed_speech(speech, result.get("segments", []))
+        if not unclaimed:
+            return 0, 0.0
+
+        slices = group_recovery_slices(unclaimed)
+        audio_duration = len(audio) / SAMPLE_RATE
+        budget = audio_duration * MAX_RECOVERY_FRACTION
+        planned = sum(end - start for start, end in slices)
+        if planned > budget:
+            logger.warning(
+                "Skipping speech recovery: %.0fs of unclaimed speech exceeds the %.0fs budget "
+                "(%.0f%% of the recording). This suggests the ASR pass failed broadly rather "
+                "than missing a few asides.",
+                planned,
+                budget,
+                MAX_RECOVERY_FRACTION * 100,
+            )
+            return 0, 0.0
+
+        recovered: list[dict] = []
+        recovered_seconds = 0.0
+        for start, end in slices:
+            first = max(0, int(start * SAMPLE_RATE))
+            last = min(len(audio), int(end * SAMPLE_RATE))
+            chunk = audio[first:last]
+            if len(chunk) < int(MIN_RECOVERY_INTERVAL_S * SAMPLE_RATE):
+                continue
+            try:
+                partial = self._transcribe_batched(
+                    model,
+                    chunk,
+                    language,
+                    initial_prompt,
+                    hotwords,
+                    suppress_numerals,
+                    [(0.0, len(chunk) / SAMPLE_RATE)],
+                )
+            except Exception:
+                logger.exception(
+                    "Speech recovery failed for %.1fs-%.1fs; leaving it untranscribed", start, end
+                )
+                continue
+
+            offset = first / SAMPLE_RATE
+            for segment in partial.get("segments", []):
+                if not (segment.get("text") or "").strip():
+                    continue
+                segment["start"] = float(segment.get("start") or 0.0) + offset
+                segment["end"] = float(segment.get("end") or 0.0) + offset
+                for word in segment.get("words", []) or []:
+                    if word.get("start") is not None:
+                        word["start"] = float(word["start"]) + offset
+                    if word.get("end") is not None:
+                        word["end"] = float(word["end"]) + offset
+                recovered.append(segment)
+            recovered_seconds += end - start
+
+        if not recovered:
+            return 0, 0.0
+
+        _drop_prompt_echoes(recovered, initial_prompt)
+        result["segments"] = sorted(
+            [*result.get("segments", []), *recovered],
+            key=lambda segment: float(segment.get("start") or 0.0),
+        )
+        return len(recovered), recovered_seconds
+
     def _transcribe_batched(
         self,
         model,
@@ -536,6 +956,42 @@ class WhisperXService:
         )
         language_code = result["language"]
 
+        # Whisper regurgitates its own `initial_prompt` as if it were speech -
+        # a well-known failure mode, and the reason `build_initial_prompt`
+        # warns that "framing is what leaks into the transcript". On a real
+        # 3-hour interview the full 14-term glossary was emitted verbatim as
+        # dialogue eight separate times, attributed to a speaker, at
+        # timestamps where nobody said it. That is fabricated content in a
+        # forensic record, which is far worse than a formatting problem, so
+        # these are dropped rather than merely flagged.
+        prompt_echo_count = _drop_prompt_echoes(result["segments"], initial_prompt)
+        if prompt_echo_count:
+            logger.warning(
+                "Dropped %d transcript segment(s) that echoed the context-term prompt "
+                "rather than transcribing speech",
+                prompt_echo_count,
+            )
+
+        # Nothing the VAD called speech is allowed to go undecoded - see
+        # MIN_RECOVERY_INTERVAL_S.
+        recovered_count, recovered_seconds = self._recover_missed_speech(
+            whisper_model,
+            audio,
+            result,
+            tiers.union,
+            language,
+            initial_prompt,
+            request_hotwords,
+            suppress_numerals,
+        )
+        if recovered_count:
+            logger.info(
+                "Speech recovery: re-decoded %.1fs of VAD-detected speech the main pass "
+                "returned nothing for, recovering %d segment(s)",
+                recovered_seconds,
+                recovered_count,
+            )
+
         alignment_gap_count = 0
         alignment_gap_total_s = 0.0
         alignment_failed = False
@@ -581,6 +1037,7 @@ class WhisperXService:
         asr_segments: list[dict],
         hint: SpeakerCountHint,
         clustering_threshold: float | None,
+        forced_speaker_count: int | None = None,
     ) -> dict:
         """One full diarize-and-assign pass over already-transcribed+aligned
         `asr_segments`, clustering at `clustering_threshold`. Never mutates
@@ -639,12 +1096,34 @@ class WhisperXService:
             # computes per-cluster embeddings as part of its own clustering
             # step; this just asks the pipeline to hand them back instead of
             # discarding them.
-            if hint.count is not None:
-                # An exact count forces pyannote's clustering to cut into
-                # precisely that many groups, rather than estimating the
-                # count itself.
+            # An exact count forces pyannote's clustering to cut into
+            # precisely that many groups, rather than estimating the count
+            # itself. `forced_speaker_count` is the retry's own override (see
+            # `transcribe`); the caller's hint wins when both are set, because
+            # a count the user actually typed is evidence, not a guess.
+            effective_count = hint.count if hint.count is not None else forced_speaker_count
+            window_samples = int(DIARIZATION_WINDOW_S * SAMPLE_RATE)
+            # Only worth it with a speaker count to pin each window to.
+            # Measured on a 30-minute interview window: windowing with an
+            # exact `num_speakers` separates speakers a single global pass
+            # merges, but windowing WITHOUT one reproduces the same merge the
+            # global pass makes, for extra GPU time and nothing gained.
+            use_windows = (
+                DIARIZATION_WINDOW_S > 0
+                and effective_count is not None
+                and hasattr(diarize_model, "model")
+                and len(audio) > window_samples
+            )
+            if use_windows:
+                # Long recordings are clustered per window and stitched, because
+                # a single global pass loses anyone who speaks only briefly -
+                # see DIARIZATION_WINDOW_S.
+                diarize_segments, speaker_embeddings = self._diarize_in_windows(
+                    diarize_model.model, audio, effective_count
+                )
+            elif effective_count is not None:
                 diarize_segments, speaker_embeddings = diarize_model(
-                    audio, num_speakers=hint.count, return_embeddings=True
+                    audio, num_speakers=effective_count, return_embeddings=True
                 )
             else:
                 diarize_segments, speaker_embeddings = diarize_model(
@@ -836,7 +1315,7 @@ class WhisperXService:
             diarization_retry_diagnostics: dict = {
                 "attempted": False,
                 "kept": None,
-                "threshold": None,
+                "speaker_count": None,
                 "original_suspicious_ratio": None,
                 "retry_suspicious_ratio": None,
             }
@@ -875,7 +1354,7 @@ class WhisperXService:
             diarization_retry_diagnostics: dict = {
                 "attempted": False,
                 "kept": None,
-                "threshold": None,
+                "speaker_count": None,
                 "original_suspicious_ratio": None,
                 "retry_suspicious_ratio": None,
             }
@@ -885,32 +1364,50 @@ class WhisperXService:
                 speaker_hint_applied = hint.is_set
 
                 # Selective retry: a "difficult" first pass most often means
-                # clustering merged two real speakers together or fragmented
-                # one voice into false splits. One automatic retry at a
-                # different threshold either measurably reduces the
-                # suspicious-segment ratio (kept) or it doesn't (discarded,
-                # original result stands) - never more than one retry, and
-                # never for a recording that wasn't flagged difficult in the
-                # first place. See DIFFICULT_RETRY_CLUSTERING_THRESHOLD.
+                # clustering merged two real speakers into one. One automatic
+                # retry either measurably reduces the suspicious-segment
+                # ratio (kept) or it doesn't (discarded, original stands) -
+                # never more than one retry, and never for a recording that
+                # wasn't flagged difficult in the first place.
+                #
+                # The retry re-runs with an explicit speaker count one above
+                # what the first pass settled on, because that is the lever
+                # that actually moves this pipeline. The clustering threshold
+                # it used to retry at does nothing at all: measured against
+                # pyannote community-1, diarizing the same audio at every
+                # threshold from 0.05 to 0.95 returns byte-identical turns
+                # (its clustering is VBx-based, and `threshold` is not the
+                # knob that governs merging there). Passing `num_speakers`,
+                # by contrast, changed a 30-minute interview window from 3
+                # speakers with one of them holding 74% of the audio to a
+                # balanced 4 with nearly double the speaker switches.
                 initial_profile = compute_recording_profile(
                     _preview_label(diarize_result["segments"]), diarize_result["diarization_turns"]
                 )
-                already_at_retry_threshold = (
-                    clustering_threshold is not None
-                    and abs(clustering_threshold - DIFFICULT_RETRY_CLUSTERING_THRESHOLD) < 1e-6
-                )
+                detected_count = diarize_result.get("diarization_speaker_count") or 0
+                retry_speaker_count = detected_count + 1
+                # An explicit caller hint is not second-guessed, and there is
+                # no point forcing a count the pipeline already chose on its
+                # own - forcing the detected count reproduces the first pass
+                # exactly (measured), so only a different count is worth a
+                # second GPU pass.
                 if (
-                    initial_profile.classification == _RETRY_TRIGGER_CLASSIFICATION
-                    and not already_at_retry_threshold
+                    initial_profile.classification in _RETRY_TRIGGER_CLASSIFICATIONS
+                    and not hint.is_set
+                    and MIN_ALLOWED_SPEAKERS <= retry_speaker_count <= MAX_ALLOWED_SPEAKERS
                 ):
                     diarization_retry_diagnostics["attempted"] = True
-                    diarization_retry_diagnostics["threshold"] = DIFFICULT_RETRY_CLUSTERING_THRESHOLD
+                    diarization_retry_diagnostics["speaker_count"] = retry_speaker_count
                     diarization_retry_diagnostics["original_suspicious_ratio"] = (
                         initial_profile.suspicious_segment_ratio
                     )
                     try:
                         retry_result = self._run_diarization(
-                            audio, asr_segments, hint, DIFFICULT_RETRY_CLUSTERING_THRESHOLD
+                            audio,
+                            asr_segments,
+                            hint,
+                            clustering_threshold,
+                            forced_speaker_count=retry_speaker_count,
                         )
                         retry_profile = compute_recording_profile(
                             _preview_label(retry_result["segments"]), retry_result["diarization_turns"]
@@ -922,18 +1419,18 @@ class WhisperXService:
                             diarize_result = retry_result
                             diarization_retry_diagnostics["kept"] = "retry"
                             logger.info(
-                                "Diarization retry (threshold=%.2f) improved suspicious_segment_ratio "
+                                "Diarization retry (num_speakers=%d) improved suspicious_segment_ratio "
                                 "%.4f -> %.4f; keeping retry.",
-                                DIFFICULT_RETRY_CLUSTERING_THRESHOLD,
+                                retry_speaker_count,
                                 initial_profile.suspicious_segment_ratio,
                                 retry_profile.suspicious_segment_ratio,
                             )
                         else:
                             diarization_retry_diagnostics["kept"] = "original"
                             logger.info(
-                                "Diarization retry (threshold=%.2f) did not improve suspicious_segment_ratio "
+                                "Diarization retry (num_speakers=%d) did not improve suspicious_segment_ratio "
                                 "(retry=%.4f vs original=%.4f); keeping original.",
-                                DIFFICULT_RETRY_CLUSTERING_THRESHOLD,
+                                retry_speaker_count,
                                 retry_profile.suspicious_segment_ratio,
                                 initial_profile.suspicious_segment_ratio,
                             )
@@ -1004,12 +1501,13 @@ class WhisperXService:
                 else None
             ),
             "speaker_label_map": speaker_label_map,
-            # Whether an automatic diarization retry (a different clustering
-            # threshold) ran because the first pass looked "difficult", and
-            # whether it was actually kept - see DIFFICULT_RETRY_CLUSTERING_THRESHOLD.
+            # Whether an automatic diarization retry (an explicit
+            # `num_speakers`, one above what the first pass detected) ran
+            # because the first pass looked "difficult", and whether it was
+            # actually kept - see the retry block in `transcribe`.
             "diarization_retry_attempted": diarization_retry_diagnostics["attempted"],
             "diarization_retry_kept": diarization_retry_diagnostics["kept"],
-            "diarization_retry_threshold": diarization_retry_diagnostics["threshold"],
+            "diarization_retry_speaker_count": diarization_retry_diagnostics["speaker_count"],
             "diarization_original_suspicious_ratio": diarization_retry_diagnostics["original_suspicious_ratio"],
             "diarization_retry_suspicious_ratio": diarization_retry_diagnostics["retry_suspicious_ratio"],
             # What each VAD tier accounted for. The borderline figures are the
@@ -1046,6 +1544,205 @@ class WhisperXService:
     # one speaker), not a clustering estimate, so it is not a lesser form of
     # evidence than a genuine diarization-turn overlap.
     _ASSIGNMENT_METHOD_SEVERITY = {"overlap": 0, "channel_split": 0, "nearest": 1, "unknown": 2, "none": 3}
+
+    def _diarize_in_windows(self, pipeline, audio, effective_count: int | None) -> tuple:
+        """Diarizes long audio in overlapping windows and stitches the result.
+
+        Returns the same `(DataFrame, embeddings)` shape a single global pass
+        produces, so everything downstream (`assign_word_speakers`, the turn
+        record, the recording profile) is unchanged.
+
+        Clustering each window separately is the entire point: see
+        `DIARIZATION_WINDOW_S` for the measurements showing that the same
+        audio separates correctly at five minutes and merges at ten or more.
+        """
+        total_samples = len(audio)
+        window_samples = int(DIARIZATION_WINDOW_S * SAMPLE_RATE)
+        step_samples = max(1, window_samples - int(DIARIZATION_WINDOW_OVERLAP_S * SAMPLE_RATE))
+
+        registry = _SpeakerRegistry()
+        turns: list[dict] = []
+        window_count = 0
+
+        for start_sample in range(0, total_samples, step_samples):
+            chunk = audio[start_sample : start_sample + window_samples]
+            # A trailing sliver shorter than the overlap carries no speech the
+            # previous window has not already seen.
+            if len(chunk) < int(DIARIZATION_WINDOW_OVERLAP_S * SAMPLE_RATE):
+                break
+            window_count += 1
+            offset = start_sample / SAMPLE_RATE
+
+            waveform = torch.from_numpy(np.ascontiguousarray(chunk)).float().unsqueeze(0)
+            # No `return_embeddings` here: that is whisperx's own wrapper
+            # kwarg, not one pyannote's `apply()` accepts. This calls the raw
+            # pipeline, which already returns `speaker_embeddings` on its
+            # `DiarizeOutput` - passing it only produced an "Ignoring
+            # unexpected keyword arguments" warning per window (verified: the
+            # embeddings are identical either way).
+            kwargs = {}
+            if effective_count is not None:
+                kwargs["num_speakers"] = effective_count
+            try:
+                output = pipeline({"waveform": waveform, "sample_rate": SAMPLE_RATE}, **kwargs)
+            except Exception:
+                logger.exception(
+                    "Diarization failed for window starting at %.1fs; skipping it", offset
+                )
+                continue
+
+            annotation = getattr(output, "speaker_diarization", output)
+            embeddings = getattr(output, "speaker_embeddings", None)
+
+            local_turns: dict[str, list[tuple[float, float]]] = {}
+            for segment, _track, label in annotation.itertracks(yield_label=True):
+                local_turns.setdefault(label, []).append((segment.start, segment.end))
+            if not local_turns:
+                continue
+
+            # `speaker_embeddings` rows line up with the labels in sorted
+            # order - the same contract the single-pass call relies on.
+            ordered_labels = sorted(local_turns)
+            embedding_array = None if embeddings is None else np.asarray(embeddings, dtype=np.float64)
+
+            candidates: list[tuple[np.ndarray | None, float]] = []
+            for index, label in enumerate(ordered_labels):
+                speech = sum(end - start for start, end in local_turns[label])
+                embedding = None
+                if embedding_array is not None and index < len(embedding_array):
+                    embedding = embedding_array[index]
+                candidates.append((embedding, speech))
+            label_map = dict(zip(ordered_labels, registry.resolve_window(candidates)))
+
+            for label, spans in local_turns.items():
+                for start, end in spans:
+                    turns.append(
+                        {
+                            "start": offset + start,
+                            "end": offset + end,
+                            "speaker": label_map[label],
+                        }
+                    )
+
+        merged = _merge_adjacent_turns(turns, max_gap_s=0.0)
+        logger.info(
+            "Windowed diarization: %d window(s) of %.0fs -> %d turn(s), %d speaker(s)",
+            window_count,
+            DIARIZATION_WINDOW_S,
+            len(merged),
+            len({turn["speaker"] for turn in merged}),
+        )
+        frame = pd.DataFrame(merged, columns=["start", "end", "speaker"])
+        return frame, None
+
+    @staticmethod
+    def _split_into_runs(flat_words: list[dict]) -> list[list[dict]]:
+        """Groups words into the runs that become displayed lines.
+
+        A run always ends when the speaker changes - that part is the
+        diarization talking, and is never overridden here. On top of that, a
+        run is also ended at a natural boundary WITHIN one speaker's speech,
+        because "same speaker" and "one readable line" are not the same
+        thing: an interviewer reading a formal notice can legitimately hold
+        the floor for minutes, and grouping purely by speaker turned that
+        into a single 250-second, 563-word paragraph with 23 pauses over a
+        second and 34 sentence endings inside it - every one of them a
+        boundary a human transcriber would have broken at.
+
+        Two kinds of boundary end a run early:
+
+        - A pause of `SEGMENT_SPLIT_PAUSE_S` or more. Measured against this
+          recording's own distribution, inter-word gaps sit at ~0.04s median
+          and ~0.94s p95, so a gap this long is a real beat in the speech
+          rather than ordinary word spacing.
+        - Length: past `MAX_SEGMENT_DURATION_S` or `MAX_SEGMENT_WORDS` the
+          line has outgrown a paragraph, so it breaks at the next sentence
+          end. If the speech runs on with no sentence end at all, a hard cap
+          at `SEGMENT_HARD_CAP_FACTOR` times those limits breaks it anyway,
+          so a run can never grow without bound.
+
+        Splitting only ever subdivides one speaker's own words; it can never
+        merge across speakers or move a word to a different speaker.
+        """
+        runs: list[list[dict]] = []
+        for word in flat_words:
+            current = runs[-1] if runs else None
+            if current is None or word["speaker"] != current[0]["speaker"]:
+                runs.append([word])
+                continue
+
+            previous = current[-1]
+            gap = WhisperXService._gap_between(previous, word)
+            if gap is not None and gap >= SEGMENT_SPLIT_PAUSE_S:
+                runs.append([word])
+                continue
+
+            span = WhisperXService._run_duration(current)
+            over_soft_limit = (
+                len(current) >= MAX_SEGMENT_WORDS or span >= MAX_SEGMENT_DURATION_S
+            )
+            over_hard_limit = (
+                len(current) >= MAX_SEGMENT_WORDS * SEGMENT_HARD_CAP_FACTOR
+                or span >= MAX_SEGMENT_DURATION_S * SEGMENT_HARD_CAP_FACTOR
+            )
+            ends_sentence = bool(SENTENCE_END_PATTERN.search(previous["raw_word"].strip()))
+            if over_hard_limit or (over_soft_limit and ends_sentence):
+                runs.append([word])
+                continue
+
+            current.append(word)
+        return runs
+
+    @staticmethod
+    def _gap_between(previous: dict, word: dict) -> float | None:
+        """Silence between two consecutive words, or None when either lacks
+        the timestamps to say (alignment can drop them for a word)."""
+        if previous.get("end") is None or word.get("start") is None:
+            return None
+        return float(word["start"]) - float(previous["end"])
+
+    @staticmethod
+    def _run_duration(run: list[dict]) -> float:
+        starts = [w["start"] for w in run if w.get("start") is not None]
+        ends = [w["end"] for w in run if w.get("end") is not None]
+        if not starts or not ends:
+            return 0.0
+        return float(max(ends)) - float(min(starts))
+
+    #: Characters that attach to the preceding word with no space before them,
+    #: so a bare (space-less) token starting with one of these is punctuation
+    #: rather than a new word - see `_join_words`.
+    _ATTACHES_TO_PREVIOUS_WORD = frozenset(",.!?;:)]}%’'\"”…")
+
+    @staticmethod
+    def _join_words(raw_words: list[str]) -> str:
+        """Reconstructs a line of text from per-word tokens, handling BOTH
+        tokenizer conventions rather than assuming either.
+
+        Whisper's own tokens carry their leading space (`" Hello"`, `" there"`),
+        so they can be concatenated directly. WhisperX's forced aligner,
+        however, splits on whitespace and hands back bare words (`"Hello"`,
+        `"there"`) - concatenating THOSE directly is what produced
+        `"Thankyouverymuch"` in real transcripts, because every separator in
+        the line was silently dropped.
+
+        Deciding per token (does it bring its own leading space?) rather than
+        joining on a fixed separator is what keeps both correct at once, and
+        keeps punctuation (`","`, `"."`) attached to the word before it
+        instead of being spaced off as its own word.
+        """
+        out: list[str] = []
+        for raw_word in raw_words:
+            if not raw_word:
+                continue
+            if raw_word[:1].isspace():
+                out.append(raw_word)
+                continue
+            needs_space = (
+                bool(out) and raw_word[:1] not in WhisperXService._ATTACHES_TO_PREVIOUS_WORD
+            )
+            out.append(f" {raw_word}" if needs_space else raw_word)
+        return "".join(out).strip()
 
     @staticmethod
     def _build_speaker_segments(asr_segments: list[dict], speaker_numbers: dict[str, int]) -> list[dict]:
@@ -1092,12 +1789,7 @@ class WhisperXService:
                     }
                 )
 
-        runs: list[list[dict]] = []
-        for word in flat_words:
-            if runs and runs[-1][0]["speaker"] == word["speaker"]:
-                runs[-1].append(word)
-            else:
-                runs.append([word])
+        runs: list[list[dict]] = WhisperXService._split_into_runs(flat_words)
 
         severity = WhisperXService._ASSIGNMENT_METHOD_SEVERITY
         segments: list[dict] = []
@@ -1118,7 +1810,7 @@ class WhisperXService:
                     "start": round(float(min(starts)), 2) if starts else 0.0,
                     "end": round(float(max(ends)), 2) if ends else 0.0,
                     "speaker": run[0]["speaker"] if run[0]["speaker"] is not None else UNKNOWN_SPEAKER_LABEL,
-                    "text": "".join(w["raw_word"] for w in run).strip(),
+                    "text": WhisperXService._join_words([w["raw_word"] for w in run]),
                     "assignment_method": worst_method,
                     "assignment_distance_s": max(distances) if distances else None,
                     "words": [

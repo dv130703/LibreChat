@@ -198,6 +198,103 @@ export function buildSandpackOptions(
 }
 
 /**
+ * Web Storage shim for the local preview frame.
+ *
+ * That frame renders through `srcdoc` without `allow-same-origin`, so it
+ * runs in an opaque origin where *reading* `window.localStorage` throws a
+ * `SecurityError` instead of handing back an empty store. Artifacts that
+ * persist anything — a game's high score, a saved draft — would die on
+ * their first access, so substitute an in-memory store when the real one
+ * is unreachable. Injected ahead of the artifact's own scripts.
+ */
+const STORAGE_SHIM = `<script>
+(function () {
+  var memoryStorage = function () {
+    var data = {};
+    return {
+      getItem: function (key) {
+        return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null;
+      },
+      setItem: function (key, value) { data[key] = String(value); },
+      removeItem: function (key) { delete data[key]; },
+      clear: function () { data = {}; },
+      key: function (index) {
+        var name = Object.keys(data)[index];
+        return name === undefined ? null : name;
+      },
+      get length() { return Object.keys(data).length; }
+    };
+  };
+  ['localStorage', 'sessionStorage'].forEach(function (name) {
+    try {
+      window[name].getItem('__probe__');
+    } catch (unreachable) {
+      try {
+        Object.defineProperty(window, name, { value: memoryStorage(), configurable: true });
+      } catch (undefinable) {
+        /* nothing further to try - the artifact keeps the throwing accessor */
+      }
+    }
+  });
+})();
+</script>`;
+
+const HEAD_OPEN = /<head[^<>]*>/i;
+const HTML_OPEN = /<html[^<>]*>/i;
+
+const insertAfterMatch = (regex: RegExp, content: string, insertable: string): string | null => {
+  const match = regex.exec(content);
+  if (!match) {
+    return null;
+  }
+  const offset = match.index + match[0].length;
+  return `${content.slice(0, offset)}\n${insertable}${content.slice(offset)}`;
+};
+
+/**
+ * `<link>`/`<script>` tag for one external-resource URL, or `null` when
+ * the URL carries no recognizable type. Mirrors Sandpack's own
+ * `injectExternalResources`: the type is read off the end of the URL,
+ * which is why `TAILWIND_CDN` carries a `#tailwind.js` fragment hint.
+ * Unrecognized entries are skipped rather than thrown on, so one bad URL
+ * can't blank the entire preview.
+ */
+const externalResourceTag = (resource: string): string | null => {
+  const fileType = /\.([^.]*)$/.exec(resource)?.[1];
+  if (fileType === 'css' || resource.includes('fonts.googleapis')) {
+    return `<link rel="stylesheet" href="${resource}">`;
+  }
+  if (fileType === 'js') {
+    return `<script src="${resource}"></script>`;
+  }
+  return null;
+};
+
+/**
+ * Assemble the document rendered by the local preview frame.
+ *
+ * Every `static`-template bucket — HTML, markdown, code, and the
+ * server-rendered office previews — already produces a complete,
+ * self-contained `index.html`, so the only work left is what Sandpack's
+ * static client used to do on our behalf: inject the shared external
+ * resources into `<head>` and guarantee a standards-mode doctype.
+ */
+export function buildStaticDocument(
+  html: string,
+  externalResources: readonly string[] = sharedOptions?.externalResources ?? [],
+): string {
+  const tags = externalResources
+    .map(externalResourceTag)
+    .filter((tag): tag is string => tag !== null);
+  const head = [STORAGE_SHIM, ...tags].join('\n');
+  const withHead =
+    insertAfterMatch(HEAD_OPEN, html, head) ??
+    insertAfterMatch(HTML_OPEN, html, `<head>${head}</head>`) ??
+    `${head}\n${html}`;
+  return /^\s*<!doctype html>/i.test(withHead) ? withHead : `<!DOCTYPE html>\n${withHead}`;
+}
+
+/**
  * Strip path separators so extension/bare-name lookups operate on the
  * basename only. Artifact filenames can carry nested directories
  * through the path-preserving sanitizer in the backend, and a dotted

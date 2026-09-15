@@ -342,9 +342,20 @@ type MeasuredCellParent = {
  *  re-measures whenever a row's actual height drifts from what's cached -
  *  typing grows/shrinks the textarea, the inline time editor or "add speaker"
  *  field swaps in, the playback progress bar appears - so the virtualized
- *  list's layout never goes stale. Compares `offsetHeight` (not
- *  `contentRect`, which excludes padding) since that's what `CellMeasurer`
- *  itself measures and what's stored in the cache. */
+ *  list's layout never goes stale.
+ *
+ *  Two nested divs, not one: the OUTER div is what `registerChild` measures
+ *  and what carries react-virtualized's own `style` - which pins an
+ *  EXPLICIT pixel `height` (whatever the cache currently says). Content
+ *  that grows past that pinned height can't make the outer div's own
+ *  `offsetHeight` change - it's fixed by inline style, not driven by
+ *  content - so a `ResizeObserver` on that div would compare the pinned
+ *  value against itself and never detect anything (this shipped once as
+ *  exactly that one-div version, and every row past the first render
+ *  wrong ended up rendered on top of the next - visually overlapping,
+ *  interleaved text). The INNER div carries no height of its own, so it
+ *  sizes to its actual content naturally regardless of what the outer box
+ *  is currently pinned to - that's the one the `ResizeObserver` watches. */
 const MeasuredRow: FC<{
   cache: CellMeasurerCache;
   rowKey: string;
@@ -354,10 +365,10 @@ const MeasuredRow: FC<{
   onResize: (index: number) => void;
   children: React.ReactNode;
 }> = memo(({ cache, rowKey, parent, index, style, onResize, children }) => {
-  const nodeRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const el = nodeRef.current;
+    const el = contentRef.current;
     if (!el || typeof ResizeObserver === 'undefined') {
       return;
     }
@@ -375,15 +386,13 @@ const MeasuredRow: FC<{
     <CellMeasurer cache={cache} columnIndex={0} key={rowKey} parent={parent} rowIndex={index}>
       {({ registerChild }) => (
         <div
-          ref={(node: HTMLDivElement | null) => {
-            nodeRef.current = node;
-            (registerChild as (instance: Element | null) => void)(node);
-          }}
+          ref={registerChild as React.LegacyRef<HTMLDivElement>}
           style={style}
-          className="pb-1"
           data-testid="transcript-row-measured"
         >
-          {children}
+          <div ref={contentRef} className="pb-1">
+            {children}
+          </div>
         </div>
       )}
     </CellMeasurer>
@@ -1291,34 +1300,19 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
 
   /** `fixedWidth` cache keys heights by row, not width - a panel resize (the
    *  split pane dragged, or the window itself) rewraps every visible line's
-   *  text, so their cached heights need dropping too. Re-measuring currently-
-   *  mounted textareas for the new width happens first (one reset-all/read-
-   *  all/write-all pass, same technique this used before virtualization -
-   *  now scoped to only the handful of rows actually rendered instead of the
-   *  entire transcript) so `CellMeasurer` reads the already-correct height
-   *  rather than one still wrapped for the old width. */
+   *  text, so their cached heights need dropping too.
+   *
+   *  Rows re-size themselves for the new width in CSS alone (see the grid
+   *  mirror in `TranscriptRow`), so by the time this runs on the next frame
+   *  the DOM is already laid out correctly and `CellMeasurer` just needs to
+   *  be told to look again - no manual per-textarea measure/assign pass. */
   const measuredWidthRef = useRef(0);
   useEffect(() => {
     if (listWidth === 0 || listWidth === measuredWidthRef.current) {
       return;
     }
     measuredWidthRef.current = listWidth;
-    const container = rowsContainerRef.current;
-    const frameId = requestAnimationFrame(() => {
-      if (container) {
-        const textareas = Array.from(container.querySelectorAll('textarea'));
-        textareas.forEach((el) => {
-          el.style.height = 'auto';
-        });
-        const targetHeights = textareas.map(
-          (el) => el.scrollHeight + (el.offsetHeight - el.clientHeight),
-        );
-        textareas.forEach((el, index) => {
-          el.style.height = `${targetHeights[index]}px`;
-        });
-      }
-      recompute(true);
-    });
+    const frameId = requestAnimationFrame(() => recompute(true));
     return () => cancelAnimationFrame(frameId);
   }, [listWidth, recompute]);
 

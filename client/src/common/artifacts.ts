@@ -40,3 +40,13 @@ export type ArtifactFiles =
   | Partial<{
       [x: string]: string | undefined;
     }>;
+
+/**
+ * Imperative handle the artifacts panel holds on whichever preview
+ * surface is mounted. Both renderers — the Sandpack-backed one and the
+ * local `srcdoc` frame used for `static` artifacts — expose the same
+ * handle, so the panel's refresh button doesn't care which is live.
+ */
+export interface ArtifactPreviewHandle {
+  refresh: () => void;
+}

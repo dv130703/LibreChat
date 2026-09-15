@@ -1,0 +1,6 @@
+# Web server
+fastapi
+uvicorn[standard]
+python-multipart
+
+python-dotenv

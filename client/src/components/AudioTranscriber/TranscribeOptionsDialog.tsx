@@ -34,13 +34,6 @@ const DEFAULT_OPTIONS: TranscribeAudioOptions = {
   diarize: true,
 };
 
-type SpeakerGrouping = 'merge' | 'balanced' | 'split';
-
-const CLUSTERING_THRESHOLD: Record<Exclude<SpeakerGrouping, 'balanced'>, number> = {
-  merge: 0.72,
-  split: 0.48,
-};
-
 // Kept in sync by hand with `_ALLOWED_WHISPER_MODELS` in `rag_server/app.py`,
 // the actual security boundary - this list is only what the picker offers.
 const WHISPER_MODEL_OPTIONS: Array<{
@@ -79,22 +72,6 @@ const LANGUAGE_OPTIONS: Array<{ value: string; labelKey: TranslationKeys }> = [
   { value: 'id', labelKey: 'com_ui_transcribe_language_id' },
   { value: 'uk', labelKey: 'com_ui_transcribe_language_uk' },
 ];
-
-const SPEAKER_GROUPING_OPTIONS: { value: SpeakerGrouping; labelKey: TranslationKeys }[] = [
-  { value: 'merge', labelKey: 'com_ui_transcribe_options_grouping_merge' },
-  { value: 'balanced', labelKey: 'com_ui_transcribe_options_grouping_balanced' },
-  { value: 'split', labelKey: 'com_ui_transcribe_options_grouping_split' },
-];
-
-function groupingFromThreshold(threshold: number | undefined): SpeakerGrouping {
-  if (threshold == null) {
-    return 'balanced';
-  }
-  const match = (
-    Object.keys(CLUSTERING_THRESHOLD) as Array<Exclude<SpeakerGrouping, 'balanced'>>
-  ).find((key) => CLUSTERING_THRESHOLD[key] === threshold);
-  return match ?? 'balanced';
-}
 
 interface MenuOption {
   value: string;
@@ -328,7 +305,6 @@ export default function TranscribeOptionsDialog({
   const [includeTimestamps, setIncludeTimestamps] = useState(DEFAULT_OPTIONS.includeTimestamps);
   const [diarize, setDiarize] = useState(DEFAULT_OPTIONS.diarize);
   const [speakerCount, setSpeakerCount] = useState<number | undefined>(undefined);
-  const [speakerGrouping, setSpeakerGrouping] = useState<SpeakerGrouping>('balanced');
   const [termTags, setTermTags] = useState<string[]>([]);
   const [termDraft, setTermDraft] = useState('');
   const [emitNumerals, setEmitNumerals] = useState(false);
@@ -354,7 +330,6 @@ export default function TranscribeOptionsDialog({
       setIncludeTimestamps(initialOptions?.includeTimestamps ?? DEFAULT_OPTIONS.includeTimestamps);
       setDiarize(initialOptions?.diarize ?? DEFAULT_OPTIONS.diarize);
       setSpeakerCount(initialOptions?.speakerCount);
-      setSpeakerGrouping(groupingFromThreshold(initialOptions?.clusteringThreshold));
       seededRef.current = initialOptions != null;
       setTermTags(parseTermTags(initialOptions?.contextTerms));
       setTermDraft('');
@@ -438,10 +413,6 @@ export default function TranscribeOptionsDialog({
       includeTimestamps,
       diarize: effectiveDiarize,
       speakerCount: effectiveDiarize && !channelSplitEnabled ? speakerCount : undefined,
-      clusteringThreshold:
-        effectiveDiarize && !channelSplitEnabled && speakerGrouping !== 'balanced'
-          ? CLUSTERING_THRESHOLD[speakerGrouping]
-          : undefined,
       contextTerms: termTags.length > 0 ? termTags.join(', ') : undefined,
       model: model || undefined,
       language: language || undefined,
@@ -481,14 +452,6 @@ export default function TranscribeOptionsDialog({
           : localize(option.labelKey),
     }));
   }, [localize, defaultLanguage]);
-  const groupingOptions = useMemo<MenuOption[]>(
-    () =>
-      SPEAKER_GROUPING_OPTIONS.map((option) => ({
-        value: option.value,
-        label: localize(option.labelKey),
-      })),
-    [localize],
-  );
 
   const modelHint =
     model === '' ? undefined : localize('com_ui_transcribe_options_model_hint_note');
@@ -588,14 +551,16 @@ export default function TranscribeOptionsDialog({
                           })}
                         </p>
                       </div>
-                      <DropdownField
-                        id="transcribe-option-grouping"
-                        label={localize('com_ui_transcribe_options_grouping_label')}
-                        ariaLabel={localize('com_ui_transcribe_options_grouping_label')}
-                        value={speakerGrouping}
-                        options={groupingOptions}
-                        onChange={(value) => setSpeakerGrouping(value as SpeakerGrouping)}
-                      />
+                      {/* The "speaker grouping" dropdown that used to sit here
+                       *  set `clusteringThreshold`, which is inert on the
+                       *  diarization pipeline this runs on: the same audio
+                       *  diarized at every threshold from 0.05 to 0.95
+                       *  returns byte-identical speaker turns (measured - see
+                       *  CLUSTERING_THRESHOLD_IS_INERT in
+                       *  `transcription/whisperx_service.py`). It was a
+                       *  control that silently did nothing, which is worse
+                       *  than no control. Speaker count above is the lever
+                       *  that actually changes the result on this pipeline. */}
                     </div>
                   )
                 )}
