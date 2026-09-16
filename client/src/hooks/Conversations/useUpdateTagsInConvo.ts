@@ -53,7 +53,7 @@ const useUpdateTagsInConvo = () => {
     ]);
 
     if (data) {
-      const newData = JSON.parse(JSON.stringify(data)) as InfiniteData<ConversationListResponse>;
+      const newData = structuredClone(data);
       for (let pageIndex = 0; pageIndex < newData.pages.length; pageIndex++) {
         const page = newData.pages[pageIndex];
         page.conversations = page.conversations.map((conversation) => {

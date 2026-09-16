@@ -35,9 +35,7 @@ export interface TraverseContext {
   isRoot: boolean;
   notRoot: boolean;
   level: number;
-  circular: TraverseContext | null;
   update: (value: unknown, stopHere?: boolean) => void;
-  remove: () => void;
 }
 
 type ForEachCallback = (this: TraverseContext, value: unknown) => void;
@@ -96,19 +94,6 @@ function setProperty(obj: TraversableObject, key: string | number, value: unknow
   }
 }
 
-// Helper to safely delete a property from an object
-function deleteProperty(obj: TraversableObject, key: string | number): void {
-  if (Array.isArray(obj) && typeof key === 'number') {
-    // For arrays, we should use splice, but this is handled in remove()
-    // This function is only called for non-array deletion
-    return;
-  }
-
-  if (!Array.isArray(obj)) {
-    delete obj[key];
-  }
-}
-
 function hasOwnEnumerable(node: TraversableObject): boolean {
   for (const key in node) {
     if (Object.prototype.hasOwnProperty.call(node, key)) {
@@ -145,12 +130,8 @@ function forEach(obj: unknown, callback: ForEachCallback, options?: TraverseOpti
     // (non-circular) reference appearing in multiple branches is traversed
     // independently; the node/depth caps keep a DAG of shared references from
     // fanning out unboundedly.
-    let circular: TraverseContext | null = null;
-    if (isObject(node)) {
-      circular = findAncestorCycle(node);
-      if (circular) {
-        return; // Skip true cycles to avoid infinite recursion.
-      }
+    if (isObject(node) && findAncestorCycle(node)) {
+      return; // Skip true cycles to avoid infinite recursion.
     }
 
     const key = path.length > 0 ? path[path.length - 1] : undefined;
@@ -175,21 +156,11 @@ function forEach(obj: unknown, callback: ForEachCallback, options?: TraverseOpti
       isRoot,
       notRoot: !isRoot,
       level,
-      circular,
       update(value: unknown) {
         if (!isRoot && parent && key !== undefined && isObject(parent.node)) {
           setProperty(parent.node, key, value);
         }
         this.node = value;
-      },
-      remove() {
-        if (!isRoot && parent && key !== undefined && isObject(parent.node)) {
-          if (Array.isArray(parent.node) && typeof key === 'number') {
-            parent.node.splice(key, 1);
-          } else {
-            deleteProperty(parent.node, key);
-          }
-        }
       },
     };
 

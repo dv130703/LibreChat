@@ -175,10 +175,6 @@ export const register = (payload: t.TRegisterUser) => {
 export const userKeyQuery = (name: string): Promise<t.TCheckUserKeyResponse> =>
   request.get(endpoints.userKeyQuery(name));
 
-export const getLoginGoogle = () => {
-  return request.get(endpoints.loginGoogle());
-};
-
 export const requestPasswordReset = (
   payload: t.TRequestPasswordReset,
 ): Promise<t.TRequestPasswordResetResponse> => {
@@ -711,13 +707,6 @@ export const getMCPServers = async (): Promise<mcp.MCPServersListResponse> => {
 };
 
 /**
- * Get a single MCP server by ID
- */
-export const getMCPServer = async (serverName: string): Promise<mcp.MCPServerDBObjectResponse> => {
-  return request.get(endpoints.mcpServer(serverName));
-};
-
-/**
  * Create a new MCP server
  */
 export const createMCPServer = async (
@@ -862,10 +851,6 @@ export const listConversations = (
 ): Promise<q.ConversationListResponse> => {
   return request.get(endpoints.conversations(params ?? {}));
 };
-
-export function getConversations(cursor: string): Promise<t.TGetConversationsResponse> {
-  return request.get(endpoints.conversations({ cursor }));
-}
 
 export function getConversationById(id: string): Promise<s.TConversation> {
   return request.get(endpoints.conversationById(id));
@@ -1181,29 +1166,6 @@ export const updateSkillNodeContent = (variables: {
   });
 };
 
-export function getGitHubSkillSyncStatus(): Promise<sk.TGitHubSkillSyncStatusResponse> {
-  return request.get(endpoints.adminSkillsSyncStatus());
-}
-
-export function runGitHubSkillSync(): Promise<sk.TGitHubSkillSyncManualRunResponse> {
-  return request.post(endpoints.adminSkillsSyncRun());
-}
-
-export function setGitHubSkillSyncCredential(variables: {
-  credentialKey: string;
-  token: string;
-}): Promise<sk.TGitHubSkillSyncCredentialSummary> {
-  return request.put(endpoints.adminSkillsSyncCredential(variables.credentialKey), {
-    token: variables.token,
-  } satisfies sk.TGitHubSkillSyncCredentialUpdateRequest);
-}
-
-export function deleteGitHubSkillSyncCredential(
-  credentialKey: string,
-): Promise<{ credentialKey: string; deleted: boolean }> {
-  return request.delete(endpoints.adminSkillsSyncCredential(credentialKey));
-}
-
 /* Roles */
 export function listRoles(): Promise<q.ListRolesResponse> {
   return request.get(`${endpoints.adminRoles()}?limit=200`);
@@ -1294,10 +1256,6 @@ export function addTagToConversation(
 ): Promise<t.TTagConversationResponse> {
   return request.put(endpoints.addTagToConversation(conversationId), payload);
 }
-export function rebuildConversationTags(): Promise<t.TConversationTagsResponse> {
-  return request.post(endpoints.conversationTags('rebuild'));
-}
-
 export function healthCheck(): Promise<string> {
   return request.get(endpoints.health());
 }
@@ -1426,10 +1384,6 @@ export function getAllEffectivePermissions(
 // SharePoint Graph API Token
 export function getGraphApiToken(params: q.GraphTokenParams): Promise<q.GraphTokenResponse> {
   return request.get(endpoints.graphToken(params.scopes));
-}
-
-export function getDomainServerBaseUrl(): string {
-  return `${endpoints.apiBaseUrl()}/api`;
 }
 
 /* Active Jobs */

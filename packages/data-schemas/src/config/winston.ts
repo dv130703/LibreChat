@@ -9,8 +9,9 @@ import {
 } from './parsers';
 import { getTenantId, getUserId, getRequestId, SYSTEM_TENANT_ID } from './tenantContext';
 import { getLogDirectory } from './utils';
+import { levels, level } from './logLevels';
 
-const { NODE_ENV, DEBUG_LOGGING, CONSOLE_JSON, DEBUG_CONSOLE, LOG_TO_FILE } = process.env;
+const { DEBUG_LOGGING, CONSOLE_JSON, DEBUG_CONSOLE, LOG_TO_FILE } = process.env;
 
 const useConsoleJson = typeof CONSOLE_JSON === 'string' && CONSOLE_JSON.toLowerCase() === 'true';
 
@@ -19,17 +20,6 @@ const useDebugConsole = typeof DEBUG_CONSOLE === 'string' && DEBUG_CONSOLE.toLow
 const useDebugLogging = typeof DEBUG_LOGGING === 'string' && DEBUG_LOGGING.toLowerCase() === 'true';
 
 const useFileLogging = typeof LOG_TO_FILE !== 'string' || LOG_TO_FILE.toLowerCase() !== 'false';
-
-const levels: winston.config.AbstractConfigSetLevels = {
-  error: 0,
-  warn: 1,
-  info: 2,
-  http: 3,
-  verbose: 4,
-  debug: 5,
-  activity: 6,
-  silly: 7,
-};
 
 const LOG_CONTEXT_KEYS = ['tenantId', 'userId', 'requestId'] as const;
 
@@ -73,18 +63,6 @@ function appendRequestContext(line: string, info: winston.Logform.TransformableI
   const context = formatRequestContext(info);
   return context ? `${line} ${context}` : line;
 }
-
-winston.addColors({
-  info: 'green',
-  warn: 'italic yellow',
-  error: 'red',
-  debug: 'blue',
-});
-
-const level = (): string => {
-  const env = NODE_ENV || 'development';
-  return env === 'development' ? 'debug' : 'warn';
-};
 
 const fileFormat = winston.format.combine(
   redactFormat(),

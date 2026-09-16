@@ -75,14 +75,6 @@ export type UpdateAgentVariables = {
   data: AgentUpdateParams;
 };
 
-export type DuplicateVersionError = Error & {
-  statusCode?: number;
-  details?: {
-    duplicateVersion?: unknown;
-    versionIndex?: number;
-  };
-};
-
 export type UpdateAgentMutationOptions = MutationOptions<Agent, UpdateAgentVariables>;
 
 export type DuplicateAgentBody = {
@@ -147,24 +139,9 @@ export type ForkSharedConvoOptions = MutationOptions<
   types.TForkSharedConvoRequest
 >;
 
-export type CreateSharedLinkOptions = MutationOptions<
-  types.TSharedLink,
-  Partial<types.TSharedLink>
->;
-
 export type updateTagsInConvoOptions = MutationOptions<
   types.TTagConversationResponse,
   types.TTagConversationRequest
->;
-
-export type UpdateSharedLinkOptions = MutationOptions<
-  types.TSharedLink,
-  Partial<types.TSharedLink>
->;
-
-export type ArchiveConvoOptions = MutationOptions<
-  types.TArchiveConversationResponse,
-  types.TArchiveConversationRequest
 >;
 
 export type DeleteSharedLinkContext = { previousQueries?: Map<string, TDeleteSharedLinkResponse> };

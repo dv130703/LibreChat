@@ -93,5 +93,5 @@ export function reduceCorrections(corrections: TTranscriptCorrection[]): Effecti
 /** A fresh, collision-free id for a speaker the pipeline never detected -
  *  the reviewer names it immediately after via a `speaker_rename` correction. */
 export function createCustomSpeakerId(): string {
-  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  return `custom-${crypto.randomUUID()}`;
 }

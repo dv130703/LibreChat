@@ -1,6 +1,5 @@
+const { setTimeout: sleep } = require('timers/promises');
 const { logger, buildRetentionVisibilityFilter } = require('@librechat/data-schemas');
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Batch update documents in chunks to avoid timeouts on weak instances

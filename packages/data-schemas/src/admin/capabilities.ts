@@ -1,10 +1,5 @@
 import { ResourceType } from 'librechat-data-provider';
-import type {
-  BaseSystemCapability,
-  SystemCapability,
-  ConfigSection,
-  CapabilityCategory,
-} from '~/types/admin';
+import type { BaseSystemCapability, SystemCapability, ConfigSection } from '~/types/admin';
 
 // ---------------------------------------------------------------------------
 // System Capabilities
@@ -85,36 +80,6 @@ export function isValidCapability(value: string): boolean {
 // Capability utility functions
 // ---------------------------------------------------------------------------
 
-/** Reverse map: for a given read capability, which manage capabilities imply it? */
-const impliedByMap: Record<string, string[]> = {};
-for (const [manage, reads] of Object.entries(CapabilityImplications)) {
-  for (const read of reads as string[]) {
-    if (!impliedByMap[read]) {
-      impliedByMap[read] = [];
-    }
-    impliedByMap[read].push(manage);
-  }
-}
-
-/**
- * Check whether a set of held capabilities satisfies a required capability,
- * accounting for the manage→read implication hierarchy.
- */
-export function hasImpliedCapability(held: string[], required: string): boolean {
-  if (held.includes(required)) {
-    return true;
-  }
-  const impliers = impliedByMap[required];
-  if (impliers) {
-    for (const cap of impliers) {
-      if (held.includes(cap)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 /**
  * Given a set of directly-held capabilities, compute the full set including
  * all implied capabilities.
@@ -179,55 +144,3 @@ export function readConfigCapability(section: ConfigSection): `read:configs:${Co
 
 /** Reserved principalId for the DB base config (overrides YAML defaults). */
 export const BASE_CONFIG_PRINCIPAL_ID = '__base__';
-
-/** Pre-defined UI categories for grouping capabilities in the admin panel. */
-export const CAPABILITY_CATEGORIES: CapabilityCategory[] = [
-  {
-    key: 'users',
-    labelKey: 'com_cap_cat_users',
-    capabilities: [SystemCapabilities.MANAGE_USERS, SystemCapabilities.READ_USERS],
-  },
-  {
-    key: 'groups',
-    labelKey: 'com_cap_cat_groups',
-    capabilities: [SystemCapabilities.MANAGE_GROUPS, SystemCapabilities.READ_GROUPS],
-  },
-  {
-    key: 'roles',
-    labelKey: 'com_cap_cat_roles',
-    capabilities: [SystemCapabilities.MANAGE_ROLES, SystemCapabilities.READ_ROLES],
-  },
-  {
-    key: 'config',
-    labelKey: 'com_cap_cat_config',
-    capabilities: [
-      SystemCapabilities.MANAGE_CONFIGS,
-      SystemCapabilities.READ_CONFIGS,
-      SystemCapabilities.ASSIGN_CONFIGS,
-    ],
-  },
-  {
-    key: 'content',
-    labelKey: 'com_cap_cat_content',
-    capabilities: [
-      SystemCapabilities.MANAGE_AGENTS,
-      SystemCapabilities.READ_AGENTS,
-      SystemCapabilities.MANAGE_PROMPTS,
-      SystemCapabilities.READ_PROMPTS,
-      SystemCapabilities.MANAGE_SKILLS,
-      SystemCapabilities.READ_SKILLS,
-      SystemCapabilities.MANAGE_MCP_SERVERS,
-      SystemCapabilities.MANAGE_SHARED_LINKS,
-      SystemCapabilities.READ_SHARED_LINKS,
-    ],
-  },
-  {
-    key: 'system',
-    labelKey: 'com_cap_cat_system',
-    capabilities: [
-      SystemCapabilities.ACCESS_ADMIN,
-      SystemCapabilities.READ_USAGE,
-      SystemCapabilities.READ_AUDIT_LOG,
-    ],
-  },
-];

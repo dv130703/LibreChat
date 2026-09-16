@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { format } from 'date-fns';
 import { OGDialog, OGDialogTemplate, Input, Label } from '@librechat/client';
 import { useLocalize } from '~/hooks';
 import type { TranslationKeys } from '~/hooks/useLocalize';
@@ -10,11 +11,7 @@ import type { MeetingMinutesForm, MeetingMinutesFormErrors } from 'librechat-dat
  *  "today" by hand - never `toISOString()`, which reads UTC and can land on
  *  the wrong day depending on timezone and time of day. */
 function todayAsInputValue(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return format(new Date(), 'yyyy-MM-dd');
 }
 
 function FieldError({ messageKey }: { messageKey?: string }) {

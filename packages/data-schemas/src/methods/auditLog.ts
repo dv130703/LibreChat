@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { FilterQuery, Model } from 'mongoose';
 import type {
   AdminAuditLogEntry,
@@ -45,10 +46,6 @@ const MAX_APPEND_RETRIES = 12;
 /** Base unit (ms) for jittered backoff between duplicate-key retries. */
 const APPEND_BACKOFF_MS = 5;
 const OBJECT_ID_RE = /^[a-fA-F0-9]{24}$/;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export interface AuditLogMethods {
   recordAuditEntry: (

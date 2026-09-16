@@ -28,7 +28,7 @@ export const useCreateAgentMutation = (
           if (!listRes) {
             return options?.onSuccess?.(newAgent, variables, context);
           }
-          const currentAgents = [newAgent, ...JSON.parse(JSON.stringify(listRes.data))];
+          const currentAgents = [newAgent, ...structuredClone(listRes.data)];
 
           queryClient.setQueryData<t.AgentListResponse>([QueryKeys.agents, key], {
             ...listRes,

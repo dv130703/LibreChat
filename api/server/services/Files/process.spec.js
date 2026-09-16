@@ -97,10 +97,6 @@ jest.mock('~/server/services/Config', () => ({
   checkCapability: jest.fn().mockResolvedValue(true),
 }));
 
-jest.mock('~/server/utils/queue', () => ({
-  LB_QueueAsyncCall: jest.fn(),
-}));
-
 jest.mock('~/server/services/Files/strategies', () => ({
   getStrategyFunctions: jest.fn(),
 }));

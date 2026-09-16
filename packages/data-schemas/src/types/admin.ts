@@ -29,13 +29,6 @@ export type SystemCapability =
   | ConfigSectionCapability
   | ConfigAssignCapability;
 
-/** UI grouping of capabilities for the admin panel's capability editor. */
-export type CapabilityCategory = {
-  key: string;
-  labelKey: string;
-  capabilities: BaseSystemCapability[];
-};
-
 /* ── Admin API response types ───────────────────────────────────────── */
 
 /** Config document as returned by the admin API (no Mongoose internals). */

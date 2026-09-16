@@ -1,3 +1,4 @@
+const _ = require('lodash');
 const client = require('openid-client');
 const { isEnabled } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
@@ -367,15 +368,11 @@ const getEntraGroupDetailsBatch = async (accessToken, sub, groupIds) => {
     };
 
     // Split groups into batches and process with limited concurrency
-    const batches = [];
-    for (let i = 0; i < groupIds.length; i += batchSize) {
-      batches.push(groupIds.slice(i, i + batchSize));
-    }
+    const batches = _.chunk(groupIds, batchSize);
 
     // Process batches with controlled concurrency
     const allGroupDetails = [];
-    for (let i = 0; i < batches.length; i += maxConcurrent) {
-      const batchSlice = batches.slice(i, i + maxConcurrent);
+    for (const batchSlice of _.chunk(batches, maxConcurrent)) {
       const batchPromises = batchSlice.map((batch) => processBatch(batch));
       const batchResults = await Promise.all(batchPromises);
       allGroupDetails.push(...batchResults.flat());

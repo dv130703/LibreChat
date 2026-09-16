@@ -3,7 +3,7 @@ import { URL } from 'url';
 import _axios from 'axios';
 import crypto from 'crypto';
 import { load } from 'js-yaml';
-import type { ActionMetadata, ActionMetadataRuntime } from './types/agents';
+import type { ActionMetadataRuntime } from './types/agents';
 import type { FunctionTool, Schema, Reference } from './types/assistants';
 import { AuthTypeEnum, AuthorizationTypeEnum } from './types/agents';
 import type { OpenAPIV3 } from 'openapi-types';
@@ -155,27 +155,77 @@ export class FunctionSignature {
   }
 }
 
-class RequestConfig {
-  constructor(
-    readonly domain: string,
-    readonly basePath: string,
-    readonly method: string,
-    readonly operation: string,
-    readonly isConsequential: boolean,
-    readonly contentType: string,
-    readonly parameterLocations?: Record<string, 'query' | 'path' | 'header' | 'body'>,
-  ) {}
-}
+type RequestConfig = {
+  domain: string;
+  basePath: string;
+  method: string;
+  operation: string;
+  isConsequential: boolean;
+  contentType: string;
+  parameterLocations?: Record<string, 'query' | 'path' | 'header' | 'body'>;
+};
 
-class RequestExecutor {
+export class ActionRequest {
   path: string;
   params?: Record<string, unknown>;
+  private config: RequestConfig;
   private operationHash?: string;
   private authHeaders: Record<string, string> = {};
   private authToken?: string;
 
-  constructor(private config: RequestConfig) {
-    this.path = config.basePath;
+  constructor(
+    domain: string,
+    path: string,
+    method: string,
+    operation: string,
+    isConsequential: boolean,
+    contentType: string,
+    parameterLocations?: Record<string, 'query' | 'path' | 'header' | 'body'>,
+  ) {
+    this.config = {
+      domain,
+      basePath: path,
+      method,
+      operation,
+      isConsequential,
+      contentType,
+      parameterLocations,
+    };
+    this.path = this.config.basePath;
+  }
+
+  get domain() {
+    return this.config.domain;
+  }
+  get method() {
+    return this.config.method;
+  }
+  get operation() {
+    return this.config.operation;
+  }
+  get isConsequential() {
+    return this.config.isConsequential;
+  }
+  get contentType() {
+    return this.config.contentType;
+  }
+
+  /**
+   * Returns a fresh request instance sharing this request's immutable configuration,
+   * so concurrent tool calls each get isolated mutable path/params/auth state.
+   */
+  createExecutor(): ActionRequest {
+    const executor = new ActionRequest(
+      this.config.domain,
+      this.config.basePath,
+      this.config.method,
+      this.config.operation,
+      this.config.isConsequential,
+      this.config.contentType,
+      this.config.parameterLocations,
+    );
+    executor.config = this.config;
+    return executor;
   }
 
   setParams(params: Record<string, unknown>) {
@@ -352,71 +402,6 @@ class RequestExecutor {
 
   getConfig() {
     return this.config;
-  }
-}
-
-export class ActionRequest {
-  private config: RequestConfig;
-
-  constructor(
-    domain: string,
-    path: string,
-    method: string,
-    operation: string,
-    isConsequential: boolean,
-    contentType: string,
-    parameterLocations?: Record<string, 'query' | 'path' | 'header' | 'body'>,
-  ) {
-    this.config = new RequestConfig(
-      domain,
-      path,
-      method,
-      operation,
-      isConsequential,
-      contentType,
-      parameterLocations,
-    );
-  }
-
-  // Add getters to maintain backward compatibility
-  get domain() {
-    return this.config.domain;
-  }
-  get path() {
-    return this.config.basePath;
-  }
-  get method() {
-    return this.config.method;
-  }
-  get operation() {
-    return this.config.operation;
-  }
-  get isConsequential() {
-    return this.config.isConsequential;
-  }
-  get contentType() {
-    return this.config.contentType;
-  }
-
-  createExecutor() {
-    return new RequestExecutor(this.config);
-  }
-
-  // Maintain backward compatibility by delegating to a new executor
-  setParams(params: Record<string, unknown>) {
-    const executor = this.createExecutor();
-    executor.setParams(params);
-    return executor;
-  }
-
-  async setAuth(metadata: ActionMetadata) {
-    const executor = this.createExecutor();
-    return executor.setAuth(metadata);
-  }
-
-  async execute() {
-    const executor = this.createExecutor();
-    return executor.execute();
   }
 }
 

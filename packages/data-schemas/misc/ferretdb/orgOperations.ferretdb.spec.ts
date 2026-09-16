@@ -30,13 +30,11 @@ import {
 import accessRoleSchema from '~/schema/accessRole';
 import mcpServerSchema from '~/schema/mcpServer';
 import aclEntrySchema from '~/schema/aclEntry';
-import { initializeOrgCollections, createIndexesWithRetry, retryWithBackoff } from '~/utils/retry';
 
 /**
  * Production operations tests for FerretDB multi-tenancy:
- *   1. Retry utility under simulated and real deadlock conditions
- *   2. Programmatic per-org backup/restore (driver-level, no mongodump)
- *   3. Schema migration across existing org databases
+ *   1. Programmatic per-org backup/restore (driver-level, no mongodump)
+ *   2. Schema migration across existing org databases
  *
  * Run:
  *   FERRETDB_URI="mongodb://ferretdb:ferretdb@127.0.0.1:27020/ops_test" \
@@ -88,6 +86,16 @@ function registerModels(conn: Connection): Record<string, Model<unknown>> {
     models[name] = conn.models[name] || conn.model(name, schema);
   }
   return models;
+}
+
+/** Create all collections then build all indexes sequentially for a set of models */
+async function initializeOrgCollections(
+  models: Record<string, { createCollection: () => Promise<unknown>; createIndexes: () => Promise<unknown> }>,
+): Promise<void> {
+  for (const model of Object.values(models)) {
+    await model.createCollection();
+    await model.createIndexes();
+  }
 }
 
 // ─── BACKUP/RESTORE UTILITIES ───────────────────────────────────────────────
@@ -166,7 +174,7 @@ async function migrateOrg(
 
     const mt0 = Date.now();
     await model.createCollection();
-    await createIndexesWithRetry(model);
+    await model.createIndexes();
     indexResults.push({ model: name, created: isNew, ms: Date.now() - mt0 });
   }
 
@@ -215,124 +223,6 @@ describeIfFerretDB('Org Operations (Production)', () => {
     }
     await baseConn.close();
   }, 120_000);
-
-  // ─── RETRY UTILITY ──────────────────────────────────────────────────────
-
-  describe('retryWithBackoff', () => {
-    it('succeeds on first attempt when no error', async () => {
-      let calls = 0;
-      const result = await retryWithBackoff(async () => {
-        calls++;
-        return 'ok';
-      }, 'test-op');
-      expect(result).toBe('ok');
-      expect(calls).toBe(1);
-    });
-
-    it('retries on deadlock error and eventually succeeds', async () => {
-      let calls = 0;
-      const result = await retryWithBackoff(
-        async () => {
-          calls++;
-          if (calls < 3) {
-            throw new Error('deadlock detected');
-          }
-          return 'recovered';
-        },
-        'deadlock-test',
-        { baseDelayMs: 10, jitter: false },
-      );
-
-      expect(result).toBe('recovered');
-      expect(calls).toBe(3);
-    });
-
-    it('does not retry on non-retryable errors', async () => {
-      let calls = 0;
-      await expect(
-        retryWithBackoff(
-          async () => {
-            calls++;
-            throw new Error('validation failed');
-          },
-          'non-retryable',
-          { baseDelayMs: 10 },
-        ),
-      ).rejects.toThrow('validation failed');
-      expect(calls).toBe(1);
-    });
-
-    it('exhausts max attempts and throws', async () => {
-      let calls = 0;
-      await expect(
-        retryWithBackoff(
-          async () => {
-            calls++;
-            throw new Error('deadlock detected');
-          },
-          'exhausted',
-          { maxAttempts: 3, baseDelayMs: 10, jitter: false },
-        ),
-      ).rejects.toThrow('deadlock');
-      expect(calls).toBe(3);
-    });
-
-    it('respects maxDelayMs cap', async () => {
-      const delays: number[] = [];
-      let calls = 0;
-
-      await retryWithBackoff(
-        async () => {
-          calls++;
-          if (calls < 4) {
-            throw new Error('deadlock detected');
-          }
-          return 'ok';
-        },
-        'delay-cap',
-        {
-          baseDelayMs: 100,
-          maxDelayMs: 250,
-          jitter: false,
-          onRetry: (_err, _attempt, delay) => delays.push(delay),
-        },
-      );
-
-      expect(delays[0]).toBe(100);
-      expect(delays[1]).toBe(200);
-      expect(delays[2]).toBe(250);
-    });
-  });
-
-  // ─── REAL DEADLOCK RETRY ────────────────────────────────────────────────
-
-  describe('initializeOrgCollections with retry', () => {
-    it('provisions 5 orgs sequentially using the production utility', async () => {
-      const orgIds = ['retry_1', 'retry_2', 'retry_3', 'retry_4', 'retry_5'];
-      const results: Array<{ orgId: string; ms: number; models: number }> = [];
-
-      for (const orgId of orgIds) {
-        const dbName = `${DB_PREFIX}org_${orgId}`;
-        createdDbs.push(dbName);
-        const conn = baseConn.useDb(dbName, { useCache: true });
-        const models = registerModels(conn);
-
-        const { totalMs } = await initializeOrgCollections(models, {
-          baseDelayMs: 50,
-          maxAttempts: 5,
-        });
-        results.push({ orgId, ms: totalMs, models: Object.keys(models).length });
-      }
-
-      const totalMs = results.reduce((s, r) => s + r.ms, 0);
-      console.log(`[Retry] 5 orgs provisioned in ${totalMs}ms:`);
-      for (const r of results) {
-        console.log(`  ${r.orgId}: ${r.ms}ms (${r.models} models)`);
-      }
-
-      expect(results.every((r) => r.models === MODEL_COUNT)).toBe(true);
-    }, 120_000);
-  });
 
   // ─── BACKUP/RESTORE ─────────────────────────────────────────────────────
 
@@ -590,7 +480,7 @@ describeIfFerretDB('Org Operations (Production)', () => {
         const conn = baseConn.useDb(`${DB_PREFIX}org_${orgId}`, { useCache: true });
         const AuditLog = conn.models['AuditLog'] || conn.model('AuditLog', newSchema);
         await AuditLog.createCollection();
-        await createIndexesWithRetry(AuditLog);
+        await AuditLog.createIndexes();
       }
 
       for (const orgId of migrationOrgs) {
@@ -612,10 +502,7 @@ describeIfFerretDB('Org Operations (Production)', () => {
 
       for (const orgId of migrationOrgs) {
         const conn = baseConn.useDb(`${DB_PREFIX}org_${orgId}`, { useCache: true });
-        await retryWithBackoff(
-          () => conn.db!.collection('users').createIndex(indexSpec, { background: true }),
-          `createIndex(users, username+createdAt) for ${orgId}`,
-        );
+        await conn.db!.collection('users').createIndex(indexSpec, { background: true });
       }
 
       for (const orgId of migrationOrgs) {

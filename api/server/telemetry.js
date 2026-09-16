@@ -1,11 +1,9 @@
 require('dotenv').config();
 
-function isTruthy(value) {
-  return value?.trim().toLowerCase() === 'true';
-}
+const { isEnabled } = require('@librechat/api');
 
 function isTelemetryEnabled() {
-  return isTruthy(process.env.OTEL_TRACING_ENABLED) && !isTruthy(process.env.OTEL_SDK_DISABLED);
+  return isEnabled(process.env.OTEL_TRACING_ENABLED) && !isEnabled(process.env.OTEL_SDK_DISABLED);
 }
 
 if (isTelemetryEnabled()) {

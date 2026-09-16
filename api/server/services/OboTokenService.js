@@ -1,4 +1,5 @@
 const client = require('openid-client');
+const { setTimeout: delay } = require('timers/promises');
 const { logger } = require('@librechat/data-schemas');
 const { CacheKeys } = require('librechat-data-provider');
 const { getOpenIdConfig } = require('~/strategies/openidStrategy');
@@ -57,10 +58,6 @@ function tagOboExchangeError(error, retryable) {
     error.oboFailureReason = 'exchange_failed';
   }
   return error;
-}
-
-async function delay(ms) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function performOboExchange({ user, accessToken, scopes, config, tokensCache, cacheKey }) {

@@ -1,4 +1,3 @@
-export { default as AgentsProvider } from './AgentsContext';
 export * from './ActivePanelContext';
 export * from './AgentPanelContext';
 export * from './ChatContext';
@@ -9,7 +8,6 @@ export * from './EditorContext';
 export * from './ChatFormContext';
 export * from './BookmarkContext';
 export * from './MessageContext';
-export * from './AgentsContext';
 export * from './AnnouncerContext';
 export * from './AgentsMapContext';
 export * from './ArtifactContext';

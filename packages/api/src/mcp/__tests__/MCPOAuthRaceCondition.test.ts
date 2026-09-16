@@ -54,9 +54,9 @@ describe('MCP OAuth Race Condition Fixes', () => {
 
   describe('Fix 1: Connection mutex coalesces concurrent attempts', () => {
     it('should return the same pending promise for concurrent getUserConnection calls', async () => {
-      const { UserConnectionManager } = await import('~/mcp/UserConnectionManager');
+      const { MCPManager } = await import('~/mcp/MCPManager');
 
-      class TestManager extends UserConnectionManager {
+      class TestManager extends MCPManager {
         public createCallCount = 0;
 
         getPendingConnections() {
@@ -137,9 +137,9 @@ describe('MCP OAuth Race Condition Fixes', () => {
     });
 
     it('should re-issue the pending OAuth URL when joining an in-flight connection', async () => {
-      const { UserConnectionManager } = await import('~/mcp/UserConnectionManager');
+      const { MCPManager } = await import('~/mcp/MCPManager');
 
-      class TestManager extends UserConnectionManager {}
+      class TestManager extends MCPManager {}
 
       const manager = new TestManager();
 
@@ -222,9 +222,9 @@ describe('MCP OAuth Race Condition Fixes', () => {
     });
 
     it('should preserve pending OAuth expiry when joining after the prompt was emitted', async () => {
-      const { UserConnectionManager } = await import('~/mcp/UserConnectionManager');
+      const { MCPManager } = await import('~/mcp/MCPManager');
 
-      class TestManager extends UserConnectionManager {}
+      class TestManager extends MCPManager {}
 
       const manager = new TestManager();
 
@@ -327,9 +327,9 @@ describe('MCP OAuth Race Condition Fixes', () => {
     });
 
     it('should not coalesce when forceNew is true', async () => {
-      const { UserConnectionManager } = await import('~/mcp/UserConnectionManager');
+      const { MCPManager } = await import('~/mcp/MCPManager');
 
-      class TestManager extends UserConnectionManager {}
+      class TestManager extends MCPManager {}
 
       const manager = new TestManager();
 

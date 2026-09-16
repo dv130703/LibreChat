@@ -8,33 +8,7 @@ import {
   defaultAgentFormValues,
 } from 'librechat-data-provider';
 import type { Agent, TFile } from 'librechat-data-provider';
-import type { DropdownValueSetter, TAgentOption, ExtendedFile } from '~/common';
-
-/**
- * Creates a Dropdown value setter that always passes a string value,
- * for when options (object with label/value fields) are used for the
- * available values, and a string value is expected when selected.
- *
- * Only necessary when the available values are objects with label/value fields
- * and the selected value is expected to be a string.
- **/
-export const createDropdownSetter = (setValue: (value: string) => void): DropdownValueSetter => {
-  return (value) => {
-    if (!value) {
-      setValue('');
-      return;
-    }
-
-    if (typeof value === 'string') {
-      setValue(value);
-      return;
-    }
-
-    if (value.value) {
-      setValue(value.value + '');
-    }
-  };
-};
+import type { TAgentOption, ExtendedFile } from '~/common';
 
 /**
  * Creates an Option object for a provider dropdown.

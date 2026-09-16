@@ -1,6 +1,5 @@
 export * from './domain';
 export * from './openid';
-export * from './proxy';
 export * from './exchange';
 export * from './refresh';
 export * from './agent';

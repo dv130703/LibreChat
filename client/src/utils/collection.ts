@@ -6,7 +6,7 @@ export const addData = <TCollection, TData>(
   newData: TData,
   findIndex: (page: TCollection) => number,
 ) => {
-  const dataJson = JSON.parse(JSON.stringify(data)) as InfiniteData<TCollection>;
+  const dataJson = structuredClone(data);
   const { pageIndex, index } = findPage<TCollection>(data, findIndex);
 
   if (pageIndex !== -1 && index !== -1) {
@@ -56,7 +56,7 @@ export const updateData = <TCollection, TData>(
   updatedData: TData,
   findIndex: (page: TCollection) => number,
 ) => {
-  const newData = JSON.parse(JSON.stringify(data)) as InfiniteData<TCollection>;
+  const newData = structuredClone(data);
   const { pageIndex, index } = findPage<TCollection>(data, findIndex);
 
   if (pageIndex !== -1 && index !== -1) {
@@ -72,12 +72,12 @@ export const updateData = <TCollection, TData>(
   return newData;
 };
 
-export const deleteData = <TCollection, TData>(
+export const deleteData = <TCollection, TData extends InfiniteData<TCollection>>(
   data: TData,
   collectionName: string,
   findIndex: (page: TCollection) => number,
 ): TData => {
-  const newData = JSON.parse(JSON.stringify(data));
+  const newData = structuredClone(data);
   const { pageIndex, index } = findPage<TCollection>(newData, findIndex);
 
   if (pageIndex !== -1 && index !== -1) {
@@ -96,7 +96,7 @@ export const normalizeData = <TCollection, TData>(
   pageSize: number,
   uniqueProperty?: keyof TData,
 ): InfiniteData<TCollection> => {
-  const infiniteData = JSON.parse(JSON.stringify(data)) as InfiniteData<TCollection>;
+  const infiniteData = structuredClone(data);
   const pageCount = infiniteData.pages.length;
   if (pageCount === 0) {
     return infiniteData;
@@ -142,7 +142,7 @@ export const updateFields = <TCollection, TData>(
   identifierField: keyof TData,
   callback?: (newItem: TData) => void,
 ): InfiniteData<TCollection> => {
-  const newData = JSON.parse(JSON.stringify(data)) as InfiniteData<TCollection>;
+  const newData = structuredClone(data);
   const { pageIndex, index } = findPage<TCollection>(newData, (page) =>
     page[collectionName].findIndex(
       (item: TData) => item[identifierField] === updatedItem[identifierField],

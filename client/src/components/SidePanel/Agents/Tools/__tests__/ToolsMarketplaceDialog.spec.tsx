@@ -143,7 +143,7 @@ jest.mock('../ItemDialog/ItemDialog', () => ({
   __esModule: true,
   default: ({ item }: { item: unknown }) => (item ? <div data-testid="item-dialog" /> : null),
 }));
-jest.mock('../ItemDialog/AddMcpServerDialog', () => ({
+jest.mock('~/components/SidePanel/MCPBuilder/MCPServerDialog', () => ({
   __esModule: true,
   default: ({ open }: { open: boolean }) => (open ? <div data-testid="add-mcp-dialog" /> : null),
 }));

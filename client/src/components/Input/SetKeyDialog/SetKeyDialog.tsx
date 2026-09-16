@@ -24,7 +24,6 @@ import { NotificationSeverity } from '~/common';
 import CustomConfig from './CustomEndpoint';
 import OllamaConfig from './OllamaConfig';
 import OtherConfig from './OtherConfig';
-import HelpText from './HelpText';
 import { logger } from '~/utils';
 
 /** Ollama's apiKey is a fixed placeholder the server never validates, so the
@@ -288,7 +287,6 @@ const SetKeyDialog = ({
               userProvideURL={userProvideURL}
             />
           </FormProvider>
-          <HelpText endpoint={endpoint} />
         </div>
         <OGDialogFooter>
           <RevokeKeysButton

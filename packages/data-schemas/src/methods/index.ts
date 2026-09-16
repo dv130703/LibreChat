@@ -279,7 +279,7 @@ export function createMethods(
     ...createBannerMethods(mongoose),
     ...createToolCallMethods(mongoose),
     ...createTranscriptCorrectionMethods(mongoose),
-    ...createCategoriesMethods(mongoose),
+    ...createCategoriesMethods(),
     ...createPresetMethods(mongoose),
     /* Tier 2 */
     ...createConversationTagMethods(mongoose),

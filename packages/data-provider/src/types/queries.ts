@@ -33,10 +33,6 @@ export type ConversationListResponse = {
 };
 
 export type ConversationData = InfiniteData<ConversationListResponse>;
-export type ConversationUpdater = (
-  data: ConversationData,
-  conversation: s.TConversation,
-) => ConversationData;
 
 export type ProjectListParams = {
   cursor?: string;
@@ -70,10 +66,6 @@ export type MessagesListResponse = {
 };
 
 /* Shared Links */
-export type SharedMessagesResponse = Omit<s.TSharedLink, 'messages'> & {
-  messages: s.TMessage[];
-};
-
 export interface SharedLinksListParams {
   pageSize: number;
   sortBy: 'title' | 'createdAt';

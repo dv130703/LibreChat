@@ -72,9 +72,7 @@ export const useMermaid = ({
   // Generate unique diagram ID (mermaid requires unique IDs in the DOM)
   // Include cacheKey to regenerate when content/theme changes, preventing mermaid internal conflicts
   const diagramId = useMemo(() => {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(7);
-    return `${id}-${timestamp}-${random}`;
+    return `${id}-${crypto.randomUUID()}`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, cacheKey]);
 

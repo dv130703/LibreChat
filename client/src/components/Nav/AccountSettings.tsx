@@ -18,7 +18,7 @@ import { MyFilesModal } from '~/components/Chat/Input/Files/MyFilesModal';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import { useAuthContext } from '~/hooks/AuthContext';
 import { useLocalize } from '~/hooks';
-import Settings from './Settings';
+import { SettingsDialog } from './Settings/index';
 import store from '~/store';
 
 function HelpSubmenu({
@@ -196,7 +196,7 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
           triggerRef={accountSettingsButtonRef}
         />
       )}
-      {showSettings && <Settings open={showSettings} onOpenChange={setShowSettings} />}
+      {showSettings && <SettingsDialog open={showSettings} onOpenChange={setShowSettings} />}
     </Menu.MenuProvider>
   );
 }

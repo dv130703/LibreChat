@@ -1,5 +1,3 @@
-import logger from '~/config/winston';
-
 const options = [
   { label: 'com_ui_idea', value: 'idea' },
   { label: 'com_ui_travel', value: 'travel' },
@@ -14,19 +12,14 @@ const options = [
 
 export type CategoryOption = { label: string; value: string };
 
-export function createCategoriesMethods(_mongoose: typeof import('mongoose')): {
+export function createCategoriesMethods(): {
   getCategories: () => Promise<CategoryOption[]>;
 } {
   /**
    * Retrieves the categories.
    */
   async function getCategories(): Promise<CategoryOption[]> {
-    try {
-      return [...options];
-    } catch (error) {
-      logger.error('Error getting categories', error);
-      return [];
-    }
+    return [...options];
   }
 
   return { getCategories };

@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const winston = require('winston');
+const { isEnabled } = require('@librechat/api');
 require('winston-daily-rotate-file');
 
 /**
@@ -31,9 +32,7 @@ const getLogDir = () => {
 
 const { NODE_ENV, DEBUG_LOGGING = false, LOG_TO_FILE = true } = process.env;
 
-const useDebugLogging =
-  (typeof DEBUG_LOGGING === 'string' && DEBUG_LOGGING?.toLowerCase() === 'true') ||
-  DEBUG_LOGGING === true;
+const useDebugLogging = isEnabled(DEBUG_LOGGING);
 
 const useFileLogging =
   (typeof LOG_TO_FILE === 'string' && LOG_TO_FILE?.toLowerCase() !== 'false') ||

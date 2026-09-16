@@ -1,3 +1,4 @@
+import _ from 'lodash';
 import { nanoid } from 'nanoid';
 import { Constants, ContentTypes, FileSources } from 'librechat-data-provider';
 import type { FilterQuery, Model } from 'mongoose';
@@ -16,13 +17,7 @@ class ShareServiceError extends Error {
 }
 
 function memoizedAnonymizeId(prefix: string) {
-  const memo = new Map<string, string>();
-  return (id: string) => {
-    if (!memo.has(id)) {
-      memo.set(id, `${prefix}_${nanoid()}`);
-    }
-    return memo.get(id) as string;
-  };
+  return _.memoize((_id: string) => `${prefix}_${nanoid()}`);
 }
 
 const anonymizeConvoId = memoizedAnonymizeId('convo');

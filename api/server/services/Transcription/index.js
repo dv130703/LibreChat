@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs/promises');
+const { setTimeout: sleep } = require('timers/promises');
 const axios = require('axios');
 const FormData = require('form-data');
 const { logger } = require('@librechat/data-schemas');
@@ -25,10 +26,6 @@ const { uploadVectors } = require('~/server/services/Files/VectorDB/crud');
 // axios's own connection-level retry behavior (none) or an unbounded loop.
 const EMBED_MAX_ATTEMPTS = 3;
 const EMBED_RETRY_DELAYS_MS = [500, 1500];
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * Embeds a finished transcript into RAG under a deterministic, source-file-derived

@@ -20,22 +20,16 @@ if (BASE_URL && BASE_URL.endsWith('/')) {
 
 export const apiBaseUrl = () => BASE_URL;
 
-// Testing this buildQuery function
 const buildQuery = (params: Record<string, unknown>): string => {
-  const query = Object.entries(params)
-    .filter(([, value]) => {
-      if (Array.isArray(value)) {
-        return value.length > 0;
-      }
-      return value !== undefined && value !== null && value !== '';
-    })
-    .map(([key, value]) => {
-      if (Array.isArray(value)) {
-        return value.map((v) => `${key}=${encodeURIComponent(v)}`).join('&');
-      }
-      return `${key}=${encodeURIComponent(String(value))}`;
-    })
-    .join('&');
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) {
+      value.forEach((v) => searchParams.append(key, String(v)));
+    } else if (value !== undefined && value !== null && value !== '') {
+      searchParams.append(key, String(value));
+    }
+  }
+  const query = searchParams.toString();
   return query ? `?${query}` : '';
 };
 

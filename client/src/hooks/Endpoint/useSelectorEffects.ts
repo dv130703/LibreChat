@@ -1,4 +1,5 @@
-import React, { useMemo, useEffect, useRef } from 'react';
+import React, { useMemo, useEffect } from 'react';
+import debounce from 'lodash/debounce';
 import { isAgentsEndpoint, LocalStorageKeys, isEphemeralAgentId } from 'librechat-data-provider';
 import type * as t from 'librechat-data-provider';
 import type { SelectedValues } from '~/common';
@@ -39,17 +40,10 @@ export default function useSelectorEffects({
     }
   }, [index, agents, selectedAgentId, agentsMap, endpoint, setOption]);
 
-  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  const debouncedSetSelectedValues = (values: SelectedValues) => {
-    if (debounceTimeoutRef.current) {
-      clearTimeout(debounceTimeoutRef.current);
-    }
-
-    debounceTimeoutRef.current = setTimeout(() => {
-      setSelectedValues(values);
-    }, 150);
-  };
+  const debouncedSetSelectedValues = useMemo(
+    () => debounce(setSelectedValues, 150),
+    [setSelectedValues],
+  );
 
   useEffect(() => {
     if (!conversation?.endpoint) {
@@ -76,9 +70,7 @@ export default function useSelectorEffects({
       });
     }
     return () => {
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
-      }
+      debouncedSetSelectedValues.cancel();
     };
   }, [
     conversation?.spec,
@@ -86,5 +78,6 @@ export default function useSelectorEffects({
     conversation?.endpoint,
     conversation?.agent_id,
     conversation?.assistant_id,
+    debouncedSetSelectedValues,
   ]);
 }

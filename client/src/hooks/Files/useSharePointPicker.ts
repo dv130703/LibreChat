@@ -53,7 +53,7 @@ export default function useSharePointPicker({
   });
 
   const generateChannelId = useCallback(() => {
-    return `sharepoint-picker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `sharepoint-picker-${crypto.randomUUID()}`;
   }, []);
 
   const portMessageHandler = useCallback(

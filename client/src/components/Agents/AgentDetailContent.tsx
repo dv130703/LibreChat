@@ -48,7 +48,7 @@ const AgentDetailContent: React.FC<AgentDetailContentProps> = ({ agent }) => {
       const listResp = queryClient.getQueryData<AgentListResponse>(keys);
       if (listResp != null) {
         if (!listResp.data.some((a) => a.id === agent.id)) {
-          const currentAgents = [agent, ...JSON.parse(JSON.stringify(listResp.data))];
+          const currentAgents = [agent, ...structuredClone(listResp.data)];
           queryClient.setQueryData<AgentListResponse>(keys, { ...listResp, data: currentAgents });
         }
       }

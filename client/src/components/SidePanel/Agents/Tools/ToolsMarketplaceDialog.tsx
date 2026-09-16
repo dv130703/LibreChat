@@ -13,7 +13,7 @@ import type { AgentItem, AgentItemKind, ItemFilter } from './items/types';
 import type { AgentForm } from '~/common';
 import { itemKey, mcpServerToken, matchesMcpServer } from './items/selectors';
 import { useAgentItems, useUninstallToolCredentials } from './hooks';
-import AddMcpServerDialog from './ItemDialog/AddMcpServerDialog';
+import MCPServerDialog from '~/components/SidePanel/MCPBuilder/MCPServerDialog';
 import { computeToggleAction } from './items/mutations';
 import { useLocalize, useToolFavorites } from '~/hooks';
 import MarketplaceSidebar from './MarketplaceSidebar';
@@ -227,7 +227,7 @@ export default function ToolsMarketplaceDialog({
           </div>
         </div>
         <ItemDialog item={detailItem} agentId={agentId} onClose={() => setDetailItem(null)} />
-        <AddMcpServerDialog open={addMcpOpen} onOpenChange={setAddMcpOpen} />
+        <MCPServerDialog open={addMcpOpen} onOpenChange={setAddMcpOpen} />
       </OGDialogContent>
     </OGDialog>
   );

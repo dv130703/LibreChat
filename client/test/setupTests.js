@@ -20,6 +20,12 @@ import 'jest-canvas-mock';
 // Mock ResizeObserver
 import './resizeObserver.mock';
 
+// jsdom's test realm doesn't inherit Node's global `structuredClone`;
+// every real target (browsers, Node 17+) has it natively.
+if (typeof globalThis.structuredClone !== 'function') {
+  globalThis.structuredClone = (value) => JSON.parse(JSON.stringify(value));
+}
+
 // Mock window.matchMedia
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
