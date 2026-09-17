@@ -113,7 +113,7 @@ describe('buildCatalog', () => {
     }
   });
 
-  test('excludes consume-only MCP servers from the catalog', () => {
+  test('includes consume-only MCP servers in the catalog', () => {
     const map = new Map();
     map.set('attachable', { serverName: 'attachable', isConfigured: true, tools: [] });
     map.set('chat-only', {
@@ -123,7 +123,10 @@ describe('buildCatalog', () => {
       consumeOnly: true,
     });
     const items = buildCatalog({ ...emptyInputs, mcpServersMap: map });
-    expect(items.filter((i) => i.kind === 'mcp').map((i) => i.id)).toEqual(['attachable']);
+    expect(items.filter((i) => i.kind === 'mcp').map((i) => i.id)).toEqual([
+      'attachable',
+      'chat-only',
+    ]);
   });
 
   test('emits skill items when permission granted', () => {

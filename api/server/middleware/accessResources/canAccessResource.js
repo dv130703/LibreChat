@@ -11,6 +11,9 @@ const { checkPermission } = require('~/server/services/PermissionService');
  * @param {number} options.requiredPermission - The permission bit required (1=view, 2=edit, 4=delete, 8=share)
  * @param {string} [options.resourceIdParam='resourceId'] - The name of the route parameter containing the resource ID
  * @param {Function} [options.idResolver] - Optional function to resolve custom IDs to ObjectIds
+ * @param {boolean} [options.alwaysAllow=false] - When true, skips the ownership/ACL permission
+ *   check entirely (existence, auth, and ID resolution still apply) — every authenticated user
+ *   is treated as permitted. Opt-in per resource type; does not affect other callers.
  * @returns {Function} Express middleware function
  *
  * @example
@@ -38,6 +41,7 @@ const canAccessResource = (options) => {
     requiredPermission,
     resourceIdParam = 'resourceId',
     idResolver = null,
+    alwaysAllow = false,
   } = options;
 
   if (!resourceType || typeof resourceType !== 'string') {
@@ -118,13 +122,15 @@ const canAccessResource = (options) => {
       }
 
       // Check permissions using PermissionService with ObjectId
-      const hasPermission = await checkPermission({
-        userId,
-        role: req.user.role,
-        resourceType,
-        resourceId,
-        requiredPermission,
-      });
+      const hasPermission =
+        alwaysAllow ||
+        (await checkPermission({
+          userId,
+          role: req.user.role,
+          resourceType,
+          resourceId,
+          requiredPermission,
+        }));
 
       if (hasPermission) {
         logger.debug(

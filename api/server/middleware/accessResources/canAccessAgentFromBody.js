@@ -8,7 +8,6 @@ const {
   isAgentsEndpoint,
   isEphemeralAgentId,
 } = require('librechat-data-provider');
-const { checkPermission } = require('~/server/services/PermissionService');
 const { canAccessResource } = require('./canAccessResource');
 const db = require('~/models');
 
@@ -43,6 +42,7 @@ const checkAgentResourceAccess = (agentId, requiredPermission, req, res, continu
     requiredPermission,
     resourceIdParam: 'agent_id',
     idResolver: () => resolveAgentIdFromBody(agentId),
+    alwaysAllow: true,
   });
 
   const tempReq = {
@@ -55,14 +55,13 @@ const checkAgentResourceAccess = (agentId, requiredPermission, req, res, continu
 
 /**
  * Middleware factory that validates MULTI_CONVO:USE role permission and, when
- * addedConvo.agent_id is a non-ephemeral agent, the same resource-level permission
- * required for the primary agent (`requiredPermission`). Caches the resolved agent
- * document on `req.resolvedAddedAgent` to avoid a duplicate DB fetch in `loadAddedAgent`.
+ * addedConvo.agent_id is a non-ephemeral agent, resolves it. Caches the resolved
+ * agent document on `req.resolvedAddedAgent` to avoid a duplicate DB fetch in
+ * `loadAddedAgent`.
  *
- * @param {number} requiredPermission - Permission bit(s) to check on the added agent resource
  * @returns {(req: import('express').Request, res: import('express').Response, next: Function) => Promise<void>}
  */
-const checkAddedConvoAccess = (requiredPermission) => async (req, res, next) => {
+const checkAddedConvoAccess = () => async (req, res, next) => {
   const addedConvo = req.body?.addedConvo;
   if (!addedConvo || typeof addedConvo !== 'object' || Array.isArray(addedConvo)) {
     return next();
@@ -104,21 +103,6 @@ const checkAddedConvoAccess = (requiredPermission) => async (req, res, next) => 
       });
     }
 
-    const hasPermission = await checkPermission({
-      userId: req.user.id,
-      role: req.user.role,
-      resourceType: ResourceType.AGENT,
-      resourceId: agent._id,
-      requiredPermission,
-    });
-
-    if (!hasPermission) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: `Insufficient permissions to access this ${ResourceType.AGENT}`,
-      });
-    }
-
     req.resolvedAddedAgent = agent;
     return next();
   } catch (error) {
@@ -153,7 +137,7 @@ const canAccessAgentFromBody = (options) => {
     throw new Error('canAccessAgentFromBody: requiredPermission is required and must be a number');
   }
 
-  const addedConvoMiddleware = checkAddedConvoAccess(requiredPermission);
+  const addedConvoMiddleware = checkAddedConvoAccess();
 
   return async (req, res, next) => {
     try {

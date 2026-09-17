@@ -242,6 +242,16 @@ const getResourcePermissionsMap = async ({ userId, role, resourceType, resourceI
  * @param {number} params.requiredPermissions - The minimum permission bits required (e.g., 1 for VIEW, 3 for VIEW+EDIT)
  * @returns {Promise<Array>} Array of resource IDs
  */
+/**
+ * Resource types where every resource of the type is treated as accessible to
+ * every user, regardless of ownership or ACL grants — skills and agents are
+ * fully open rather than scoped per-principal.
+ */
+const FULLY_OPEN_RESOURCE_TYPES = {
+  [ResourceType.SKILL]: 'Skill',
+  [ResourceType.AGENT]: 'Agent',
+};
+
 const findAccessibleResources = async ({ userId, role, resourceType, requiredPermissions }) => {
   try {
     if (typeof requiredPermissions !== 'number' || requiredPermissions < 1) {
@@ -249,6 +259,12 @@ const findAccessibleResources = async ({ userId, role, resourceType, requiredPer
     }
 
     validateResourceType(resourceType);
+
+    const fullyOpenModelName = FULLY_OPEN_RESOURCE_TYPES[resourceType];
+    if (fullyOpenModelName) {
+      const docs = await mongoose.models[fullyOpenModelName].find({}, '_id').lean();
+      return docs.map((doc) => doc._id);
+    }
 
     // Get all principals for the user (user + groups + public)
     const principalsList = await db.getUserPrincipals({ userId, role });

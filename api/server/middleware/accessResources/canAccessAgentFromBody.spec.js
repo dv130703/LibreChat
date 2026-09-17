@@ -246,19 +246,14 @@ describe('canAccessAgentFromBody middleware', () => {
       });
     });
 
-    test('returns 403 when requester has no ACL for the added agent', async () => {
+    test('proceeds when requester has no ACL for the added agent (agents are fully open)', async () => {
       req.body.addedConvo = { agent_id: addedAgent.id, endpoint: 'agents', model: 'gpt-4' };
 
       const middleware = canAccessAgentFromBody({ requiredPermission: 1 });
       await middleware(req, res, next);
 
-      expect(next).not.toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'Insufficient permissions to access this agent',
-        }),
-      );
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
     });
 
     test('returns 404 when added agent does not exist', async () => {
@@ -295,7 +290,7 @@ describe('canAccessAgentFromBody middleware', () => {
       expect(res.status).not.toHaveBeenCalled();
     });
 
-    test('denies when ACL permission bits are insufficient', async () => {
+    test('proceeds even when ACL permission bits are insufficient (agents are fully open)', async () => {
       await AclEntry.create({
         principalType: PrincipalType.USER,
         principalId: testUser._id,
@@ -311,8 +306,8 @@ describe('canAccessAgentFromBody middleware', () => {
       const middleware = canAccessAgentFromBody({ requiredPermission: 2 });
       await middleware(req, res, next);
 
-      expect(next).not.toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
     });
 
     test('caches resolved agent on req.resolvedAddedAgent', async () => {
@@ -413,17 +408,17 @@ describe('canAccessAgentFromBody middleware', () => {
       expect(req.resolvedAddedAgent).toBeDefined();
     });
 
-    test('primary passes but addedConvo denied → 403', async () => {
+    test('primary passes and addedConvo also proceeds without an ACL grant (agents are fully open)', async () => {
       req.body.addedConvo = { agent_id: addedAgent.id, endpoint: 'agents', model: 'gpt-4' };
 
       const middleware = canAccessAgentFromBody({ requiredPermission: 1 });
       await middleware(req, res, next);
 
-      expect(next).not.toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
     });
 
-    test('primary denied → 403 without reaching addedConvo check', async () => {
+    test('primary with no ACL grant also proceeds (agents are fully open)', async () => {
       const foreignAgent = await createAgent({
         id: `agent_foreign_${Date.now()}`,
         name: 'Foreign Agent',
@@ -448,8 +443,8 @@ describe('canAccessAgentFromBody middleware', () => {
       const middleware = canAccessAgentFromBody({ requiredPermission: 1 });
       await middleware(req, res, next);
 
-      expect(next).not.toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
     });
   });
 
@@ -476,14 +471,14 @@ describe('canAccessAgentFromBody middleware', () => {
       });
     });
 
-    test('runs full addedConvo ACL check even when primary is ephemeral', async () => {
+    test('addedConvo proceeds without an ACL grant even when primary is ephemeral (agents are fully open)', async () => {
       req.body.addedConvo = { agent_id: addedAgent.id, endpoint: 'agents', model: 'gpt-4' };
 
       const middleware = canAccessAgentFromBody({ requiredPermission: 1 });
       await middleware(req, res, next);
 
-      expect(next).not.toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
     });
 
     test('proceeds when user has ACL for added agent (ephemeral primary)', async () => {

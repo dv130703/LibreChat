@@ -470,25 +470,25 @@ describe('filterSkillsForPopover', () => {
     expect(out.map((s) => s._id)).toEqual(['2']);
   });
 
-  it('excludes skills with userInvocable: false via isUserInvocable', () => {
+  it('no longer excludes skills with userInvocable: false', () => {
     const out = filterSkillsForPopover([s1, s3], { agentSkillIds: null, isActive: active });
-    expect(out.map((s) => s._id)).toEqual(['1']);
+    expect(out.map((s) => s._id)).toEqual(['1', '3']);
   });
 
-  it('still empty when agent scope is [] even if everything is active and invocable', () => {
+  it('still empty when agent scope is [] even if everything is active', () => {
     const out = filterSkillsForPopover([s1, s2, s3], { agentSkillIds: [], isActive: active });
     expect(out).toEqual([]);
   });
 
-  it('layers all three filters (agent scope ∩ active ∩ invocable)', () => {
+  it('layers both filters (agent scope ∩ active)', () => {
     const isActive = (skill: { _id: string }) => skill._id !== '2';
     const out = filterSkillsForPopover([s1, s2, s3], {
       agentSkillIds: ['1', '2', '3'],
       isActive,
     });
-    /* s1 passes (active, user-invocable by default, scoped), s2 drops (inactive),
-       s3 drops (userInvocable: false). */
-    expect(out.map((s) => s._id)).toEqual(['1']);
+    /* s1 passes (active, scoped), s2 drops (inactive), s3 passes
+       (active, scoped, userInvocable: false no longer excludes). */
+    expect(out.map((s) => s._id)).toEqual(['1', '3']);
   });
 
   it('drops everything when isActive returns false for all inputs', () => {

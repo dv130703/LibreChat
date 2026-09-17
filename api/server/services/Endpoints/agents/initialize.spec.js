@@ -231,7 +231,7 @@ describe('initializeClient — processAgent ACL gate', () => {
     ]);
   });
 
-  it('does not enable skill authoring for VIEW-only shared skills', async () => {
+  it('enables skill authoring for VIEW-only shared skills (skills are fully open)', async () => {
     const { skill } = await createSkill({
       name: 'shared-view-only',
       description: 'Use for read-only sharing.',
@@ -278,7 +278,9 @@ describe('initializeClient — processAgent ACL gate', () => {
 
     const initializeParams = mockInitializeAgent.mock.calls[0][0];
     expect(initializeParams.accessibleSkillIds.map(String)).toContain(skill._id.toString());
-    expect(initializeParams.skillAuthoringAvailable).toBe(false);
+    // Skills are fully open — every skill is treated as EDIT-accessible
+    // regardless of the ACL grant on it, so authoring is available here too.
+    expect(initializeParams.skillAuthoringAvailable).toBe(true);
   });
 
   it('enables skill authoring when model specs enable skills for an ephemeral agent', async () => {

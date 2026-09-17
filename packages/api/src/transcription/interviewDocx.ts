@@ -206,15 +206,13 @@ const NOTICE_TEXT =
   'record.';
 
 /**
- * One numbered list item per original transcript segment - never merged
- * across segments - with the speaker labelled in plain-weight uppercase
- * (surname only where the caller supplied one - see `lastNameByDisplayName`)
- * only where they differ from the previous segment; a run of segments from
- * the same
- * speaker keeps numbering but carries no repeated label. This is what the
- * reference transcript actually does: item 2 introduces a speaker, items
- * 3-7 continue their turn with their own numbers and no new label, item 8
- * introduces the next speaker. Never a timestamp - the reference has none.
+ * One numbered list item per speaker turn (a run of consecutive segments
+ * from the same speaker), never per raw transcript segment - segments
+ * belonging to the same turn are merged into a single flowing paragraph
+ * instead of each claiming its own number. The speaker is labelled in
+ * plain-weight uppercase (surname only where the caller supplied one - see
+ * `lastNameByDisplayName`) once, at the start of their turn. Never a
+ * timestamp - the reference has none.
  *
  * Real Word list numbers, not typed digits: stable regardless of how the
  * document is later edited or reflowed, and exactly what "(numbered list,
@@ -254,11 +252,24 @@ function blankLine(): Paragraph {
   return new Paragraph({ children: [] });
 }
 
-function bodyItems(
+interface SpeakerTurn {
+  /** null only for a leading turn whose first segment carries no speaker
+   *  attribution - every turn that actually changes speaker gets a label. */
+  label: string | null;
+  /** This turn's segments, in order - joined into one flowing paragraph
+   *  when rendered rather than kept as separate numbered items. */
+  texts: string[];
+}
+
+/** Groups consecutive same-speaker segments into turns. A new turn starts
+ *  only when a segment's speaker is known and differs from the previous
+ *  segment's - an unattributed segment (no speaker) always continues
+ *  whatever turn is already open, never starting one of its own. */
+function groupIntoTurns(
   lines: ParsedTranscriptLine[],
   lastNameByDisplayName: Map<string, string>,
-): Paragraph[] {
-  const items: Paragraph[] = [];
+): SpeakerTurn[] {
+  const turns: SpeakerTurn[] = [];
 
   lines.forEach((line, index) => {
     const previousSpeaker = index > 0 ? lines[index - 1].speaker : undefined;
@@ -266,20 +277,42 @@ function bodyItems(
     // substituted into the label below - two different speakers can share a
     // surname, and comparing by it would wrongly merge their turns.
     const isNewSpeaker = line.speaker != null && line.speaker !== previousSpeaker;
-    const label = isNewSpeaker
-      ? (lastNameByDisplayName.get(line.speaker!)?.trim() || line.speaker!).toUpperCase()
-      : null;
 
-    if (label == null) {
-      // Same turn continuing - no blank line before it, no label to skip
-      // past either: dialogue starts right after "N.	" at NUMBER_COLUMN
-      // (the list level's own default), and wraps hang there too.
+    if (isNewSpeaker || turns.length === 0) {
+      const label = isNewSpeaker
+        ? (lastNameByDisplayName.get(line.speaker!)?.trim() || line.speaker!).toUpperCase()
+        : null;
+      turns.push({ label, texts: [line.text] });
+      return;
+    }
+
+    turns[turns.length - 1].texts.push(line.text);
+  });
+
+  return turns;
+}
+
+function bodyItems(
+  lines: ParsedTranscriptLine[],
+  lastNameByDisplayName: Map<string, string>,
+): Paragraph[] {
+  const items: Paragraph[] = [];
+  const turns = groupIntoTurns(lines, lastNameByDisplayName);
+
+  turns.forEach((turn, index) => {
+    const text = turn.texts.join(' ');
+
+    if (turn.label == null) {
+      // Leading turn with no speaker attribution - no blank line before it,
+      // no label to skip past either: dialogue starts right after "N.	" at
+      // NUMBER_COLUMN (the list level's own default), and wraps hang there
+      // too.
       items.push(
         new Paragraph({
           numbering: { reference: BODY_LIST_REF, level: 0 },
           alignment: AlignmentType.JUSTIFIED,
           spacing: { after: 120 },
-          children: [run(line.text)],
+          children: [run(text)],
         }),
       );
       return;
@@ -313,9 +346,9 @@ function bodyItems(
         // valid run content, and while some lenient readers (mammoth) still
         // interpret it, real Word does not: it rendered with no gap at all.
         children: [
-          run(label),
+          run(turn.label),
           new TextRun({ children: [new Tab()], font: FONT, size: BODY_SIZE }),
-          run(line.text),
+          run(text),
         ],
       }),
     );
@@ -395,11 +428,12 @@ export async function buildInterviewDocx({
         // actual indent. Keeps the same 360-twip gap between number and text.
         { reference: PRESENT_LIST_REF, levels: [orderedListLevel(1140, 360)] },
         // DIALOGUE_COLUMN, not NUMBER_COLUMN: every dialogue paragraph -
-        // labeled or a same-speaker continuation - must start its text at the
-        // same x-position. A continuation paragraph has no custom tabStops of
-        // its own, so its number's auto-tab lands straight on this level
-        // default (the only stop available); a labeled paragraph overrides its
-        // own `indent` but still ends at this same value - see `bodyItems`.
+        // labeled or the rare leading turn with no speaker attribution - must
+        // start its text at the same x-position. An unlabeled paragraph has
+        // no custom tabStops of its own, so its number's auto-tab lands
+        // straight on this level default (the only stop available); a
+        // labeled paragraph overrides its own `indent` but still ends at
+        // this same value - see `bodyItems`.
         {
           reference: BODY_LIST_REF,
           levels: [orderedListLevel(DIALOGUE_COLUMN, DIALOGUE_COLUMN, '%1')],

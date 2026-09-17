@@ -35,7 +35,6 @@ const {
 } = require('librechat-data-provider');
 const {
   findPubliclyAccessibleResources,
-  getResourcePermissionsMap,
   findAccessibleResources,
   hasPublicPermission,
   grantPermission,
@@ -102,20 +101,17 @@ const sanitizeViewerSkillScope = (agent, accessibleSkillSet) => {
 };
 
 /**
- * Looks up each referenced agent id in Mongo, splits them into three
- * buckets the caller needs for validation: ids that don't exist at all,
- * ids the user lacks VIEW permission on, and ids that are fully
- * accessible. Missing ids are intentionally NOT treated as unauthorized
- * — for `edges`, a self-referential `from` can legitimately name the
- * agent being created (no DB record yet); callers that should reject
- * missing ids (like the subagent path) read the `missing` bucket
- * instead.
+ * Looks up each referenced agent id in Mongo and reports which ones don't
+ * exist. Agents are fully open, so `unauthorized` is always empty — kept
+ * in the return shape for callers that still branch on it. Missing ids are
+ * intentionally NOT treated as unauthorized — for `edges`, a self-referential
+ * `from` can legitimately name the agent being created (no DB record yet);
+ * callers that should reject missing ids (like the subagent path) read the
+ * `missing` bucket instead.
  * @param {Iterable<string>} agentIds
- * @param {string} userId
- * @param {string} userRole
  * @returns {Promise<{ missing: string[], unauthorized: string[] }>}
  */
-const classifyAgentReferences = async (agentIds, userId, userRole) => {
+const classifyAgentReferences = async (agentIds) => {
   const ids = [...new Set(agentIds)];
   if (ids.length === 0) return { missing: [], unauthorized: [] };
 
@@ -123,23 +119,9 @@ const classifyAgentReferences = async (agentIds, userId, userRole) => {
   const foundIds = new Set(agents.map((a) => a.id));
   const missing = ids.filter((id) => !foundIds.has(id));
 
-  if (agents.length === 0) return { missing, unauthorized: [] };
-
-  const permissionsMap = await getResourcePermissionsMap({
-    userId,
-    role: userRole,
-    resourceType: ResourceType.AGENT,
-    resourceIds: agents.map((a) => a._id),
-  });
-
-  const unauthorized = agents
-    .filter((a) => {
-      const bits = permissionsMap.get(a._id.toString()) ?? 0;
-      return (bits & PermissionBits.VIEW) === 0;
-    })
-    .map((a) => a.id);
-
-  return { missing, unauthorized };
+  // Agents are fully open — every found agent is VIEW-authorized for every
+  // user, so there is nothing left to reject here.
+  return { missing, unauthorized: [] };
 };
 
 /**
@@ -148,12 +130,8 @@ const classifyAgentReferences = async (agentIds, userId, userRole) => {
  * `from` often names the agent being built, which has no DB record
  * yet. Only unauthorized (existing but unviewable) ids are returned.
  */
-const validateEdgeAgentAccess = async (edges, userId, userRole) => {
-  const { unauthorized } = await classifyAgentReferences(
-    collectEdgeAgentIds(edges),
-    userId,
-    userRole,
-  );
+const validateEdgeAgentAccess = async (edges) => {
+  const { unauthorized } = await classifyAgentReferences(collectEdgeAgentIds(edges));
   return unauthorized;
 };
 
@@ -167,8 +145,8 @@ const validateEdgeAgentAccess = async (edges, userId, userRole) => {
  * Returning the split lets the caller report each bucket with the
  * appropriate status.
  */
-const validateSubagentReferences = (subagents, userId, userRole) =>
-  classifyAgentReferences(subagents?.agent_ids ?? [], userId, userRole);
+const validateSubagentReferences = (subagents) =>
+  classifyAgentReferences(subagents?.agent_ids ?? []);
 
 /**
  * Returns true when the agents-endpoint `subagents` capability is
@@ -365,7 +343,7 @@ const createAgentHandler = async (req, res) => {
       );
     }
 
-    const { id: userId, role: userRole } = req.user;
+    const { id: userId } = req.user;
 
     if (agentData.tool_resources) {
       await pruneToolResourceFileIdsForAgent({
@@ -376,7 +354,7 @@ const createAgentHandler = async (req, res) => {
     }
 
     if (agentData.edges?.length) {
-      const unauthorized = await validateEdgeAgentAccess(agentData.edges, userId, userRole);
+      const unauthorized = await validateEdgeAgentAccess(agentData.edges);
       if (unauthorized.length > 0) {
         return res.status(403).json({
           error: 'You do not have access to one or more agents referenced in edges',
@@ -404,11 +382,7 @@ const createAgentHandler = async (req, res) => {
       agentData.subagents?.enabled === true &&
       agentData.subagents?.agent_ids?.length
     ) {
-      const { missing, unauthorized } = await validateSubagentReferences(
-        agentData.subagents,
-        userId,
-        userRole,
-      );
+      const { missing, unauthorized } = await validateSubagentReferences(agentData.subagents);
       if (missing.length > 0) {
         return res.status(400).json({
           error: 'One or more agents referenced in subagents do not exist',
@@ -630,8 +604,7 @@ const updateAgentHandler = async (req, res) => {
     }
 
     if (updateData.edges?.length) {
-      const { id: userId, role: userRole } = req.user;
-      const unauthorized = await validateEdgeAgentAccess(updateData.edges, userId, userRole);
+      const unauthorized = await validateEdgeAgentAccess(updateData.edges);
       if (unauthorized.length > 0) {
         return res.status(403).json({
           error: 'You do not have access to one or more agents referenced in edges',
@@ -652,12 +625,7 @@ const updateAgentHandler = async (req, res) => {
       updateData.subagents?.enabled === true &&
       updateData.subagents?.agent_ids?.length
     ) {
-      const { id: userId, role: userRole } = req.user;
-      const { missing, unauthorized } = await validateSubagentReferences(
-        updateData.subagents,
-        userId,
-        userRole,
-      );
+      const { missing, unauthorized } = await validateSubagentReferences(updateData.subagents);
       if (missing.length > 0) {
         return res.status(400).json({
           error: 'One or more agents referenced in subagents do not exist',

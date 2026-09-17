@@ -51,6 +51,7 @@ const canAccessAgentResource = (options) => {
     requiredPermission,
     resourceIdParam,
     idResolver: resolveAgentId,
+    alwaysAllow: true,
   });
 };
 

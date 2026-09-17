@@ -90,7 +90,6 @@ const {
 const {
   findAccessibleResources,
   findPubliclyAccessibleResources,
-  getResourcePermissionsMap,
 } = require('~/server/services/PermissionService');
 
 const { mergeDeploymentSkillIds, refreshS3Url } = require('@librechat/api');
@@ -2467,30 +2466,9 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
       });
     });
 
-    test('createAgentHandler should return 403 when user lacks VIEW on an edge-referenced agent', async () => {
-      const permMap = new Map();
-      getResourcePermissionsMap.mockResolvedValueOnce(permMap);
-
+    test('createAgentHandler succeeds referencing any agent as an edge, even with no ACL grant (agents are fully open)', async () => {
       mockReq.body = {
         name: 'Attacker Agent',
-        provider: 'openai',
-        model: 'gpt-4',
-        edges: [{ from: 'self_placeholder', to: targetAgent.id, edgeType: 'handoff' }],
-      };
-
-      await createAgentHandler(mockReq, mockRes);
-
-      expect(mockRes.status).toHaveBeenCalledWith(403);
-      const response = mockRes.json.mock.calls[0][0];
-      expect(response.agent_ids).toContain(targetAgent.id);
-    });
-
-    test('createAgentHandler should succeed when user has VIEW on all edge-referenced agents', async () => {
-      const permMap = new Map([[targetAgent._id.toString(), 1]]);
-      getResourcePermissionsMap.mockResolvedValueOnce(permMap);
-
-      mockReq.body = {
-        name: 'Legit Agent',
         provider: 'openai',
         model: 'gpt-4',
         edges: [{ from: 'self_placeholder', to: targetAgent.id, edgeType: 'handoff' }],
@@ -2514,7 +2492,7 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
       expect(mockRes.status).toHaveBeenCalledWith(201);
     });
 
-    test('updateAgentHandler should return 403 when user lacks VIEW on an edge-referenced agent', async () => {
+    test('updateAgentHandler succeeds referencing any agent as an edge, even with no ACL grant (agents are fully open)', async () => {
       const ownedAgent = await Agent.create({
         id: `agent_${nanoid()}`,
         author: mockReq.user.id,
@@ -2524,9 +2502,6 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
         tools: [],
       });
 
-      const permMap = new Map([[ownedAgent._id.toString(), PermissionBits.VIEW]]);
-      getResourcePermissionsMap.mockResolvedValueOnce(permMap);
-
       mockReq.params = { id: ownedAgent.id };
       mockReq.body = {
         edges: [{ from: ownedAgent.id, to: targetAgent.id, edgeType: 'handoff' }],
@@ -2534,10 +2509,7 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
 
       await updateAgentHandler(mockReq, mockRes);
 
-      expect(mockRes.status).toHaveBeenCalledWith(403);
-      const response = mockRes.json.mock.calls[0][0];
-      expect(response.agent_ids).toContain(targetAgent.id);
-      expect(response.agent_ids).not.toContain(ownedAgent.id);
+      expect(mockRes.status).not.toHaveBeenCalledWith(403);
     });
 
     test('updateAgentHandler should succeed when edges field is absent from payload', async () => {

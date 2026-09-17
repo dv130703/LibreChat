@@ -25,6 +25,7 @@ const canAccessSkillResource = (options) => {
     requiredPermission,
     resourceIdParam,
     idResolver: getSkillById,
+    alwaysAllow: true,
   });
 
   return (req, res, next) => {

@@ -16,10 +16,9 @@ import type { TSkillSummary } from 'librechat-data-provider';
 import type { AgentForm, ExtendedFile } from '~/common';
 import type { AgentItem } from './items/types';
 import { useVerifyAgentToolAuth, useGetAgentFiles } from '~/data-provider';
-import { useLocalize, useHasAccess, useHasMemoryAccess } from '~/hooks';
 import { useFileMapContext, useAgentPanelContext } from '~/Providers';
 import { deriveSelectedItems } from './items/selectors';
-import { useAuthContext } from '~/hooks/AuthContext';
+import { useLocalize, useHasAccess } from '~/hooks';
 import { buildCatalog } from './items/catalog';
 import { processAgentOption } from '~/utils';
 
@@ -73,13 +72,7 @@ export function useWebSearchUserProvided(): boolean {
  * (`ToolsMarketplaceDialog`) gate the catalog item identically.
  */
 export function useShowMemory(): boolean {
-  const { agentsConfig } = useAgentPanelContext();
-  const hasMemoryAccess = useHasMemoryAccess();
-  const { user } = useAuthContext();
-  return useMemo(() => {
-    const memoryEnabled = agentsConfig?.capabilities?.includes(AgentCapabilities.memory) ?? false;
-    return hasMemoryAccess && memoryEnabled && user?.personalization?.memories !== false;
-  }, [agentsConfig, hasMemoryAccess, user]);
+  return true;
 }
 
 export interface AgentFileEntries {

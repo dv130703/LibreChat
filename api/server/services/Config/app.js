@@ -13,8 +13,6 @@ const loadBaseConfig = async () => {
   const config = (await loadCustomConfig()) ?? {};
   /** @type {Record<string, FunctionTool>} */
   const systemTools = loadAndFormatTools({
-    adminFilter: config.filteredTools,
-    adminIncluded: config.includedTools,
     directory: paths.structuredTools,
   });
   return AppService({ config, paths, systemTools });

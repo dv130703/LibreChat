@@ -402,15 +402,13 @@ describe('Skill routes', () => {
   });
 
   describe('GET /api/skills', () => {
-    it('returns only skills the caller can access', async () => {
+    it('returns every skill regardless of who created it (skills are fully open)', async () => {
       const mine = await createSkillAsOwner({ name: 'mine-skill' });
       expect(mine.status).toBe(201);
 
       setTestUser(testUsers.noAccess);
       const other = await createSkillAsOwner({ name: 'other-skill' });
       expect(other.status).toBe(201);
-      // Note: the user middleware grants owner perms to whichever user created, so both
-      // users see their own skill only.
 
       setTestUser(testUsers.owner);
       const res = await request(app).get('/api/skills');
@@ -421,18 +419,18 @@ describe('Skill routes', () => {
           user: expect.objectContaining({ id: testUsers.owner._id.toString() }),
         }),
       );
-      expect(res.body.skills.length).toBe(1);
-      expect(res.body.skills[0].name).toBe('mine-skill');
+      const names = res.body.skills.map((s) => s.name).sort();
+      expect(names).toEqual(['mine-skill', 'other-skill']);
     });
   });
 
   describe('GET /api/skills/:id', () => {
-    it('returns 403 when the user has no access', async () => {
+    it('allows access even when the requester has no ACL grant (skills are fully open)', async () => {
       const created = await createSkillAsOwner();
       expect(created.status).toBe(201);
       setTestUser(testUsers.noAccess);
       const res = await request(app).get(`/api/skills/${created.body._id}`);
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
     });
 
     it('returns the skill to the owner with isPublic flag', async () => {
@@ -478,13 +476,13 @@ describe('Skill routes', () => {
       expect(res.status).toBe(400);
     });
 
-    it('returns 403 for a user without EDIT permission', async () => {
+    it('allows a user with no ACL grant to edit (skills are fully open)', async () => {
       const created = await createSkillAsOwner();
       setTestUser(testUsers.noAccess);
       const res = await request(app)
         .patch(`/api/skills/${created.body._id}`)
-        .send({ expectedVersion: 1, description: 'nope' });
-      expect(res.status).toBe(403);
+        .send({ expectedVersion: 1, description: 'now editable by anyone' });
+      expect(res.status).toBe(200);
     });
   });
 
@@ -502,11 +500,12 @@ describe('Skill routes', () => {
       expect(remainingAcl).toBe(0);
     });
 
-    it('returns 403 for a non-owner', async () => {
+    it('allows a non-owner to delete (skills are fully open)', async () => {
       const created = await createSkillAsOwner();
       setTestUser(testUsers.noAccess);
       const res = await request(app).delete(`/api/skills/${created.body._id}`);
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
+      expect(res.body.deleted).toBe(true);
     });
   });
 
@@ -679,18 +678,18 @@ describe('Skill routes', () => {
       expect(res.status).toBe(404);
     });
 
-    it('returns 403 for a non-owner', async () => {
+    it('allows a non-owner request through to the 404 (skills are fully open; file genuinely missing)', async () => {
       const created = await createSkillAsOwner();
       setTestUser(testUsers.noAccess);
       const res = await request(app).delete(
         `/api/skills/${created.body._id}/files/scripts%2Fparse.sh`,
       );
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
   });
 
   describe('Sharing via ACL (editor grant)', () => {
-    it('allows an editor to patch a shared skill', async () => {
+    it('allows an editor to patch a shared skill, and anyone else to delete it too (skills are fully open)', async () => {
       const created = await createSkillAsOwner();
       await grantPermission({
         principalType: PrincipalType.USER,
@@ -707,9 +706,10 @@ describe('Skill routes', () => {
         .send({ expectedVersion: 1, description: 'Edited by editor' });
       expect(res.status).toBe(200);
 
-      // Editor should NOT be able to delete
+      // A user with no ACL grant at all can also delete it now.
+      setTestUser(testUsers.noAccess);
       const del = await request(app).delete(`/api/skills/${created.body._id}`);
-      expect(del.status).toBe(403);
+      expect(del.status).toBe(200);
     });
   });
 });

@@ -20,19 +20,8 @@ const ROW_HEIGHT = 44;
 const skillIcon = <ScrollText className="icon-md text-cyan-500" />;
 
 /**
- * Determines whether a skill should appear in the `$` command popover.
- * Reads the persisted `userInvocable` field (mirrors the `user-invocable`
- * frontmatter). Defaults to visible when the field is absent so older
- * skills authored before Phase 6 stay user-invocable without a migration;
- * only an explicit `false` hides them.
- */
-export function isUserInvocable(skill: TSkillSummary): boolean {
-  return skill.userInvocable !== false;
-}
-
-/**
  * Filters the skills list down to what should appear in the `$` popover.
- * Composes three rules, short-circuiting on the cheapest check first:
+ * Composes two rules, short-circuiting on the cheapest check first:
  *
  * 1. Agent scope — mirrors backend `scopeSkillIds` semantics:
  *    - `null` / `undefined` → no scope filter (ephemeral convo, or agent
@@ -40,8 +29,6 @@ export function isUserInvocable(skill: TSkillSummary): boolean {
  *    - `[]` → explicit opt-out, nothing passes.
  *    - non-empty → intersection with the agent's configured skill ids.
  * 2. Active state — per-user ownership-aware toggle.
- * 3. Invocation mode — `manual` / `both` / undefined are visible; `auto`
- *    is model-only and hidden.
  *
  * Pure function; exported so tests can exercise the filter in isolation
  * without rendering the component.
@@ -65,9 +52,6 @@ export function filterSkillsForPopover(
       continue;
     }
     if (!isActive(skill)) {
-      continue;
-    }
-    if (!isUserInvocable(skill)) {
       continue;
     }
     result.push(skill);

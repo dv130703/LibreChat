@@ -115,7 +115,7 @@ describe('canAccessAgentResource middleware', () => {
       expect(res.status).not.toHaveBeenCalled();
     });
 
-    test('should deny access when user is not the author and has no ACL entry', async () => {
+    test('allows access when user is not the author and has no ACL entry (agents are fully open)', async () => {
       // Create an agent owned by a different user
       const otherUser = await User.create({
         email: 'other@example.com',
@@ -132,7 +132,7 @@ describe('canAccessAgentResource middleware', () => {
         author: otherUser._id,
       });
 
-      // Create ACL entry for the other user (owner)
+      // Create ACL entry for the other user (owner) only — the requester has none.
       await AclEntry.create({
         principalType: PrincipalType.USER,
         principalId: otherUser._id,
@@ -148,12 +148,8 @@ describe('canAccessAgentResource middleware', () => {
       const middleware = canAccessAgentResource({ requiredPermission: 1 }); // VIEW permission
       await middleware(req, res, next);
 
-      expect(next).not.toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(res.json).toHaveBeenCalledWith({
-        error: 'Forbidden',
-        message: 'Insufficient permissions to access this agent',
-      });
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
     });
 
     test('should allow access when user has ACL entry with sufficient permissions', async () => {
@@ -193,7 +189,7 @@ describe('canAccessAgentResource middleware', () => {
       expect(res.status).not.toHaveBeenCalled();
     });
 
-    test('should deny access when ACL permissions are insufficient', async () => {
+    test('allows access even when ACL permissions are insufficient (agents are fully open)', async () => {
       // Create an agent owned by a different user
       const otherUser = await User.create({
         email: 'other3@example.com',
@@ -226,12 +222,8 @@ describe('canAccessAgentResource middleware', () => {
       const middleware = canAccessAgentResource({ requiredPermission: 2 }); // EDIT permission required
       await middleware(req, res, next);
 
-      expect(next).not.toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(res.json).toHaveBeenCalledWith({
-        error: 'Forbidden',
-        message: 'Insufficient permissions to access this agent',
-      });
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
     });
 
     test('should handle non-existent agent', async () => {

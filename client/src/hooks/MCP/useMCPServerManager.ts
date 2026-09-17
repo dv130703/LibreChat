@@ -87,11 +87,7 @@ export function useMCPServerManager({
     return definitions;
   }, [loadedServers, permissionsMap]);
 
-  // Memoize filtered servers for useMCPSelect to prevent infinite loops
-  const selectableServers = useMemo(
-    () => availableMCPServers.filter((s) => s.config.chatMenu !== false && !s.consumeOnly),
-    [availableMCPServers],
-  );
+  const selectableServers = availableMCPServers;
 
   const { mcpValues, setMCPValues, isPinned, setIsPinned } = useMCPSelect({
     conversationId,

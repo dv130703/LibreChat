@@ -592,6 +592,10 @@ describe('PermissionService', () => {
   });
 
   describe('findAccessibleResources', () => {
+    // Uses PROMPTGROUP rather than AGENT — agent/skill resources are fully
+    // open in findAccessibleResources (see FULLY_OPEN_RESOURCE_TYPES), so
+    // they'd short-circuit before ever reaching the per-principal ACL scoping
+    // this suite exercises.
     beforeEach(async () => {
       // Reset the mock implementation for getUserPrincipals
       getUserPrincipals.mockReset();
@@ -605,9 +609,9 @@ describe('PermissionService', () => {
       await grantPermission({
         principalType: PrincipalType.USER,
         principalId: userId,
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         resourceId: resource1,
-        accessRoleId: AccessRoleIds.AGENT_VIEWER,
+        accessRoleId: AccessRoleIds.PROMPTGROUP_VIEWER,
         grantedBy: grantedById,
       });
 
@@ -615,9 +619,9 @@ describe('PermissionService', () => {
       await grantPermission({
         principalType: PrincipalType.USER,
         principalId: userId,
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         resourceId: resource2,
-        accessRoleId: AccessRoleIds.AGENT_EDITOR,
+        accessRoleId: AccessRoleIds.PROMPTGROUP_EDITOR,
         grantedBy: grantedById,
       });
 
@@ -625,9 +629,9 @@ describe('PermissionService', () => {
       await grantPermission({
         principalType: PrincipalType.GROUP,
         principalId: groupId,
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         resourceId: resource3,
-        accessRoleId: AccessRoleIds.AGENT_VIEWER,
+        accessRoleId: AccessRoleIds.PROMPTGROUP_VIEWER,
         grantedBy: grantedById,
       });
     });
@@ -640,7 +644,7 @@ describe('PermissionService', () => {
 
       const viewableResources = await findAccessibleResources({
         userId,
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         requiredPermissions: 1, // RoleBits.VIEWER // 1 = VIEW
       });
 
@@ -656,7 +660,7 @@ describe('PermissionService', () => {
 
       const editableResources = await findAccessibleResources({
         userId,
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         requiredPermissions: 3, // RoleBits.EDITOR = VIEW + EDIT
       });
 
@@ -673,7 +677,7 @@ describe('PermissionService', () => {
 
       const viewableResources = await findAccessibleResources({
         userId,
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         requiredPermissions: 1, // RoleBits.VIEWER // 1 = VIEW
       });
 
@@ -689,7 +693,7 @@ describe('PermissionService', () => {
       await expect(
         findAccessibleResources({
           userId,
-          resourceType: ResourceType.AGENT,
+          resourceType: ResourceType.PROMPTGROUP,
           requiredPermissions: 'invalid',
         }),
       ).rejects.toThrow('requiredPermissions must be a positive number');
@@ -708,11 +712,30 @@ describe('PermissionService', () => {
 
       const resources = await findAccessibleResources({
         userId,
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         requiredPermissions: 1, // RoleBits.VIEWER
       });
 
       expect(resources).toEqual([]);
+    });
+
+    test('agent and skill resources are always fully accessible, bypassing ACL scoping', async () => {
+      getUserPrincipals.mockClear();
+
+      const agents = await findAccessibleResources({
+        userId,
+        resourceType: ResourceType.AGENT,
+        requiredPermissions: 1,
+      });
+      const skills = await findAccessibleResources({
+        userId,
+        resourceType: ResourceType.SKILL,
+        requiredPermissions: 1,
+      });
+
+      expect(Array.isArray(agents)).toBe(true);
+      expect(Array.isArray(skills)).toBe(true);
+      expect(getUserPrincipals).not.toHaveBeenCalled();
     });
   });
 
@@ -1312,13 +1335,30 @@ describe('PermissionService', () => {
       expect(effectiveWithRole).toBe(3); // EDITOR = VIEW + EDIT
       expect(getUserPrincipals).toHaveBeenCalledWith({ userId: testUserId, role: 'EDITOR' });
 
-      // Test 4: Verify findAccessibleResources also uses the optimization
+      // Test 4: Verify findAccessibleResources also uses the optimization.
+      // Uses PROMPTGROUP rather than AGENT here — agent/skill resources are
+      // fully open in findAccessibleResources (see FULLY_OPEN_RESOURCE_TYPES),
+      // so they'd short-circuit before ever calling getUserPrincipals.
+      await grantPermission({
+        principalType: PrincipalType.ROLE,
+        principalId: 'EDITOR',
+        resourceType: ResourceType.PROMPTGROUP,
+        resourceId: testResourceId,
+        accessRoleId: AccessRoleIds.PROMPTGROUP_EDITOR,
+        grantedBy: grantedById,
+      });
+
       getUserPrincipals.mockClear();
+      getUserPrincipals.mockResolvedValue([
+        { principalType: PrincipalType.USER, principalId: testUserId },
+        { principalType: PrincipalType.ROLE, principalId: 'EDITOR' },
+        { principalType: PrincipalType.PUBLIC },
+      ]);
 
       const accessibleWithRole = await findAccessibleResources({
         userId: testUserId,
         role: 'EDITOR',
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         requiredPermissions: 1, // VIEW
       });
 
@@ -1673,6 +1713,8 @@ describe('PermissionService', () => {
     });
 
     test('should find accessible resources when permissions granted with mixed ID types', async () => {
+      // Uses PROMPTGROUP — agent/skill resources are fully open in
+      // findAccessibleResources, bypassing this ACL-scoping path entirely.
       const resource1 = new mongoose.Types.ObjectId();
       const resource2 = new mongoose.Types.ObjectId();
       const resource3 = new mongoose.Types.ObjectId();
@@ -1681,9 +1723,9 @@ describe('PermissionService', () => {
       await grantPermission({
         principalType: PrincipalType.USER,
         principalId: stringUserId,
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         resourceId: resource1,
-        accessRoleId: AccessRoleIds.AGENT_VIEWER,
+        accessRoleId: AccessRoleIds.PROMPTGROUP_VIEWER,
         grantedBy: grantedById,
       });
 
@@ -1691,9 +1733,9 @@ describe('PermissionService', () => {
       await grantPermission({
         principalType: PrincipalType.USER,
         principalId: new mongoose.Types.ObjectId(stringUserId),
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         resourceId: resource2,
-        accessRoleId: AccessRoleIds.AGENT_EDITOR,
+        accessRoleId: AccessRoleIds.PROMPTGROUP_EDITOR,
         grantedBy: grantedById,
       });
 
@@ -1701,9 +1743,9 @@ describe('PermissionService', () => {
       await grantPermission({
         principalType: PrincipalType.ROLE,
         principalId: 'admin',
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         resourceId: resource3,
-        accessRoleId: AccessRoleIds.AGENT_OWNER,
+        accessRoleId: AccessRoleIds.PROMPTGROUP_OWNER,
         grantedBy: grantedById,
       });
 
@@ -1720,7 +1762,7 @@ describe('PermissionService', () => {
       const accessibleResources = await findAccessibleResources({
         userId: stringUserId,
         role: 'admin',
-        resourceType: ResourceType.AGENT,
+        resourceType: ResourceType.PROMPTGROUP,
         requiredPermissions: 1, // VIEW
       });
 

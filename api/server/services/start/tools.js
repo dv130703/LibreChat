@@ -5,13 +5,7 @@ const { logger } = require('@librechat/data-schemas');
 const { zodToJsonSchema } = require('zod-to-json-schema');
 const { Tool } = require('@librechat/agents/langchain/tools');
 const { Tools, ImageVisionTool } = require('librechat-data-provider');
-const {
-  getToolkitKey,
-  oaiToolkit,
-  geminiToolkit,
-  createAskUserQuestionTool,
-} = require('@librechat/api');
-const { toolkits } = require('~/app/clients/tools/manifest');
+const { oaiToolkit, geminiToolkit, createAskUserQuestionTool } = require('@librechat/api');
 
 /**
  * Loads and formats tools from the specified tool directory.
@@ -23,26 +17,16 @@ const { toolkits } = require('~/app/clients/tools/manifest');
  *
  * @param {object} params - The parameters for the function.
  * @param {string} params.directory - The directory path where the tools are located.
- * @param {Array<string>} [params.adminFilter=[]] - Array of admin-defined tool keys to exclude from loading.
- * @param {Array<string>} [params.adminIncluded=[]] - Array of admin-defined tool keys to include from loading.
  * @returns {Record<string, FunctionTool>} An object mapping each tool's plugin key to its instance.
  */
-function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] }) {
-  const filter = new Set([...adminFilter]);
-  const included = new Set(adminIncluded);
+function loadAndFormatTools({ directory }) {
   const tools = [];
   /* Structured Tools Directory */
   const files = fs.readdirSync(directory);
 
-  if (included.size > 0 && adminFilter.length > 0) {
-    logger.warn(
-      'Both `includedTools` and `filteredTools` are defined; `filteredTools` will be ignored.',
-    );
-  }
-
   for (const file of files) {
     const filePath = path.join(directory, file);
-    if (!file.endsWith('.js') || (filter.has(file) && included.size === 0)) {
+    if (!file.endsWith('.js')) {
       continue;
     }
 
@@ -73,14 +57,6 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
       continue;
     }
 
-    if (filter.has(toolInstance.name) && included.size === 0) {
-      continue;
-    }
-
-    if (included.size > 0 && !included.has(file) && !included.has(toolInstance.name)) {
-      continue;
-    }
-
     const formattedTool = formatToOpenAIAssistantTool(toolInstance);
     tools.push(formattedTool);
   }
@@ -93,15 +69,6 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
   ];
   for (const toolInstance of basicToolInstances) {
     const formattedTool = formatToOpenAIAssistantTool(toolInstance);
-    let toolName = formattedTool[Tools.function].name;
-    toolName = getToolkitKey({ toolkits, toolName }) ?? toolName;
-    if (filter.has(toolName) && included.size === 0) {
-      continue;
-    }
-
-    if (included.size > 0 && !included.has(toolName)) {
-      continue;
-    }
     tools.push(formattedTool);
   }
 
