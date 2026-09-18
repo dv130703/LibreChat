@@ -31,16 +31,17 @@ export interface ParsedTranscriptLine {
 
 /** `[start-end] Speaker N: text`, with `[start-end]` and `Speaker N:` each
  *  independently optional (either, both, or neither may be present) and a
- *  greedy `text` capture last. The label matches the RAG server's own
- *  human-readable rewrite of WhisperX's raw diarization ids (e.g. "Speaker 1"),
+ *  greedy `text` capture last. The label matches the transcription service's
+ *  own human-readable rewrite of the raw diarization ids (e.g. "Speaker 1"),
  *  not raw `SPEAKER_00`-style output, so this can't false-match an ordinary
  *  sentence that happens to contain a colon. `Unknown` is matched alongside
  *  `Speaker \d+` because the pipeline substitutes that literal label for a
  *  segment/word whose assignment was too far from any diarization turn to
- *  trust (see `UNKNOWN_SPEAKER_LABEL` in `transcription/recording_profile.py`)
- *  - without it, exactly the least-trustworthy lines silently failed to
- *  parse their own speaker prefix back out, corrupting correction replay and
- *  display for those lines specifically. */
+ *  trust - without it, exactly the least-trustworthy lines would silently
+ *  fail to parse their own speaker prefix back out, corrupting correction
+ *  replay and display for those lines specifically. This is a hard contract
+ *  with whatever service TRANSCRIPTION_API_URL points at: it must keep
+ *  emitting exactly "Speaker N" or "Unknown", never a raw diarization id. */
 export const TRANSCRIPT_LINE_PATTERN =
   /^(?:\[([0-9:.]+)(?:-([0-9:.]+))?\] )?(?:(Speaker \d+|Unknown): )?(.*)$/;
 

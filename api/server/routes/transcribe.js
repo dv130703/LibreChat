@@ -82,11 +82,11 @@ const router = express.Router();
 function buildTranscriptionMeta(options, result) {
   return {
     model: result.diagnostics?.model_used,
-    // `model_requested` is the raw request field on the RAG server's side
-    // (transcription/whisperx_service.py's `diagnostics["model_requested"]`)
-    // and is genuinely `None` - JSON `null`, not an absent key - whenever the
-    // caller left the model on "auto". The client's conversation schema only
-    // allows `string | undefined` here (`z.string().optional()`), so writing
+    // `model_requested` is the raw request field on the transcription
+    // service's side, and is genuinely `None` - JSON `null`, not an absent
+    // key - whenever the caller left the model on "auto". The client's
+    // conversation schema only allows `string | undefined` here
+    // (`z.string().optional()`), so writing
     // that `null` through unchanged fails validation on every later read of
     // this conversation, breaking message submission entirely, not just the
     // transcript display.

@@ -203,9 +203,8 @@ export type AvatarUploadResponse = {
   url: string;
 };
 
-/** How a segment/word's `speaker` was actually decided - see
- *  `WhisperXService._resolve_speaker_assignment` in
- *  `transcription/whisperx_service.py`. `"overlap"`: a diarization turn
+/** How a segment/word's `speaker` was actually decided - resolved by the
+ *  transcription service, not this repo. `"overlap"`: a diarization turn
  *  genuinely overlapped this span, and the speaker with the most overlapping
  *  duration was used (pyannote's own `assign_word_speakers`). `"nearest"`:
  *  no turn overlapped this span, but the nearest one was within
@@ -256,10 +255,10 @@ export type TTranscriptSegment = {
   words?: TWordSpan[];
 };
 
-/** How a recording's turn-taking was classified - see `_classify` in
- *  `transcription/recording_profile.py`. `"insufficient_data"` when there
- *  are no segments at all. Thresholds are illustrative starting points, not
- *  calibrated against labelled data. */
+/** How a recording's turn-taking was classified - computed by the
+ *  transcription service. `"insufficient_data"` when there are no segments
+ *  at all. Thresholds are illustrative starting points, not calibrated
+ *  against labelled data. */
 export type TRecordingClassification =
   | 'monologue'
   | 'conversation'
@@ -268,9 +267,9 @@ export type TRecordingClassification =
   | 'insufficient_data';
 
 /** A statistical fingerprint of the recording's turn-taking - purely
- *  descriptive, computed once per transcription from the segments and raw
- *  diarization turns already produced; changes nothing about what got
- *  transcribed. See `transcription/recording_profile.py`. */
+ *  descriptive, computed once per transcription by the transcription service
+ *  from the segments and raw diarization turns already produced; changes
+ *  nothing about what got transcribed. */
 export type TRecordingProfile = {
   speakerCount: number;
   turnCount: number;

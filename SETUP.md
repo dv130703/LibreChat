@@ -171,27 +171,24 @@ Should list every model `ollama pull`'d. Restart the backend after editing
 
 ## 7. RAG / file-search server (optional)
 
-Only needed if you want agents to use `file_search` on uploaded documents.
-See [`rag.yml`](rag.yml) for the full contract (routes, auth, vector store
-layout) — it's a reference doc, not something anything reads at runtime.
+Only needed if you want agents to use `file_search` on uploaded documents
+(and the `create_document` tool's authoring guidance, served from the same
+service's `/guidance` endpoint). See [`rag.yml`](rag.yml) for the full
+contract (routes, auth, vector store layout) — it's a reference doc, not
+something anything reads at runtime.
 
-```bash
-cd rag_server
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-```
+**This is no longer an in-repo server.** The Python implementation that used
+to live at `rag_server/` has been migrated to a standalone service run
+outside this repository (the same pattern the Transcription Pipeline already
+uses) — set it up and start it per that service's own instructions, then
+point this repo at it:
 
-The server reads the **root** `.env` first, then `rag_server/.env` (if
-present) with override — so `JWT_SECRET` and `OLLAMA_BASE_URL` are shared
-automatically from the root `.env`; only add `rag_server/.env` for
-RAG-specific overrides (`RAG_PORT`, `LANCEDB_PATH`, etc. — see
-`rag_server/config.py`). Make sure `RAG_API_URL` in the root `.env` matches
-`RAG_PORT` (default `http://localhost:1234`).
-
-> `rag_server/seed_guidance.py` seeds authoring guidance for the
-> `create_document` tool, which has been **removed** from this fork (see git
-> history) — that script and its `/guidance` endpoint are currently unused.
-> No need to run it unless you reintroduce a tool that reads that table.
+- Make sure `RAG_API_URL` in the root `.env` matches wherever that service is
+  actually listening (default `http://localhost:2222`).
+- `JWT_SECRET` must be byte-identical between this repo's root `.env` and
+  that service's own `.env` — it's the only thing authenticating every RAG
+  request LibreChat sends.
+- Verify it's up with `curl $RAG_API_URL/health` before starting LibreChat.
 
 ## 8. Code Interpreter / sandbox server (optional)
 
@@ -225,7 +222,10 @@ npm run build            # turbo, parallel + cached
 
 ## 10. Run it
 
-All-in-one (RAG + code sandbox + backend + frontend, if you did steps 7-8):
+`npm run dev` starts the code sandbox + backend + frontend (step 8's
+`codeapi_server` is still in-repo). The RAG service (step 7) is external now —
+start it separately, per its own instructions, before or after `npm run dev`;
+LibreChat just needs `RAG_API_URL` reachable by the time a request needs it.
 
 ```bash
 npm run dev
@@ -236,7 +236,6 @@ Or piece by piece:
 ```bash
 npm run backend:dev      # Express server, port 3080, file-watching
 npm run frontend:dev     # Vite dev server, port 3090, HMR (needs backend running)
-npm run rag              # only if you set up rag_server in step 7
 npm run codeapi          # only if you set up codeapi_server in step 8
 ```
 
@@ -280,11 +279,10 @@ cd packages/api && npx jest <pattern>
   don't apply here.
 - MongoDB and Meilisearch are **not** auto-started by any npm script — they
   must already be running before `npm run backend`/`npm run dev`.
-- The RAG server binds loopback only (`RAG_HOST` must be `127.0.0.1` /
-  `localhost` / `::1`) — it refuses to start otherwise, by design.
-- Same for the code sandbox (`CODEAPI_HOST`) — it has no request
-  authentication at all, so loopback-only is the only thing stopping anyone
-  who can reach the port from running arbitrary code on this machine.
-- `JWT_SECRET` must be byte-identical between the root `.env` and
-  `rag_server/.env` (if you override it there) — otherwise every RAG request
-  401s.
+- The RAG service is no longer part of this repo (see step 7) — `npm run dev`
+  does not start it; start it separately.
+- The code sandbox (`CODEAPI_HOST`) has no request authentication at all, so
+  loopback-only is the only thing stopping anyone who can reach the port from
+  running arbitrary code on this machine.
+- `JWT_SECRET` must be byte-identical between this repo's root `.env` and the
+  RAG service's own `.env` — otherwise every RAG request 401s.

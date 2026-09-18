@@ -3,21 +3,26 @@
 # Docker was removed from this fork (commit d657219d6); this file survived as a
 # pgvector/rag_api compose definition that no longer described anything real.
 # It is now a plain description of how retrieval is actually wired, kept as the
-# single place to look when RAG misbehaves. Nothing reads it at runtime — the
-# authoritative values live in .env, rag_server/.env, and rag_server/config.py.
+# single place to look when RAG misbehaves. Nothing reads it at runtime.
+#
+# The in-repo `rag_server/` implementation has been removed and migrated to a
+# standalone service outside this repository (same pattern as the standalone
+# Transcription Pipeline service — see AUDIO_TRANSCRIBER.md §5). LibreChat
+# reaches it purely over HTTP via RAG_API_URL; nothing about how LibreChat
+# calls it changed. The authoritative values for the service itself now live
+# in that service's own .env and config.py, not anywhere in this repo.
 
 version: 2
 
-# The RAG API is a local FastAPI server implementing the HTTP contract LibreChat
-# expects. LibreChat holds no retrieval logic of its own.
+# The RAG API is a FastAPI server implementing the HTTP contract LibreChat
+# expects, run as its own standalone process outside this repository.
+# LibreChat holds no retrieval logic of its own.
 server:
-  entrypoint: rag_server/app.py
-  start: npm run rag
-  # Loopback only; config.py refuses to bind a non-loopback address.
-  host: 127.0.0.1 # RAG_HOST in rag_server/.env
-  port: 1234 # RAG_PORT — must match RAG_API_URL in .env
-  url: http://localhost:1234 # RAG_API_URL in .env
-  python: rag_server/.venv # created from rag_server/requirements.txt
+  # Started/managed independently of this repo - there is no `npm run rag`
+  # anymore. Confirm it's reachable with `curl $RAG_API_URL/health`.
+  host: 127.0.0.1 # loopback only unless explicitly opened up on the service's own config
+  port: 2222 # must match RAG_API_URL in .env
+  url: http://localhost:2222 # RAG_API_URL in .env
 
   # Routes LibreChat calls. Response shapes are dictated by LibreChat's parsing;
   # changing them breaks retrieval silently rather than erroring.
@@ -28,8 +33,6 @@ server:
     - GET    /documents/{file_id}/context # whole document, if RAG_USE_FULL_CONTEXT
     - POST   /guidance # authoring rules for the create_document tool
     - POST   /text # plain-text extraction, no embedding
-    - GET    /transcribe/config # this deployment's transcription defaults
-    - POST   /transcribe # speaker-labelled audio/video transcription
     - GET    /health # readiness probe, checked at LibreChat startup
 
 # Requests are authenticated with the short-lived HS256 token LibreChat signs for
@@ -38,7 +41,7 @@ server:
 auth:
   scheme: bearer
   algorithm: HS256
-  secret: JWT_SECRET # shared between .env and rag_server/.env
+  secret: JWT_SECRET # shared between LibreChat's .env and the service's own .env
   ttl: 5m
 
 vector_store:
@@ -78,15 +81,15 @@ ingestion:
   unsupported: images, and PDFs with no extractable text (no OCR here)
 
 # Every request is logged to the terminal on both sides. Set RAG_LOG_REQUESTS
-# false in rag_server/.env to silence the Python side.
+# false in the service's own .env to silence its side.
 observability:
-  rag_server: '-> / <- lines per request, plus query text, hit count, best distance'
+  rag_service: '-> / <- lines per request, plus query text, hit count, best distance'
   librechat: '[RAG] lines — upload routing, /embed calls, /query calls and results'
 
 # Inert settings, listed so they aren't mistaken for live configuration.
 unused:
   # Read by the official librechat-rag-api-dev image, which this fork no longer
-  # runs. The embedding model here is EMBED_MODEL in rag_server/.env.
+  # runs. The embedding model here is EMBED_MODEL in the service's own .env.
   - EMBEDDINGS_PROVIDER
   - EMBEDDINGS_MODEL
   - RAG_OPENAI_BASEURL

@@ -555,12 +555,12 @@ export default function TranscribeOptionsDialog({
                        *  set `clusteringThreshold`, which is inert on the
                        *  diarization pipeline this runs on: the same audio
                        *  diarized at every threshold from 0.05 to 0.95
-                       *  returns byte-identical speaker turns (measured - see
-                       *  CLUSTERING_THRESHOLD_IS_INERT in
-                       *  `transcription/whisperx_service.py`). It was a
-                       *  control that silently did nothing, which is worse
-                       *  than no control. Speaker count above is the lever
-                       *  that actually changes the result on this pipeline. */}
+                       *  returns byte-identical speaker turns (measured
+                       *  against the transcription service's own inertness
+                       *  constant). It was a control that silently did
+                       *  nothing, which is worse than no control. Speaker
+                       *  count above is the lever that actually changes the
+                       *  result on this pipeline. */}
                     </div>
                   )
                 )}

@@ -9,7 +9,6 @@
     "packages/*"
   ],
   "scripts": {
-    "postinstall": "pip install -r rag_server/requirements.txt",
     "mongodb": "node config/start-mongodb.js",
     "update": "node config/update.js",
     "add-balance": "node config/add-balance.js",
@@ -34,11 +33,10 @@
     "update-banner": "node config/update-banner.js",
     "delete-banner": "node config/delete-banner.js",
     "backend": "cross-env NODE_ENV=production node api/server/index.js",
-    "rag": "node config/start-rag.js",
     "codeapi": "node config/start-codeapi.js",
     "backend:inspect": "cross-env NODE_ENV=production node --inspect --expose-gc api/server/index.js",
     "backend:dev": "cross-env NODE_ENV=development npx nodemon api/server/index.js",
-    "dev": "concurrently -n \"[PYTHON],[CODEAPI],,[FRONTEND]\" --prefix \"{name}\" -c magenta,cyan,green,green \"npm:rag\" \"npm:codeapi\" \"npm:backend:dev\" \"npm:frontend:dev\"",
+    "dev": "concurrently -n \"[CODEAPI],,[FRONTEND]\" --prefix \"{name}\" -c cyan,green,green \"npm:codeapi\" \"npm:backend:dev\" \"npm:frontend:dev\"",
     "backend:experimental": "cross-env NODE_ENV=production node api/server/experimental.js",
     "backend:stop": "node config/stop-backend.js",
     "build:data-provider": "cd packages/data-provider && npm run build",

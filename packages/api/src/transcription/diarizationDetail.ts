@@ -133,11 +133,11 @@ function toTranscriptSegment(segment: RawTranscriptSegment): TTranscriptSegment 
 /**
  * Strips the diarization-detail-only fields (`words`, `assignment_method`)
  * back down to the plain shape the client's transcript view has always
- * received. The RAG server's response now always includes the richer fields
- * (see `TranscriptSegment` in `transcription/schemas.py`) so word-level data
- * is available to persist, but the normal transcription response - what the
- * client actually renders - stays exactly the size and shape it always was;
- * only the separate diarization-detail file carries the rest.
+ * received. The transcription service's response now always includes the
+ * richer per-segment fields, so word-level data is available to persist, but
+ * the normal transcription response - what the client actually renders -
+ * stays exactly the size and shape it always was; only the separate
+ * diarization-detail file carries the rest.
  */
 export function stripSegmentDetail<T extends RawTranscriptSegment>(
   segments: T[],

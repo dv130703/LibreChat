@@ -1,13 +1,14 @@
 /**
  * Repairs transcripts whose words were run together ("Thankyouverymuch").
  *
- * Cause: for a window of time, `_build_speaker_segments` rebuilt each line by
- * concatenating per-word tokens with `""`. That is correct only for Whisper's
- * own tokens, which carry their leading space (`" Hello"`); WhisperX's forced
- * aligner splits on whitespace and returns BARE words, so every separator in
- * the line was dropped. Fixed at the source in
- * `transcription/whisperx_service.py` (`_join_words`) - this script repairs
- * transcripts that were already produced by the broken version.
+ * Cause: for a window of time, the (now-retired, in-repo) transcription
+ * pipeline's segment builder rebuilt each line by concatenating per-word
+ * tokens with `""`. That is correct only for Whisper's own tokens, which
+ * carry their leading space (`" Hello"`); WhisperX's forced aligner splits on
+ * whitespace and returns BARE words, so every separator in the line was
+ * dropped. Fixed at the source before that pipeline was replaced by the
+ * standalone transcription service - this script repairs transcripts that
+ * were already produced by the broken version.
  *
  * No re-transcription needed: the per-word data was never damaged, only the
  * line text derived from it. Each recording's `-diarization-detail` record
@@ -38,10 +39,11 @@ require('module-alias')({ base: path.resolve(__dirname, '..', 'api') });
 const { TRANSCRIPT_LINE_PATTERN } = require('librechat-data-provider');
 const connect = require('./connect');
 
-/** Mirrors `WhisperXService._join_words` in
- *  `transcription/whisperx_service.py` - the two must agree, or a repaired
- *  transcript would not match what the pipeline now produces for the same
- *  audio. */
+/** Mirrors the word-joining punctuation rules the (now-retired) in-repo
+ *  transcription pipeline used - kept in sync so a repaired transcript
+ *  matches what that pipeline produced for the same audio. This script only
+ *  repairs transcripts from that retired era; it has no bearing on the
+ *  standalone transcription service's current output. */
 const ATTACHES_TO_PREVIOUS_WORD = new Set([
   ',',
   '.',

@@ -1,11 +1,11 @@
 # Audio Transcriber
 
 Upload an audio/video file from any chat's composer, get it transcribed (via
-the RAG server's WhisperX endpoint) and RAG-embedded, then browse the
-transcript in a resizable panel next to the normal chat about it. As of Phase
-5 (transcription/ARCHITECTURE.md §9) there is no separate page for this
-feature - `/c/:id` is the only place it lives; a bookmarked
-`/audio-transcriber/:id` link redirects here.
+the standalone transcription service reached through `TRANSCRIPTION_API_URL`
+- see the repo root's `AUDIO_TRANSCRIBER.md` §2/§5) and RAG-embedded, then
+browse the transcript in a resizable panel next to the normal chat about it.
+There is no separate page for this feature - `/c/:id` is the only place it
+lives; a bookmarked `/audio-transcriber/:id` link redirects here.
 
 Not to be confused with the pre-existing Speech-to-Text (STT) voice-input
 feature (`client/src/components/Chat/Input/AudioRecorder.tsx`,

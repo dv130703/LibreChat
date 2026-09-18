@@ -356,7 +356,7 @@ router.get('/:conversationId/:messageId', validateMessageReq, async (req, res) =
  * EXACTLY when the agent hasn't been edited since - otherwise this returns the
  * nearest-preceding version snapshot as a best-effort reconstruction, flagged
  * as such (`source: 'reconstructed'`), never presented as if it were exact.
- * See transcription/schemas.py's TranscriptionDiagnostics for the same
+ * See the transcription service's own diagnostics shape for the same
  * "persist what happened, flag what's uncertain" precedent elsewhere in this
  * codebase.
  *

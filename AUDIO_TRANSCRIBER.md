@@ -27,13 +27,15 @@ Audio Transcriber is a standalone workspace page (`/audio-transcriber`, not embe
 │  api/server/services/       │   Transcription/index.js (Node → Python bridge)
 │  (Express, legacy JS)       │   Files/process.js (Mongo persistence)
 └──────────────┬───────────────┘
-               │ multipart POST {RAG_API_URL}/transcribe, /embed
+               │ multipart POST {TRANSCRIPTION_API_URL or RAG_API_URL}/transcribe
+               │ multipart POST {RAG_API_URL}/embed
                │ Bearer: short-lived JWT (per-request)
                ▼
 ┌─────────────────────────────┐
-│  rag_server/app.py           │   FastAPI: GET /health, GET /transcribe/config,
-│  transcription/*.py          │   POST /transcribe, POST /embed
-│  (Python, WhisperX/pyannote) │   → transcription.whisperx_service.WhisperXService
+│  standalone Transcription    │   FastAPI: GET /health, GET /transcribe/config,
+│  Pipeline service            │   POST /transcribe (WhisperX/pyannote)
+│  (separate repo/process -    │
+│   see §5)                    │
 └─────────────────────────────┘
                │
                ▼
@@ -45,7 +47,7 @@ Audio Transcriber is a standalone workspace page (`/audio-transcriber`, not embe
 Three independently-owned layers, each documented in its own section below:
 - **Frontend** — `client/src/components/AudioTranscriber/`, `client/src/data-provider/AudioTranscriber/`, shared types in `packages/data-provider`.
 - **Node backend** — `api/server/routes/transcribe.js`, `transcriptCorrections.js`, `api/server/services/Transcription/index.js`, persistence helpers in `api/server/services/Files/process.js`.
-- **Python microservice** — `transcription/*.py` (the actual WhisperX/pyannote pipeline), fronted by FastAPI routes in `rag_server/app.py`.
+- **Transcription microservice** — a standalone service reached via `TRANSCRIPTION_API_URL`, outside this repo. `rag_server/app.py` no longer serves `/transcribe` (see §5).
 
 The feature is explicitly designed to be **self-contained and removable** — its own README (`client/src/components/AudioTranscriber/README.md`) lists every place it had to touch in otherwise-general files.
 
@@ -242,129 +244,13 @@ Converts the Python service's raw response into the app's typed shapes (`toWordS
 
 ---
 
-## 5. Python WhisperX microservice (`transcription/`)
+## 5. Transcription backend — now a standalone service, not `rag_server`
 
-### 5.1 Deployment
-- Sibling package of `rag_server/` (not a subpackage) — `rag_server/app.py` inserts the repo root onto `sys.path` to `import transcription.*`. Started via `npm run rag` → `cd rag_server && .venv/bin/python app.py` (plain venv, no Dockerfile in the repo).
-- Deps: `whisperx>=3.1.1`, `pyannote.audio>=3.1`, `pandas`, `scipy`, `pydantic-settings>=2.4` — `torch`/`torchaudio` must be installed separately first (CUDA-matched), or `pip install -r requirements.txt` pulls a CPU-only torch.
-- Config from `rag_server/.env`, `env_prefix="WHISPERX_"`.
+**This section previously documented an in-repo `transcription/` Python package (WhisperX + pyannote) that `rag_server/app.py` imported directly and served from its own `/transcribe` and `/transcribe/config` routes. That package has been removed from this repository.** `rag_server` no longer has any transcription code, routes, or dependencies (`whisperx`, `pyannote.audio`, `pandas`, `scipy` were dropped from `rag_server/requirements.txt`) — it now only serves `/health`, `/embed`, `/query`, `/documents`, `/guidance`, `/text`.
 
-### 5.2 HTTP endpoints (defined in `rag_server/app.py`, calling into `transcription/`)
+Transcription is served by a separate, standalone Transcription Pipeline service, reached via `TRANSCRIPTION_API_URL` (falling back to `RAG_API_URL` if unset — see `packages/api/src/transcription/endpoint.ts`). The Node bridge (`api/server/services/Transcription/index.js`) talks to it exactly the same way it used to talk to `rag_server`'s `/transcribe`: one synchronous, JWT-authenticated `POST {TRANSCRIPTION_API_URL}/transcribe`, so nothing in §§1-4 or §6 below changed. What that service implements internally (model config, diarization retry, hotwords budgeting, recording-profile heuristics, etc.) lives outside this repository now — its own docs are the source of truth, not this file. The contract it must satisfy from this repo's side is whatever `api/server/services/Transcription/index.js` reads off the response (`segments`, `language`, `diagnostics`, `diarization_turns`, `speaker_embeddings`, `recording_profile`) plus the `TranscriptionConfig` shape `TranscribeOptionsDialog.tsx` expects from `GET /transcribe/config`.
 
-| Endpoint | Auth | Purpose |
-|---|---|---|
-| `GET /health` | none | Trivial readiness probe. |
-| `GET /transcribe/config` | JWT | Returns effective defaults (`models` allowlist, `default_model`, `default_language`, `default_suppress_numerals`, `default_clustering_threshold`, `hotwords_configured`, `suggested_terms`, `max_speakers`). Reads `Settings` only — never loads a model. |
-| `POST /transcribe` | JWT | The actual pipeline call, run via `run_in_threadpool` (blocking/GPU-bound work, keeps the server able to answer other requests concurrently). See request/response shapes below. |
-
-`POST /transcribe` request (multipart): `file` (required, must be `audio/*` or `video/*`), `diarize=True`, `speaker_count`, `clustering_threshold`, `language`, `context_terms`, `model` (must be in the server allowlist `{tiny, small, medium, large-v2, large-v3, large-v3-turbo}` — deliberately restricted, since `whisperx.load_model()` would otherwise accept **any** HF repo id and attempt to download it), `suppress_numerals`, `channel_split=False`.
-
-Response (`TranscriptionResponse`): `segments`, `language`, `diagnostics`, `diarization_turns`, `speaker_embeddings`, `recording_profile` — see schema detail below.
-
-Errors from `service.transcribe` → 500 with `str(error)` as the detail (this is exactly what surfaces to the user via the Node layer's `getTranscribeErrorMessage`).
-
-### 5.3 `transcription/config.py` — `Settings` (all env vars prefixed `WHISPERX_`)
-
-| Field | Default | Meaning |
-|---|---|---|
-| `whisper_model` | `large-v3-turbo` | faster-whisper model size. |
-| `device` | auto (`cuda` if available else `cpu`) | |
-| `compute_type` | auto (`float16` GPU / `int8` CPU) | |
-| `hf_token` | — | Required for diarization. Also reads plain `HF_TOKEN`/`HUGGING_FACE_HUB_TOKEN`. |
-| `diarization_model` | `None` → `pyannote/speaker-diarization-community-1` | Preferred over the older `pyannote/speaker-diarization-3.1` on every cited benchmark (AMI IHM 17.0% vs 18.8% DER, DIHARD 3 20.2% vs 21.4%, AISHELL-4 11.7% vs 12.2%). |
-| `default_language` | `None` (auto-detect) | |
-| `batch_size` | `16` | |
-| `beam_size` | `5` | The main accuracy/latency knob. |
-| `repetition_penalty` | `1.15` | Mitigates decoder repeat loops. |
-| `no_repeat_ngram_size` | `5` | |
-| `hotwords` | `None` | Deployment-wide glossary, applied to **every** recording. |
-| `initial_prompt` | `None` | Fallback prompt when no per-recording context is given. |
-| `offline_mode` | `auto` | `auto`/`on`/`off` — whether loaders may reach the HF hub. |
-| `hub_probe_timeout_s` | `3.0` | |
-| `local_files_only` | `False` | Forces offline mode on. |
-| `model_cache_dir` | `None` | |
-| `vad_onset` / `vad_offset` | `0.500` / `0.363` | Lower onset catches quieter speech (more hallucination risk); higher offset trims trailing silence. |
-| `vad_method` | `silero` | or `pyannote`. |
-| `diarization_clustering_threshold` | `None` → pipeline default (**0.6**) | The single clustering hyperparameter pyannote 4.x's VBx-based clustering actually exposes — lower merges more aggressively (fewer/larger clusters), higher splits more (more/smaller clusters). See §5.5 for the retry mechanism built on this. |
-| `suppress_numerals` | `True` | Digits spelled out at decode time. |
-
-### 5.4 `transcription/schemas.py` — data model
-- **`WordSpan`**: one aligned word with its *own* independently-computed speaker (`word`, `start`, `end`, `speaker`, `assignment_method`, `assignment_distance_s`) — kept because a word disagreeing with its segment is itself diagnostic.
-- **`DiarizationTurn`**: one raw pyannote turn, pre-renumbering. Empty for channel-split.
-- **`TranscriptSegment`**: `id`, `start`, `end`, `speaker`, `text`, `assignment_method` (`overlap`/`nearest`/`unknown`/`channel_split`/`none`), `assignment_distance_s`, `words[]`.
-- **`TranscriptionDiagnostics`**: full per-request run report — alignment stats, diarization backend/speaker count, model requested/used, suppress_numerals, context-terms used/dropped + token accounting, hotwords term count, speaker-hint accounting, speaker label map, and the 5 diarization-retry fields (`diarization_retry_attempted`, `_kept`, `_threshold`, `_original_suspicious_ratio`, `_retry_suspicious_ratio`).
-- **`RecordingProfile`**: the statistical fingerprint — see §5.7.
-- **`TranscriptionResponse`** / **`TranscriptionConfig`**: top-level response/config shapes (mirrored above).
-
-### 5.5 Diarization clustering & the automatic retry (already covered in depth in this conversation — summarized here for completeness)
-- Threshold source of truth per call: explicit `clustering_threshold` param → else `Settings.diarization_clustering_threshold` → else pyannote's own pipeline default (0.6).
-- `DIFFICULT_RETRY_CLUSTERING_THRESHOLD = 0.48` (`whisperx_service.py:53`) is **not** a default — it's a fixed fallback tried exactly once, only when the first diarization pass is classified `"difficult"` by `compute_recording_profile` (see §5.7) and the first pass didn't already run at 0.48. The retry's `suspicious_segment_ratio` is compared against the original's; whichever is lower is kept. Author's own comment: "illustrative, not calibrated against labelled data."
-- This only affects difficult-classified recordings' retry pass — it has no effect on the primary threshold used for every other recording.
-
-### 5.6 Hotwords / custom-vocabulary feature (`transcription/transcription_prompt.py`)
-
-Whisper is not instruction-tuned — the prompt is treated as "what was said just before," biasing spelling/vocabulary only. The module therefore emits **terms only, never framing prose**.
-
-Token budget constants: `DECODER_CONTEXT_TOKENS=448` (combined prompt+output budget per 30s window), `FASTER_WHISPER_PART_CAP=223` (per-part cap on `hotwords` and `initial_prompt` separately — they stack), `PROMPT_STRUCTURE_TOKENS=6`, `DEFAULT_OUTPUT_HEADROOM_TOKENS=200`, `_MAX_TERM_CHARS=60`, `_MAX_TERMS=256`.
-
-Three channels into the decoder:
-1. **Deployment-wide `hotwords`** (`Settings.hotwords`) — baked into every recording at model-load time.
-2. **Per-recording `initial_prompt`** — built fresh per request from `context_terms` (`build_initial_prompt`), packed first and always wins.
-3. **Experimental per-recording `hotwords`** — this recording's confirmed terms *also* pushed through the more direct hotwords decode channel (`_build_request_hotwords`), layered after the deployment glossary — a deliberate exception to "never cost the window twice," accepted because confirmed lists are typically a handful of names.
-
-Packing (`_pack`) is greedy-front-loaded (keeps the head of the list) because faster-whisper itself keeps only the *last* 223 tokens of an overlong prompt — packing front-first inverts that so the user's first-listed (presumably highest-priority) terms survive.
-
-Everything used/dropped is reported back via `TranscriptionDiagnostics` so a term the user typed that never reached the model is visible, not silently lost.
-
-A previous iteration also supported a free-text `context` field, mined server-side for proper nouns as a fallback when no confirmed term list was given. It was never wired into the UI and added nothing a diligent user filling in `context_terms` couldn't already do better, so it (and the harvesting logic behind it) has been removed entirely rather than kept as dead code.
-
-`transcription/vocabulary.py`: `SUGGESTED_TERMS` — a small curated list of domain terms (fraud/investigation vocabulary, e.g. "Serious Fraud Office", "forensic accountant") served via `/transcribe/config` purely as client-side pre-fill suggestions, not auto-applied.
-
-### 5.7 `transcription/recording_profile.py` — the statistical fingerprint
-
-`compute_recording_profile(segments, diarization_turns)` — purely descriptive, never changes output. Runs twice per diarized request: once as a retry-decision preview, once for real on the final segments.
-
-Key metrics:
-- `overlap_ratio` — turns overlapping each other (0 for channel-split, not necessarily "no overlap").
-- `unassigned_audio_ratio` — fraction of duration whose `assignment_method` wasn't a direct `overlap`/`channel_split` hit.
-- `diarization_coverage_ratio` — fraction of the recording's own span actually covered by any diarization turn.
-- `boundary_conflict_ratio` — fraction of segments whose span is covered by more than one distinct diarization speaker.
-- `word_segment_disagreement_ratio` — fraction of segments where the segment's speaker disagrees with the majority speaker among its own words.
-- **`suspicious_segment_ratio`** / `suspicious_segment_ids` — a segment is "suspicious" if `assignment_method in (nearest, unknown)`, OR it has a boundary conflict, OR a word/segment disagreement. **This is exactly the metric the 0.48 retry logic compares before/after.**
-- Other: median/mean/p95/longest turn duration, speaker switches/minute, per-speaker time distribution, short-turn ratio (<1.5s turns), speaker_count (excludes "Unknown").
-
-`_classify` (priority order): `turn_count==0` → `insufficient_data`; `speaker_count<=1` → `monologue`; then (checked *before* rapid_dialogue deliberately) any of `overlap_ratio>=0.15`, `unassigned_audio_ratio>=0.25`, `short_turn_ratio>=0.4`, `boundary_conflict_ratio>=0.1`, `word_segment_disagreement_ratio>=0.1` → `difficult` (triggers the retry); else `speaker_switches_per_minute>=15` or `median_turn_duration_s<3.0` → `rapid_dialogue`; else `conversation`. All thresholds explicitly flagged as illustrative, not calibrated against labelled data.
-
-### 5.8 `transcription/speaker_count.py`
-`MIN_ALLOWED_SPEAKERS=1`, `MAX_ALLOWED_SPEAKERS=8`. `resolve_speaker_count` clamps a single optional exact-count hint into that range, logging any adjustment (surfaces as `speaker_hint_adjustments` in diagnostics). There is no min/max range — an unset hint means fully automatic detection; a set hint calls diarization with an exact `num_speakers=`, forcing pyannote's clustering to cut into precisely that many groups instead of estimating the count itself.
-
-### 5.9 `transcription/channels.py` — channel-split mode
-`probe_channel_count` (ffprobe) + `load_audio_channel` (ffmpeg `-map_channel`, deliberately not `whisperx.load_audio` which downmixes). Used when `channel_split=True`: **fully replaces pyannote** — no HF token needed, each channel transcribed+aligned independently, tagged `speaker=CHANNEL_N`, `assignment_method="channel_split"`, then all channels' segments merged and re-sorted by time (read order, not grouped by channel). Requires ≥2 channels or raises. In this mode: `diarization_backend="channel_split"`, empty `diarization_turns`, `speaker_embeddings=None`, retry logic never applies (nothing to retry).
-
-### 5.10 `transcription/offline.py` — air-gapped mode
-`ensure_offline_mode`, called before every model load (verdict is about network state *now*, not at startup). "auto" mode does a raw TCP connect probe to the HF endpoint on a daemon thread (avoids blocking DNS resolution stalls), cached 60s if conclusive / 5s if inconclusive. Actually flips `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE`/`HF_DATASETS_OFFLINE` env vars **and** mutates `huggingface_hub`/`transformers` module globals directly + resets cached HTTP sessions, because those libraries snapshot env vars at import time. Not about whether models load (always from cache either way) — about how long that takes (seconds vs. minutes across a full pipeline load with no network).
-
-### 5.11 Evaluation tooling (`evaluation.py`, `evaluate_diarization.py`) — NOT part of the runtime service
-Offline dev tooling for scoring diarization output against hand-labelled ground truth (DER via Hungarian-algorithm optimal speaker mapping, word-level speaker accuracy). Never invoked by the live pipeline. `evaluate_diarization.py` is a CLI wrapper that can consume this service's own diarization-detail export directly.
-
-### 5.12 Full pipeline stage order (`WhisperXService.transcribe`)
-1. Build prompt (`build_prompt` — loads model early if there's anything to budget).
-2. Resolve/clamp speaker bounds.
-3. Diarization-token precheck (fail fast if `hf_token` missing and diarizing).
-4. Resolve/load the Whisper model (lazy singleton, releases + `torch.cuda.empty_cache()`s on model switch).
-5. Branch: **channel-split** (§5.9) vs **normal** (`whisperx.load_audio` → ASR+align → diarize):
-   - ASR: batched decode (VAD onset/offset/method baked in at load), `beam_size`/`repetition_penalty`/`no_repeat_ngram_size`/`suppress_numerals`, per-call `initial_prompt`/`hotwords` swapped in under a lock.
-   - Forced alignment: per-language cached align model; failures fall back to segment-level timestamps (`alignment_failed=True`).
-   - Diarization (if enabled): clustering threshold instantiation, `assign_word_speakers`, then per-segment/word resolution (overlap → nearest-within-5s → unknown).
-   - Retry-and-compare (§5.5).
-6. Renumber raw speaker ids into sequential `"Speaker N"` (first-appearance order); `unknown`-method items get literal `"Unknown"`.
-7. **Re-segment into speaker-pure output segments** (`_build_speaker_segments`): a single Whisper ASR decode chunk (up to 30s, a VAD-driven *linguistic* boundary, not a speaker boundary) can contain several real speaker turns — common in fast interview back-and-forth, since VAD merges continuous speech with only brief pauses into one window. Rather than emitting one blended line per chunk, output segments are built from contiguous same-resolved-speaker **word** runs instead: a segment boundary falls exactly where the word-level speaker changes (a run can also merge two adjacent Whisper chunks when the same speaker continues across them). Each segment's `assignment_method`/`assignment_distance_s` is the least-confident value among its words (never overstates confidence), and `text` is reconstructed via `"".join(word)` (not space-joined — word tokens already carry their own leading space per `faster_whisper`'s tokenizer convention).
-8. Assemble full diagnostics.
-9. Compute the final recording profile (on the re-segmented output, not the retry preview) — `boundary_conflict_ratio`/`word_segment_disagreement_ratio`/`suspicious_segment_ids` now measure genuine *remaining* ambiguity after reconciliation, not the raw pre-fix disagreement between Whisper's chunking and diarization (which step 7 already resolves for chunk/speaker mismatches — it does not fix a genuinely wrong diarization cluster).
-10. Return the 6-tuple consumed directly by the FastAPI handler.
-
-### 5.13 Concurrency notes
-Process-wide singleton service, one resident ASR model + per-language alignment-model cache + one diarization pipeline. Three separate locks, deliberately not merged: `_lock` (model loading), `_options_lock` (guards the shared ASR pipeline's per-call prompt/hotwords swap — prevents one concurrent request's names/context leaking into another's transcript), `_diarize_lock` (guards clustering-threshold mutation + inference as one atomic unit).
+If you're looking for the deep internals this section used to have (diarization clustering retry thresholds, VAD tiers, prompt token budgeting, the speaker-label renumbering rules, recording-profile classification, offline-mode handling) — that's now the standalone service's own documentation, not this repo's.
 
 ---
 
@@ -452,4 +338,4 @@ Methods: `createTranscriptCorrection` (append only), `getTranscriptCorrections` 
 
 **Shared types/logic**: `packages/data-provider/src/types/files.ts`, `interviewTranscript.ts`, `meetingMinutes.ts`, `api-endpoints.ts`, `data-service.ts`; `packages/api/src/transcription/diarizationDetail.ts`, `corrections.ts`, `interviewDocx.ts`, `meetingMinutesDocx.ts`; `packages/data-schemas/src/schema/convo.ts`, `transcriptCorrection.ts`, `file.ts`; `packages/data-schemas/src/methods/transcriptCorrection.ts`.
 
-**Python microservice**: `rag_server/app.py` (FastAPI routes), `transcription/whisperx_service.py` (the pipeline), `config.py`, `schemas.py`, `speaker_count.py`, `channels.py`, `recording_profile.py`, `transcription_prompt.py`, `vocabulary.py`, `offline.py`, `evaluation.py`, `evaluate_diarization.py`.
+**Transcription microservice**: standalone service outside this repository, reached via `TRANSCRIPTION_API_URL` (see §5). `rag_server/app.py` only serves `/health`, `/embed`, `/query`, `/documents`, `/guidance`, `/text` now.
