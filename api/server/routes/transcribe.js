@@ -16,6 +16,7 @@ const {
   PermissionBits,
 } = require('librechat-data-provider');
 const {
+  logAxiosError,
   getStorageMetadata,
   extractAudioTrack,
   probeAudioChannels,
@@ -323,7 +324,12 @@ async function runTranscriptionJob({
       logger.info(`[TRANSCRIPTION] job aborted by cancel sourceFileId=${sourceFileId}`);
       return;
     }
-    logger.error(`[TRANSCRIPTION] job failed sourceFileId=${sourceFileId}`, error);
+    // Never hand the raw error to `logger.error`: an axios failure here still
+    // carries the multipart request body (the whole source recording), and the
+    // logger walks every own property of what it's given - serializing a
+    // 200MB+ upload is what OOM-killed this process. `logAxiosError` extracts
+    // only status/stack/URL.
+    logAxiosError({ message: `[TRANSCRIPTION] job failed sourceFileId=${sourceFileId}`, error });
     await db
       .updateFile({
         file_id: sourceFileId,
