@@ -18,6 +18,7 @@ const {
   configMiddleware,
 } = require('~/server/middleware');
 const { processDeleteRequest } = require('~/server/services/Files/process');
+const { requestCancel } = require('~/server/services/Transcription/jobQueue');
 const { forkConversation, duplicateConversation } = require('~/server/utils/import/fork');
 const { storage, importFileFilter } = require('~/server/routes/files/multer');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
@@ -90,9 +91,51 @@ async function cleanupExecuteCodeFiles(req, conversationIds) {
 }
 
 /**
+ * Cancels any transcription job still `queued`/`transcribing` for the
+ * conversations about to be deleted. Without this, deleting a conversation
+ * mid-transcription left the job running to completion (or timeout) with
+ * nothing left to write its result to - on a long recording that can hold
+ * the single-slot job queue (`jobQueue.js`'s one-in-flight cap) busy for
+ * many more minutes on a conversation that no longer exists. Same terminal
+ * state the manual `POST /:sourceFileId/cancel` route writes
+ * (`transcription.status: 'failed'`, `cancelledAt` set), so status polling
+ * and `/retry` treat it identically either way. Best-effort, mirrors
+ * `cleanupTranscriptFiles`: never blocks conversation deletion on failure.
+ *
+ * @param {ServerRequest} req
+ * @param {string[]} conversationIds
+ */
+async function cancelInProgressTranscriptions(req, conversationIds) {
+  if (!conversationIds?.length) {
+    return;
+  }
+  try {
+    const sourceFiles = await db.getFiles({
+      conversationId: { $in: conversationIds },
+      'transcription.status': { $in: ['queued', 'transcribing'] },
+    });
+    for (const sourceFile of sourceFiles ?? []) {
+      await db.updateFile({
+        file_id: sourceFile.file_id,
+        'transcription.status': 'failed',
+        'transcription.error': 'Cancelled: conversation deleted',
+        'transcription.cancelledAt': new Date(),
+        'transcription.completedAt': new Date(),
+      });
+      requestCancel(sourceFile.file_id);
+    }
+  } catch (error) {
+    logger.error(
+      '[cancelInProgressTranscriptions] Failed to cancel in-progress transcriptions',
+      error,
+    );
+  }
+}
+
+/**
  * The one place every delete-conversation route routes its transcript
  * cleanup through, so a future route can't add a third path that forgets
- * one of the two steps below - see `transcription/ARCHITECTURE.md` §5.4/I4.
+ * one of the steps below - see `transcription/ARCHITECTURE.md` §5.4/I4.
  * There is currently only one other route to keep in sync (`DELETE /all`);
  * this exists so that stays true rather than becoming an assumption nobody
  * checks.
@@ -101,6 +144,7 @@ async function cleanupExecuteCodeFiles(req, conversationIds) {
  * @param {string[]} conversationIds
  */
 async function deleteConversationCascade(req, conversationIds) {
+  await cancelInProgressTranscriptions(req, conversationIds);
   await cleanupTranscriptFiles(req, conversationIds);
   await cleanupExecuteCodeFiles(req, conversationIds);
   await db.deleteTranscriptCorrections(conversationIds);

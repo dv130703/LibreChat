@@ -9,6 +9,7 @@ jest.mock('@librechat/data-schemas', () => require(MOCKS).dataSchemas());
 jest.mock('librechat-data-provider', () => require(MOCKS).dataProvider());
 jest.mock('~/models', () => require(MOCKS).sharedModels());
 jest.mock('~/server/services/Files/process', () => require(MOCKS).filesProcess());
+jest.mock('~/server/services/Transcription/jobQueue', () => require(MOCKS).transcriptionJobQueue());
 jest.mock('~/server/middleware/requireJwtAuth', () => require(MOCKS).requireJwtAuth());
 jest.mock('~/server/middleware', () => require(MOCKS).middlewarePassthrough());
 jest.mock('~/server/utils/import/fork', () => require(MOCKS).forkUtils());
@@ -83,6 +84,55 @@ describe('Convos Routes', () => {
         req: expect.anything(),
         files: transcriptFiles,
       });
+    });
+
+    it('cancels in-progress transcription jobs across all deleted conversations', async () => {
+      const conversationIds = ['conv-a', 'conv-b'];
+      const { getFiles, updateFile } = require('~/models');
+      const { requestCancel } = require('~/server/services/Transcription/jobQueue');
+
+      deleteConvos.mockResolvedValue({ deletedCount: 2, conversationIds });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteAllSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+      const inProgressFiles = [{ file_id: 'src-1' }, { file_id: 'src-2' }];
+      getFiles.mockImplementation((filter) =>
+        Promise.resolve(filter['transcription.status'] ? inProgressFiles : []),
+      );
+
+      const response = await request(app).delete('/api/convos/all');
+
+      expect(response.status).toBe(201);
+      expect(getFiles).toHaveBeenCalledWith({
+        conversationId: { $in: conversationIds },
+        'transcription.status': { $in: ['queued', 'transcribing'] },
+      });
+      for (const { file_id } of inProgressFiles) {
+        expect(updateFile).toHaveBeenCalledWith({
+          file_id,
+          'transcription.status': 'failed',
+          'transcription.error': 'Cancelled: conversation deleted',
+          'transcription.cancelledAt': expect.any(Date),
+          'transcription.completedAt': expect.any(Date),
+        });
+        expect(requestCancel).toHaveBeenCalledWith(file_id);
+      }
+    });
+
+    it('does not fail conversation deletion when cancelling in-progress transcriptions throws', async () => {
+      const { getFiles } = require('~/models');
+
+      deleteConvos.mockResolvedValue({ deletedCount: 1, conversationIds: ['conv-fail'] });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteAllSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+      getFiles.mockImplementation((filter) =>
+        filter['transcription.status']
+          ? Promise.reject(new Error('Mongo unavailable'))
+          : Promise.resolve([]),
+      );
+
+      const response = await request(app).delete('/api/convos/all');
+
+      expect(response.status).toBe(201);
     });
 
     it('cleans up execute_code files (Code Interpreter output) across all deleted conversations', async () => {
@@ -367,6 +417,40 @@ describe('Convos Routes', () => {
         req: expect.anything(),
         files: [transcriptFile],
       });
+    });
+
+    it('cancels an in-progress transcription job scoped to the deleted conversation', async () => {
+      const mockConversationId = 'conv-transcribing';
+      const { getFiles, updateFile } = require('~/models');
+      const { requestCancel } = require('~/server/services/Transcription/jobQueue');
+
+      deleteConvos.mockResolvedValue({
+        deletedCount: 1,
+        conversationIds: [mockConversationId],
+      });
+      deleteToolCalls.mockResolvedValue({ deletedCount: 0 });
+      deleteConvoSharedLinksWithCleanup.mockResolvedValue({ deletedCount: 0 });
+      getFiles.mockImplementation((filter) =>
+        Promise.resolve(filter['transcription.status'] ? [{ file_id: 'src-transcribing' }] : []),
+      );
+
+      const response = await request(app)
+        .delete('/api/convos')
+        .send({ arg: { conversationId: mockConversationId } });
+
+      expect(response.status).toBe(201);
+      expect(getFiles).toHaveBeenCalledWith({
+        conversationId: { $in: [mockConversationId] },
+        'transcription.status': { $in: ['queued', 'transcribing'] },
+      });
+      expect(updateFile).toHaveBeenCalledWith({
+        file_id: 'src-transcribing',
+        'transcription.status': 'failed',
+        'transcription.error': 'Cancelled: conversation deleted',
+        'transcription.cancelledAt': expect.any(Date),
+        'transcription.completedAt': expect.any(Date),
+      });
+      expect(requestCancel).toHaveBeenCalledWith('src-transcribing');
     });
 
     it('cleans up execute_code files scoped to the deleted conversation', async () => {

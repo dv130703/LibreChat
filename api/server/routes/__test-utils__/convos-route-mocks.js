@@ -81,9 +81,12 @@ module.exports = {
     deleteToolCalls: jest.fn(),
     deleteTranscriptCorrections: jest.fn(),
     getFiles: jest.fn().mockResolvedValue([]),
+    updateFile: jest.fn().mockResolvedValue({}),
   }),
 
   filesProcess: () => ({ processDeleteRequest: jest.fn() }),
+
+  transcriptionJobQueue: () => ({ requestCancel: jest.fn() }),
 
   requireJwtAuth: () => (req, res, next) => next(),
 
