@@ -174,9 +174,10 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
     },
     maxBodyLength: Infinity,
     maxContentLength: Infinity,
-    // WhisperX on a long recording can legitimately take minutes, even with
-    // large-v3-turbo on a GPU.
-    timeout: 15 * 60 * 1000,
+    // WhisperX on a long recording can legitimately take tens of minutes,
+    // especially on the heavier models (e.g. large-v3) or a GPU near its
+    // VRAM limit - 15 min was cutting off real, still-in-progress jobs.
+    timeout: 45 * 60 * 1000,
     // Lets a best-effort cancel (`POST /:sourceFileId/cancel`) actually stop
     // this specific request instead of just discarding its eventual result -
     // see `runTranscriptionJob`'s `registerActiveController`. Kept as its
