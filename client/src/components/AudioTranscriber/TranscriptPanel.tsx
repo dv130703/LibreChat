@@ -1477,6 +1477,12 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
       if (!line) {
         return null;
       }
+      // A run of short same-speaker segments (common right after the
+      // block-size cap splits one turn into several) would otherwise repeat
+      // an identical speaker label on every row - see TranscriptRow's
+      // `isContinuation`.
+      const isContinuation =
+        index > 0 && line.speaker != null && displayLines[index - 1]?.speaker === line.speaker;
       const isDraft = draftsRef.current.some((draft) => draft.lineIndex === line.lineIndex);
       const isPreviewing = isPlaying && followedLineIndex === line.lineIndex;
       const duration =
@@ -1504,6 +1510,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
         >
           <TranscriptRow
             line={line}
+            isContinuation={isContinuation}
             isFollowed={followedLineIndex === line.lineIndex}
             isPreviewing={isPreviewing}
             playbackRatio={playbackRatio}

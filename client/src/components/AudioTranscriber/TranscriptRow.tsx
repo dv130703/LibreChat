@@ -8,6 +8,12 @@ import type { ParsedLine, SpeakerOption } from './types';
 
 interface TranscriptRowProps {
   line: ParsedLine;
+  /** True when the line directly above this one has the same speaker - a
+   *  run of short same-speaker segments (common right after the block-size
+   *  cap splits a longer turn) would otherwise repeat an identical speaker
+   *  label on every single row. Purely presentational: the dropdown still
+   *  reassigns this exact line, independent of its neighbors. */
+  isContinuation: boolean;
   isFollowed: boolean;
   isPreviewing: boolean;
   /** 0-1 progress through this line while it's the one previewing. */
@@ -43,6 +49,7 @@ interface TranscriptRowProps {
  *  skips re-rendering them. */
 function TranscriptRow({
   line,
+  isContinuation,
   isFollowed,
   isPreviewing,
   playbackRatio,
@@ -157,6 +164,13 @@ function TranscriptRow({
       data-line-index={line.lineIndex}
       className={cn(
         'rounded-lg border p-3 transition-colors',
+        // A continuation gets less top padding than a new speaker's row -
+        // react-virtualized positions rows absolutely (each `top` is fixed
+        // by the list from measured heights), so a negative margin here
+        // would overlap into the previous row's own box instead of
+        // shrinking the gap; reducing this row's own padding is the safe
+        // way to read as "still the same person talking."
+        isContinuation ? 'pt-1.5' : 'pt-3',
         isDraft && 'border-dashed border-blue-500/40 bg-blue-500/5 dark:border-blue-400/40',
         !isDraft &&
           (isFollowed
@@ -246,6 +260,7 @@ function TranscriptRow({
             speakerOptions={speakerOptions}
             onSelect={(speakerId) => onSpeakerSelect(line.lineIndex, speakerId)}
             onAddSpeaker={() => onStartAddSpeaker(line.lineIndex)}
+            compact={isContinuation}
           />
         )}
 

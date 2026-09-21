@@ -2081,6 +2081,7 @@
   "com_ui_transcript_play_line_short": "Play this line",
   "com_ui_transcript_pause_line": "Pause this line",
   "com_ui_transcript_speaker_for_line": "Speaker for this line",
+  "com_ui_transcript_speaker_for_line_named": "Speaker for this line: {{name}}",
   "com_ui_transcript_unassigned_speaker": "Speaker",
   "com_ui_transcript_search_speakers": "Search speakers…",
   "com_ui_transcript_no_speakers_found": "No speakers found",

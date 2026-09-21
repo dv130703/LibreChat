@@ -13,6 +13,14 @@ interface SpeakerDropdownProps {
   onSelect: (speakerId: string) => void;
   /** The "Add speaker" row - the caller swaps in its own naming field. */
   onAddSpeaker: () => void;
+  /** Trigger shows just the color swatch instead of swatch+name+chevron -
+   *  for a line whose speaker is already named on the line above it (see
+   *  TranscriptRow's `isContinuation`), so a run of short same-speaker
+   *  segments doesn't repeat an identical "Speaker 1" label on every one.
+   *  Still the exact same popover, still fully reassignable - only the
+   *  closed trigger's size changes, and its aria-label keeps naming the
+   *  selected speaker even though the label text is hidden. */
+  compact?: boolean;
 }
 
 /**
@@ -45,6 +53,7 @@ export default function SpeakerDropdown({
   speakerOptions,
   onSelect,
   onAddSpeaker,
+  compact = false,
 }: SpeakerDropdownProps) {
   const localize = useLocalize();
   const uid = useId();
@@ -178,10 +187,15 @@ export default function SpeakerDropdown({
           type="button"
           aria-haspopup="listbox"
           aria-expanded={open}
-          aria-label={localize('com_ui_transcript_speaker_for_line')}
+          aria-label={
+            compact && selected
+              ? localize('com_ui_transcript_speaker_for_line_named', { name: selected.name })
+              : localize('com_ui_transcript_speaker_for_line')
+          }
           onKeyDown={handleTriggerKeyDown}
           className={cn(
-            'flex items-center gap-2 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-semibold tracking-tight transition-colors',
+            'flex items-center whitespace-nowrap rounded-md border transition-colors',
+            compact ? 'gap-1 p-1' : 'gap-2 px-2.5 py-1 text-xs font-semibold tracking-tight',
             selected
               ? 'border-border-medium bg-surface-primary text-text-primary hover:border-border-heavy'
               : 'border-dashed border-border-medium bg-surface-primary text-text-secondary hover:border-border-heavy',
@@ -195,10 +209,15 @@ export default function SpeakerDropdown({
               selected ? selected.dotColorClass : 'border border-dashed border-text-secondary',
             )}
           />
-          <span>{selected ? selected.name : localize('com_ui_transcript_unassigned_speaker')}</span>
+          {!compact && (
+            <span>
+              {selected ? selected.name : localize('com_ui_transcript_unassigned_speaker')}
+            </span>
+          )}
           <ChevronDown
             className={cn(
-              'h-3 w-3 shrink-0 text-text-secondary transition-transform',
+              'shrink-0 text-text-secondary transition-transform',
+              compact ? 'h-2.5 w-2.5' : 'h-3 w-3',
               open && 'rotate-180',
             )}
           />
