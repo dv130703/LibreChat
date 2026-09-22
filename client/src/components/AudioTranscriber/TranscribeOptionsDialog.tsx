@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { Check, ChevronDown, Clock, Hash, Plus, Users, X } from 'lucide-react';
-import type { KeyboardEvent } from 'react';
+import { Check, ChevronDown, Clock, Hash, Plus, Upload, Users, X } from 'lucide-react';
+import type { ChangeEvent, KeyboardEvent } from 'react';
 import {
   OGDialog,
   OGDialogTemplate,
@@ -34,9 +34,10 @@ const DEFAULT_OPTIONS: TranscribeAudioOptions = {
   diarize: true,
 };
 
-// Kept in sync by hand with `_ALLOWED_WHISPER_MODELS` in `rag_server/app.py`,
-// the actual security boundary - this list is only what the picker offers.
-const WHISPER_MODEL_OPTIONS: Array<{
+// Kept in sync by hand with `ALLOWED_TRANSCRIPTION_MODELS` in the
+// Transcription Pipeline's `config.py` (local-llm-server), the actual
+// security boundary - this list is only what the picker offers.
+const MODEL_OPTIONS: Array<{
   value: string;
   labelKey: TranslationKeys;
 }> = [
@@ -307,6 +308,7 @@ export default function TranscribeOptionsDialog({
   const [speakerCount, setSpeakerCount] = useState<number | undefined>(undefined);
   const [termTags, setTermTags] = useState<string[]>([]);
   const [termDraft, setTermDraft] = useState('');
+  const termFileInputRef = useRef<HTMLInputElement>(null);
   const [emitNumerals, setEmitNumerals] = useState(false);
   const seededRef = useRef(false);
   // Set once the user works the language picker themselves, so a late-arriving
@@ -404,6 +406,30 @@ export default function TranscribeOptionsDialog({
     }
   };
 
+  const mergeTerms = (incoming: string[]) => {
+    setTermTags((current) => {
+      const seen = new Set(current.map((tag) => tag.toLowerCase()));
+      const additions = incoming.filter((term) => {
+        const key = term.toLowerCase();
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      });
+      return additions.length > 0 ? [...current, ...additions] : current;
+    });
+  };
+
+  const handleTermFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+    mergeTerms(parseTermTags(await file.text()));
+  };
+
   const handleConfirm = () => {
     // Channel-split already answered "who's speaking" one step earlier -
     // pyannote's own toggle and its speaker-count/grouping hints are moot
@@ -423,7 +449,7 @@ export default function TranscribeOptionsDialog({
 
   const modelOptions = useMemo<MenuOption[]>(
     () =>
-      WHISPER_MODEL_OPTIONS.map((option) => ({
+      MODEL_OPTIONS.map((option) => ({
         value: option.value,
         label:
           option.value === '' && transcribeConfig?.default_model != null
@@ -601,6 +627,23 @@ export default function TranscribeOptionsDialog({
                       {localize('com_ui_transcribe_options_add_term')}
                     </Button>
                   </div>
+                  <input
+                    ref={termFileInputRef}
+                    type="file"
+                    accept=".txt,text/plain"
+                    onChange={handleTermFileChange}
+                    className="hidden"
+                    aria-label={localize('com_ui_transcribe_options_upload_terms')}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => termFileInputRef.current?.click()}
+                    className="flex items-center gap-2 self-start"
+                  >
+                    <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                    {localize('com_ui_transcribe_options_upload_terms')}
+                  </Button>
                 </div>
 
                 {unusedSuggestions.length > 0 && (
