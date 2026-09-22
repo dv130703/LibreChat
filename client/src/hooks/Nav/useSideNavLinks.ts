@@ -5,6 +5,7 @@ import {
   Bot,
   Brain,
   Bookmark,
+  Database,
   NotebookPen,
   ScrollText,
   ArrowRightToLine,
@@ -109,6 +110,14 @@ export default function useSideNavLinks({
         onClick: () => navigate('/agents/builder/new'),
       });
     }
+
+    links.push({
+      title: 'com_ui_voice_profiles_title',
+      label: '',
+      icon: Database,
+      id: 'voice-profiles',
+      onClick: () => navigate('/voice-profiles'),
+    });
 
     if (hasAccessToSkills && skillsEnabled) {
       links.push({

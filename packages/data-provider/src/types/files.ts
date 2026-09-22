@@ -717,3 +717,20 @@ export type DeleteMutationOptions = {
   onMutate?: (variables: DeleteFilesBody) => void | Promise<unknown>;
   onError?: (error: unknown, variables: DeleteFilesBody, context?: unknown) => void;
 };
+
+/** An enrolled speaker's voice sample - a short recording plus who it is, so
+ *  future transcription/diarization can be told who's who instead of
+ *  guessing from audio alone. */
+export type TVoiceProfile = {
+  _id: string;
+  fullName: string;
+  role: string;
+  audio: {
+    filepath: string;
+    source: string;
+    type: string;
+    bytes: number;
+    filename: string;
+  };
+  createdAt: string;
+};

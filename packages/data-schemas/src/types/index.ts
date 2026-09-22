@@ -37,6 +37,7 @@ export * from './auditLog';
 export * from './group';
 /* Config */
 export * from './config';
+export * from './voiceProfile';
 /* Admin */
 export * from './admin';
 /* Web */

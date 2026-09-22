@@ -313,6 +313,7 @@ const startServer = async () => {
   app.use('/api/transcribe', routes.transcribeStream);
   app.use('/api/transcribe', routes.transcribe);
   app.use('/api/transcript-corrections', routes.transcriptCorrections);
+  app.use('/api/voice-profiles', routes.voiceProfiles);
   app.use('/api/blackbox', routes.blackBox);
   app.use('/images/', createValidateImageRequest(appConfig.secureImageLinks), routes.staticRoute);
   app.use('/api/share', preAuthTenantMiddleware, routes.share);

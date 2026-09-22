@@ -265,6 +265,8 @@ export const mcpServer = (serverName: string) => `${BASE_URL}/api/mcp/servers/${
 
 export const revertAgentVersion = (agent_id: string) => `${agents({ path: `${agent_id}/revert` })}`;
 
+export const voiceProfiles = () => `${BASE_URL}/api/voice-profiles`;
+
 export const transcribe = () => `${BASE_URL}/api/transcribe`;
 
 export const transcribeConfig = () => `${BASE_URL}/api/transcribe/config`;

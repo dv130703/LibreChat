@@ -10,6 +10,7 @@ export * from './Messages';
 export * from './Misc';
 export * from './Projects';
 export * from './Tools';
+export * from './VoiceProfiles';
 export * from './connection';
 export * from './Favorites';
 export * from './mutations';

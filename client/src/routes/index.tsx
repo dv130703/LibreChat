@@ -75,6 +75,11 @@ const loadTransparencyView = () =>
     Component: m.default,
   }));
 
+const loadVoiceProfilesView = () =>
+  import('~/components/VoiceProfiles/VoiceProfilesView').then((m) => ({
+    Component: m.default,
+  }));
+
 const baseEl = document.querySelector('base');
 const baseHref = baseEl?.getAttribute('href') || '/';
 
@@ -229,6 +234,10 @@ export const router = createBrowserRouter(
             {
               path: 'transparency/:conversationId/:messageId',
               lazy: loadTransparencyView,
+            },
+            {
+              path: 'voice-profiles',
+              lazy: loadVoiceProfilesView,
             },
           ],
         },

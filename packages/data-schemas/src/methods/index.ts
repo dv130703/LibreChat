@@ -105,6 +105,8 @@ import type {
 import { createAgentMethods, type AgentMethods, type AgentDeps } from './agent';
 /* Config */
 import { createConfigMethods, type ConfigMethods } from './config';
+/* Voice Profiles */
+import { createVoiceProfileMethods, type VoiceProfileMethods } from './voiceProfile';
 
 export { RoleConflictError, DEFAULT_REFRESH_TOKEN_EXPIRY, DEFAULT_SESSION_EXPIRY };
 export { tokenValues, cacheTokenValues, premiumTokenValues, defaultRate, createTxMethods };
@@ -158,7 +160,8 @@ export type AllMethods = UserMethods &
   SkillMethods &
   SkillSyncMethods &
   AgentMethods &
-  ConfigMethods;
+  ConfigMethods &
+  VoiceProfileMethods;
 
 /** Dependencies injected from the api layer into createMethods */
 export interface CreateMethodsDeps {
@@ -297,6 +300,8 @@ export function createMethods(
     ...agentMethods,
     /* Config */
     ...createConfigMethods(mongoose),
+    /* Voice Profiles */
+    ...createVoiceProfileMethods(mongoose),
   };
 }
 
@@ -351,4 +356,5 @@ export type {
   SkillSyncMethods,
   AgentMethods,
   ConfigMethods,
+  VoiceProfileMethods,
 };

@@ -31,6 +31,7 @@ const files = require('./files');
 const transcribe = require('./transcribe');
 const transcribeStream = require('./transcribeStream');
 const transcriptCorrections = require('./transcriptCorrections');
+const voiceProfiles = require('./voiceProfiles');
 const blackBox = require('./blackBox');
 const share = require('./share');
 const tags = require('./tags');
@@ -62,6 +63,7 @@ module.exports = {
   transcribe,
   transcribeStream,
   transcriptCorrections,
+  voiceProfiles,
   blackBox,
   share,
   banner,

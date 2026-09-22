@@ -412,6 +412,14 @@ export const getTranscribeStatus = (fileIds: string[]): Promise<f.TTranscribeSta
   return request.get(endpoints.transcribeStatus(fileIds));
 };
 
+export const getVoiceProfiles = (): Promise<f.TVoiceProfile[]> => {
+  return request.get(endpoints.voiceProfiles());
+};
+
+export const createVoiceProfile = (data: FormData): Promise<f.TVoiceProfile> => {
+  return request.postMultiPart(endpoints.voiceProfiles(), data);
+};
+
 /** Every recording attached to a conversation, with the authoritative
  *  "is it queryable" answer on each - see `TConversationTranscript`. */
 export const getConversationTranscripts = (
