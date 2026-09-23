@@ -17,6 +17,11 @@ interface EffectiveCorrections {
    *  one of these replays exactly like it would against any
    *  pipeline-produced line. */
   insertedLines: Record<number, ParsedLine>;
+  /** lineIndex -> removed. Held as a set of indices rather than by filtering
+   *  here, because a line can be deleted before the log even reaches the
+   *  `line_insert` that created it is irrelevant - order is chronological, so
+   *  the delete simply wins whenever it lands. */
+  deletedLines: Set<number>;
 }
 
 /** Replays an append-only correction log (chronological, oldest first - see
@@ -30,6 +35,7 @@ export function reduceCorrections(corrections: TTranscriptCorrection[]): Effecti
   const textEdits: Record<number, string> = {};
   const timeEdits: Record<number, { seconds: number; endSeconds: number }> = {};
   const insertedLines: Record<number, ParsedLine> = {};
+  const deletedLines = new Set<number>();
   for (const correction of corrections) {
     if (correction.type === 'speaker_rename' && correction.speakerId != null && correction.toName) {
       speakerNames[correction.speakerId] = correction.toName;
@@ -85,9 +91,15 @@ export function reduceCorrections(corrections: TTranscriptCorrection[]): Effecti
         speaker: correction.speaker,
         text: correction.text,
       };
+    } else if (correction.type === 'line_delete' && correction.lineIndex != null) {
+      deletedLines.add(correction.lineIndex);
+      // A line added and then removed leaves nothing behind: dropping it here
+      // means every consumer of `insertedLines` sees it gone, rather than each
+      // having to remember to subtract `deletedLines` itself.
+      delete insertedLines[correction.lineIndex];
     }
   }
-  return { speakerNames, segmentReassignments, textEdits, timeEdits, insertedLines };
+  return { speakerNames, segmentReassignments, textEdits, timeEdits, insertedLines, deletedLines };
 }
 
 /** A fresh, collision-free id for a speaker the pipeline never detected -

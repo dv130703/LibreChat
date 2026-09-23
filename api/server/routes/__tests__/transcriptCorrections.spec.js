@@ -85,6 +85,137 @@ describe('transcript-corrections version/index-status lifecycle', () => {
     jest.clearAllMocks();
   });
 
+  describe('POST /:transcriptFileId/line-delete', () => {
+    const THREE_LINES = [
+      '[00:00.0-00:02.0] Speaker 1: First line.',
+      '[00:02.0-00:04.0] Speaker 2: Second line.',
+      '[00:04.0-00:06.0] Speaker 1: Third line.',
+    ].join('\n');
+
+    async function seedThreeLines() {
+      const conversationId = `convo-del-${Date.now()}-${Math.random()}`;
+      const transcriptFileId = `transcript-del-${Date.now()}-${Math.random()}`;
+      await seedTranscript({ transcriptFileId, conversationId, text: THREE_LINES });
+      mockEmbedTranscript.mockResolvedValue(true);
+      return { conversationId, transcriptFileId };
+    }
+
+    /** The whole point of the feature: the removed box's seconds go to the
+     *  next box rather than becoming a stretch no line covers. */
+    it('removes the line and hands its time range to the following line', async () => {
+      const { conversationId, transcriptFileId } = await seedThreeLines();
+
+      const response = await request(app)
+        .post(`/api/transcript-corrections/${transcriptFileId}/line-delete`)
+        .send({ conversationId, lineIndex: 1 });
+
+      expect(response.status).toBe(200);
+      expect(response.body.type).toBe('line_delete');
+
+      const corrections = await mongoose.models.TranscriptCorrection.find({
+        transcriptFileId,
+      }).lean();
+      const timeEdit = corrections.find((entry) => entry.type === 'time_edit');
+      expect(timeEdit).toMatchObject({ lineIndex: 2, seconds: 2, endSeconds: 6 });
+    });
+
+    it('re-embeds the transcript without the deleted line', async () => {
+      const { conversationId, transcriptFileId } = await seedThreeLines();
+
+      await request(app)
+        .post(`/api/transcript-corrections/${transcriptFileId}/line-delete`)
+        .send({ conversationId, lineIndex: 1 });
+      await request(app)
+        .post(`/api/transcript-corrections/${transcriptFileId}/reindex`)
+        .send({ conversationId });
+
+      const embedded = mockEmbedTranscript.mock.calls.at(-1)[0].text;
+      expect(embedded).not.toContain('Second line.');
+      expect(embedded).toContain('First line.');
+      expect(embedded).toContain('Third line.');
+    });
+
+    /** Audit trail: an append-only log has to say what was taken out. */
+    it('records the removed line’s text and speaker on the event', async () => {
+      const { conversationId, transcriptFileId } = await seedThreeLines();
+
+      const response = await request(app)
+        .post(`/api/transcript-corrections/${transcriptFileId}/line-delete`)
+        .send({ conversationId, lineIndex: 1 });
+
+      expect(response.body).toMatchObject({
+        fromText: 'Second line.',
+        speaker: 'Speaker 2',
+        fromSeconds: 2,
+        fromEndSeconds: 4,
+      });
+    });
+
+    it('extends the previous line when the last line is deleted', async () => {
+      const { conversationId, transcriptFileId } = await seedThreeLines();
+
+      const response = await request(app)
+        .post(`/api/transcript-corrections/${transcriptFileId}/line-delete`)
+        .send({ conversationId, lineIndex: 2 });
+      expect(response.status).toBe(200);
+
+      const corrections = await mongoose.models.TranscriptCorrection.find({
+        transcriptFileId,
+      }).lean();
+      const timeEdit = corrections.find((entry) => entry.type === 'time_edit');
+      expect(timeEdit).toMatchObject({ lineIndex: 1, seconds: 2, endSeconds: 6 });
+    });
+
+    it('returns 400 without a lineIndex', async () => {
+      const { conversationId, transcriptFileId } = await seedThreeLines();
+
+      const response = await request(app)
+        .post(`/api/transcript-corrections/${transcriptFileId}/line-delete`)
+        .send({ conversationId });
+
+      expect(response.status).toBe(400);
+    });
+
+    it('returns 404 for a line index no line carries', async () => {
+      const { conversationId, transcriptFileId } = await seedThreeLines();
+
+      const response = await request(app)
+        .post(`/api/transcript-corrections/${transcriptFileId}/line-delete`)
+        .send({ conversationId, lineIndex: 99 });
+
+      expect(response.status).toBe(404);
+    });
+
+    /** Ownership is scoped by `user` on the conversation lookup - a
+     *  conversation the caller does not own must not be deletable from. */
+    it('refuses a conversation the caller does not own', async () => {
+      const transcriptFileId = `transcript-del-other-${Date.now()}`;
+      const conversationId = `convo-del-other-${Date.now()}`;
+      await mongoose.models.File.create({
+        user: new mongoose.Types.ObjectId().toString(),
+        file_id: transcriptFileId,
+        filename: 'other-transcript.md',
+        filepath: `transcript://${transcriptFileId}`,
+        source: 'text',
+        type: 'text/markdown',
+        bytes: THREE_LINES.length,
+        text: THREE_LINES,
+        conversationId,
+      });
+      await mongoose.models.Conversation.create({
+        conversationId,
+        user: new mongoose.Types.ObjectId().toString(),
+        endpoint: 'agents',
+      });
+
+      const response = await request(app)
+        .post(`/api/transcript-corrections/${transcriptFileId}/line-delete`)
+        .send({ conversationId, lineIndex: 1 });
+
+      expect(response.status).toBe(404);
+    });
+  });
+
   it('bumps transcriptVersion and converges to indexed after a correction, via the manual reindex endpoint', async () => {
     const conversationId = `convo-${Date.now()}`;
     const transcriptFileId = `transcript-${Date.now()}`;

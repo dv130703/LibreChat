@@ -371,7 +371,14 @@ const startServer = async () => {
        * mid-run - see transcription/ARCHITECTURE.md §5.3. Not awaited: its
        * own initial sweep failing shouldn't block server readiness, same
        * reasoning as `sweepOrphanedPreviews` above. */
-      startTranscriptionReconciliation().catch((err) => {
+      /* The sweep itself can only mark an abandoned job failed - resuming one
+       * needs the owner's tenant context and a fresh copy of the stored
+       * source audio, neither of which a background sweep has. Passed as a
+       * follow-up so it runs after every sweep that marked something, not
+       * only the one at boot. */
+      startTranscriptionReconciliation(() =>
+        routes.transcribe.resumeInterruptedTranscriptions(appConfig),
+      ).catch((err) => {
         logger.error('[startTranscriptionReconciliation] Failed to start:', err);
       });
 

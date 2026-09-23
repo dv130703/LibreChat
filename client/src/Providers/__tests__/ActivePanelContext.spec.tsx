@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/extend-expect';
 import {
   ActivePanelProvider,
   resolveActivePanel,
+  resolveRouteActiveId,
   useActivePanel,
 } from '~/Providers/ActivePanelContext';
 
@@ -97,5 +98,46 @@ describe('resolveActivePanel', () => {
   it('returns active unchanged when no link has a Component', () => {
     const allNavOnly = [{ id: 'hide-panel' }, { id: 'agents' }];
     expect(resolveActivePanel('agents', allNavOnly)).toBe('agents');
+  });
+});
+
+describe('resolveRouteActiveId', () => {
+  const links = [
+    { id: 'conversations' },
+    { id: 'agents', path: '/agents/builder' },
+    { id: 'information-management', path: '/information-management' },
+    { id: 'files' },
+  ];
+
+  /** The regression: a full-page link could never show as selected, because
+   *  panel state only ever tracks panels that render inside the sidebar. */
+  it('selects the link whose page is open', () => {
+    expect(resolveRouteActiveId(links, '/information-management')).toBe('information-management');
+  });
+
+  /** Agent Builder has sub-routes that are all the same destination. */
+  it('matches a sub-route of a link’s page', () => {
+    expect(resolveRouteActiveId(links, '/agents/builder/new')).toBe('agents');
+    expect(resolveRouteActiveId(links, '/agents/builder/abc123')).toBe('agents');
+  });
+
+  it('selects nothing on a route no link owns', () => {
+    expect(resolveRouteActiveId(links, '/c/new')).toBeUndefined();
+  });
+
+  it('ignores links that render a panel rather than a page', () => {
+    expect(resolveRouteActiveId([{ id: 'conversations' }], '/conversations')).toBeUndefined();
+  });
+
+  /** A shorter path that happens to prefix a longer one must not shadow it,
+   *  or the more general link would swallow the specific page. */
+  it('prefers the most specific matching path', () => {
+    const nested = [
+      { id: 'broad', path: '/agents' },
+      { id: 'builder', path: '/agents/builder' },
+    ];
+
+    expect(resolveRouteActiveId(nested, '/agents/builder/new')).toBe('builder');
+    expect(resolveRouteActiveId(nested, '/agents/marketplace')).toBe('broad');
   });
 });

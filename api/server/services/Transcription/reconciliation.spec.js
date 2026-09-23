@@ -6,6 +6,9 @@ const {
   HEARTBEAT_INTERVAL_MS,
   STALE_THRESHOLD_MS,
   reconcileStaleTranscriptionJobs,
+  startTranscriptionReconciliation,
+  stopTranscriptionReconciliation,
+  INTERRUPTED_ERROR,
 } = require('./reconciliation');
 
 describe('transcription reconciliation sweep (transcription/ARCHITECTURE.md §5.3)', () => {
@@ -138,5 +141,84 @@ describe('transcription reconciliation sweep (transcription/ARCHITECTURE.md §5.
 
     const second = await reconcileStaleTranscriptionJobs();
     expect(second.reconciled).toBe(0);
+  });
+
+  describe('resume follow-up', () => {
+    afterEach(() => stopTranscriptionReconciliation());
+
+    /** A restart abandons the job, the sweep marks it failed, and the
+     *  follow-up is what actually re-queues it - without being invoked, an
+     *  interrupted transcription just sits failed. */
+    it('runs the follow-up after a sweep that reconciled something', async () => {
+      await seedSourceFile('interrupted-1', {
+        status: 'transcribing',
+        jobId: 'r1',
+        instanceId: 'host-1',
+        requestedOptions: {},
+        heartbeatAt: new Date(Date.now() - STALE_THRESHOLD_MS - 1000),
+      });
+      const onReconciled = jest.fn();
+
+      await startTranscriptionReconciliation(onReconciled);
+
+      expect(onReconciled).toHaveBeenCalledTimes(1);
+      const file = await File.findOne({ file_id: 'interrupted-1' }).lean();
+      expect(file.transcription.error).toBe(INTERRUPTED_ERROR);
+    });
+
+    /** A job abandoned by a previous process was already marked failed by
+     *  that process's sweep, so this boot finds nothing stale while the job
+     *  still needs recovering - recovery cannot be conditional on this
+     *  sweep having done something. */
+    it('runs the follow-up at boot even when nothing was stale', async () => {
+      await seedSourceFile('healthy-1', {
+        status: 'transcribing',
+        jobId: 'r2',
+        instanceId: 'host-1',
+        requestedOptions: {},
+        heartbeatAt: new Date(),
+      });
+      const onReconciled = jest.fn();
+
+      await startTranscriptionReconciliation(onReconciled);
+
+      expect(onReconciled).toHaveBeenCalledTimes(1);
+    });
+
+    /** A resume that throws must not take the sweep down with it, or one bad
+     *  job would stop every later sweep from reconciling anything. */
+    it('survives a follow-up that throws', async () => {
+      await seedSourceFile('interrupted-2', {
+        status: 'transcribing',
+        jobId: 'r3',
+        instanceId: 'host-1',
+        requestedOptions: {},
+        heartbeatAt: new Date(Date.now() - STALE_THRESHOLD_MS - 1000),
+      });
+
+      await expect(
+        startTranscriptionReconciliation(() => {
+          throw new Error('download failed');
+        }),
+      ).resolves.not.toThrow();
+
+      const file = await File.findOne({ file_id: 'interrupted-2' }).lean();
+      expect(file.transcription.status).toBe('failed');
+    });
+
+    it('works with no follow-up supplied', async () => {
+      await seedSourceFile('interrupted-3', {
+        status: 'transcribing',
+        jobId: 'r4',
+        instanceId: 'host-1',
+        requestedOptions: {},
+        heartbeatAt: new Date(Date.now() - STALE_THRESHOLD_MS - 1000),
+      });
+
+      await expect(startTranscriptionReconciliation()).resolves.not.toThrow();
+
+      const file = await File.findOne({ file_id: 'interrupted-3' }).lean();
+      expect(file.transcription.status).toBe('failed');
+    });
   });
 });

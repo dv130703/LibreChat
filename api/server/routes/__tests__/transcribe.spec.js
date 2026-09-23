@@ -1,6 +1,7 @@
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 const crypto = require('crypto');
 const express = require('express');
 const request = require('supertest');
@@ -88,14 +89,36 @@ jest.mock('@librechat/api', () => ({
   extractAudioTrack: jest.fn((inputPath, outputPath) =>
     require('fs').promises.copyFile(inputPath, outputPath),
   ),
+  // Same stand-in as `extractAudioTrack` above, for the per-speaker clip cut
+  // out of the source recording during automatic speaker labeling.
+  extractAudioClip: jest.fn((inputPath, outputPath) =>
+    require('fs').promises.copyFile(inputPath, outputPath),
+  ),
   // Real ffprobe can't read channel count from fake bytes either - `POST
   // /probe`'s own tests set this per-case; other tests never call it.
   probeAudioChannels: (...args) => mockProbeAudioChannels(...args),
+  // Only reached by the automatic speaker-labeling tests below, so
+  // `recognizeSpeaker` (real, unmocked) gets past its own configured-service
+  // guard. The actual network call is stubbed at `axios.post` instead - the
+  // genuine external boundary - so the real `matchAgainstProfiles`/
+  // `recognizeSpeaker` candidate-building and response-mapping logic runs
+  // for real in these tests.
+  getSpeakerRecognitionApiUrl: jest.fn(() => 'http://fake-speaker-recognition-service'),
 }));
 
 const mockTranscribeAndEmbed = jest.fn();
+const mockEmbedTranscript = jest.fn();
+const mockCancelTranscription = jest.fn();
 jest.mock('~/server/services/Transcription', () => ({
   transcribeAndEmbed: (...args) => mockTranscribeAndEmbed(...args),
+  // Only reached by the automatic speaker-labeling tests below, via
+  // `recordCorrectionAndReembed`'s fire-and-forget re-embed - `performReembed`
+  // catches and logs any failure internally, so this only needs to exist,
+  // not do anything real.
+  embedTranscript: (...args) => mockEmbedTranscript(...args),
+  // Fire-and-forget from the cancel route (see its own comment) - only
+  // needs to exist and resolve so that route doesn't throw calling it.
+  cancelTranscription: (...args) => mockCancelTranscription(...args),
 }));
 
 const DEFAULT_RESULT = {
@@ -131,6 +154,8 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
   let File;
   let Conversation;
   let Message;
+  let VoiceProfile;
+  let TranscriptCorrection;
 
   beforeAll(async () => {
     mongoServer = await MongoMemoryServer.create();
@@ -143,6 +168,8 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     File = mongoose.models.File;
     Conversation = mongoose.models.Conversation;
     Message = mongoose.models.Message;
+    VoiceProfile = mongoose.models.VoiceProfile;
+    TranscriptCorrection = mongoose.models.TranscriptCorrection;
 
     const methods = createMethods(mongoose);
     await methods.seedDefaultRoles();
@@ -187,6 +214,14 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
     jest.clearAllMocks();
     mockTranscribeAndEmbed.mockResolvedValue(DEFAULT_RESULT);
     mockProbeAudioChannels.mockResolvedValue(1);
+    mockEmbedTranscript.mockResolvedValue(false);
+    mockCancelTranscription.mockResolvedValue(false);
+    // Safe no-match default so a voice profile left over from another test
+    // (real Mongo, not reset per-test) never hits a real network call for an
+    // unrelated test - only the tests below override this.
+    jest.spyOn(axios, 'post').mockResolvedValue({
+      data: { recognized: false, best_match: null, scores: [] },
+    });
   });
 
   const tinyAudioBuffer = Buffer.from('fake-audio-bytes');
@@ -526,6 +561,308 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
         expect(convo).not.toBeNull();
         expect(convo.title).toBe('Do not delete me');
       });
+    });
+  });
+
+  describe('automatic speaker labeling after transcription', () => {
+    const audioAsset = {
+      filepath: '/fake/enrollment-clip.wav',
+      source: 'local',
+      type: 'audio/wav',
+      bytes: 10,
+      filename: 'enrollment-clip.wav',
+    };
+
+    afterEach(async () => {
+      // Real Mongo persists across tests in this file (unlike the mocks) -
+      // without this, a profile enrolled here would make every later test's
+      // job also attempt (harmlessly, per the safe default above) to
+      // auto-label against it.
+      await VoiceProfile.deleteMany({});
+    });
+
+    it('renames a diarized speaker to the enrolled voice profile the service recognizes', async () => {
+      const conversationId = crypto.randomUUID();
+      const profile = await db.createVoiceProfile({
+        userId,
+        fullName: 'Ada Lovelace',
+        role: 'Engineer',
+        audio: audioAsset,
+        embedding: [0.1, 0.2, 0.3],
+      });
+      axios.post.mockResolvedValue({
+        data: {
+          recognized: true,
+          best_match: String(profile._id),
+          scores: [{ label: String(profile._id), score: 0.9 }],
+        },
+      });
+
+      await uploadFile(conversationId);
+      await onIdle();
+
+      const correction = await TranscriptCorrection.findOne({
+        conversationId,
+        type: 'speaker_rename',
+      }).lean();
+      expect(correction).toMatchObject({
+        transcriptFileId: 'source-file-transcript',
+        speakerId: 'SPEAKER_00',
+        fromName: 'SPEAKER_00',
+        toName: 'Ada Lovelace',
+      });
+    });
+
+    /** The toggle in the transcribe dialog. Off means no clip is ever sent
+     *  to the recognition service - which is the escape hatch when nobody in
+     *  the recording is enrolled and matching would only mislabel them. */
+    it('sends nothing to the recognition service when voice recognition is off', async () => {
+      const conversationId = crypto.randomUUID();
+      await db.createVoiceProfile({
+        userId,
+        fullName: 'Ada Lovelace',
+        role: 'Engineer',
+        audio: audioAsset,
+        embedding: [0.1, 0.2, 0.3],
+      });
+
+      await uploadFile(conversationId, 'meeting.mp3', {
+        options: JSON.stringify({ diarize: true, voiceRecognition: false }),
+      });
+      await onIdle();
+
+      expect(axios.post).not.toHaveBeenCalledWith(
+        expect.stringContaining('/recognize'),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    /** A caller that predates the option, or any API client that omits it,
+     *  must keep the behaviour it has always had. */
+    it('still matches voices when the option is absent entirely', async () => {
+      const conversationId = crypto.randomUUID();
+      await db.createVoiceProfile({
+        userId,
+        fullName: 'Ada Lovelace',
+        role: 'Engineer',
+        audio: audioAsset,
+        embedding: [0.1, 0.2, 0.3],
+      });
+
+      await uploadFile(conversationId, 'meeting.mp3', {
+        options: JSON.stringify({ diarize: true }),
+      });
+      await onIdle();
+
+      expect(axios.post).toHaveBeenCalledWith(
+        expect.stringContaining('/recognize'),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('writes no correction when the speaker does not match any enrolled profile', async () => {
+      const conversationId = crypto.randomUUID();
+      await db.createVoiceProfile({
+        userId,
+        fullName: 'Someone Else',
+        role: 'Engineer',
+        audio: audioAsset,
+        embedding: [0.9, 0.9, 0.9],
+      });
+      axios.post.mockResolvedValue({ data: { recognized: false, best_match: null, scores: [] } });
+
+      await uploadFile(conversationId);
+      await onIdle();
+
+      const correction = await TranscriptCorrection.findOne({
+        conversationId,
+        type: 'speaker_rename',
+      }).lean();
+      expect(correction).toBeNull();
+    });
+
+    it('writes no correction and still completes the job when the user has no enrolled profiles', async () => {
+      const conversationId = crypto.randomUUID();
+
+      const response = await uploadFile(conversationId);
+      await onIdle();
+
+      expect(axios.post).not.toHaveBeenCalledWith(
+        expect.stringContaining('/recognize'),
+        expect.anything(),
+        expect.anything(),
+      );
+      const sourceFile = await File.findOne({ file_id: response.body.sourceFile.file_id }).lean();
+      expect(sourceFile.transcription.status).toBe('ready');
+    });
+  });
+
+  /**
+   * The stage that names speakers from what the transcript SAYS, after voice
+   * matching has had its turn. Only the LLM endpoint is stubbed - the genuine
+   * external boundary, same rationale as `axios.post` above. Evidence
+   * retrieval, the tool schema, assignment verification and the correction
+   * write all run for real against real Mongo.
+   */
+  describe('content-based speaker identification after transcription', () => {
+    const INTERVIEW = {
+      ...DEFAULT_RESULT,
+      text: [
+        'Speaker 1: For the record, please state your full name.',
+        'Speaker 2: Rowan Donbry, finance director.',
+      ].join('\n'),
+    };
+
+    let originalFetch;
+    const originalEnv = {};
+
+    beforeEach(() => {
+      originalFetch = global.fetch;
+      for (const key of ['SPEAKER_ID_MODEL', 'SPEAKER_ID_BASE_URL', 'SPEAKER_ID_API_KEY']) {
+        originalEnv[key] = process.env[key];
+      }
+      process.env.SPEAKER_ID_MODEL = 'test-model';
+      process.env.SPEAKER_ID_BASE_URL = 'http://fake-llm/v1';
+      mockTranscribeAndEmbed.mockResolvedValue(INTERVIEW);
+    });
+
+    afterEach(async () => {
+      global.fetch = originalFetch;
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value == null) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      await VoiceProfile.deleteMany({});
+      // Every test here reuses `DEFAULT_RESULT`'s single `transcriptFileId`,
+      // and corrections are keyed by exactly that - so a rename written by
+      // one test would leave its speaker already named for the next, which
+      // is precisely what this stage then skips.
+      await TranscriptCorrection.deleteMany({});
+    });
+
+    function stubModel(assignments) {
+      global.fetch = jest.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                tool_calls: assignments.map((assignment) => ({
+                  function: {
+                    name: 'assign_speaker',
+                    arguments: JSON.stringify(assignment),
+                  },
+                })),
+              },
+            },
+          ],
+        }),
+      }));
+    }
+
+    /** The headline behavior: the transcript misspells the name, the enrolled
+     *  roster supplies the correct spelling, and nobody types anything. */
+    it('names an unidentified speaker from a self-introduction, using the roster spelling', async () => {
+      const conversationId = crypto.randomUUID();
+      await db.createVoiceProfile({
+        userId,
+        fullName: 'Rowan Danbury',
+        role: 'Finance Director',
+        audio: {
+          filepath: '/fake/enrollment-clip.wav',
+          source: 'local',
+          type: 'audio/wav',
+          bytes: 10,
+          filename: 'enrollment-clip.wav',
+        },
+        embedding: [0.1, 0.2, 0.3],
+      });
+      stubModel([
+        {
+          speakerId: 'Speaker 2',
+          name: 'Rowan Danbury',
+          evidenceLineIndex: 1,
+          evidenceQuote: 'Rowan Donbry, finance director.',
+          confidence: 0.95,
+        },
+      ]);
+
+      await uploadFile(conversationId);
+      await onIdle();
+
+      const correction = await TranscriptCorrection.findOne({
+        conversationId,
+        type: 'speaker_rename',
+        speakerId: 'Speaker 2',
+      }).lean();
+      expect(correction).toMatchObject({ fromName: 'Speaker 2', toName: 'Rowan Danbury' });
+    });
+
+    /** The hallucination gate, end to end: a confident assignment citing a
+     *  line that does not say what it claims must never reach the transcript. */
+    it('writes no correction when the model cites evidence the transcript does not contain', async () => {
+      const conversationId = crypto.randomUUID();
+      stubModel([
+        {
+          speakerId: 'Speaker 2',
+          name: 'Someone Invented',
+          evidenceLineIndex: 1,
+          evidenceQuote: 'I am Someone Invented and I run the company.',
+          confidence: 0.99,
+        },
+      ]);
+
+      await uploadFile(conversationId);
+      await onIdle();
+
+      const correction = await TranscriptCorrection.findOne({ conversationId }).lean();
+      expect(correction).toBeNull();
+    });
+
+    it('sends the model the two identification tools, assignment scoped to unnamed speakers', async () => {
+      stubModel([]);
+
+      await uploadFile(crypto.randomUUID());
+      await onIdle();
+
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(body.tools.map((tool) => tool.function.name)).toEqual([
+        'assign_speaker',
+        'note_present_person',
+      ]);
+      expect(body.tools[0].function.parameters.properties.speakerId.enum).toEqual([
+        'Speaker 1',
+        'Speaker 2',
+      ]);
+    });
+
+    it('completes the job when the identification endpoint is down', async () => {
+      const conversationId = crypto.randomUUID();
+      global.fetch = jest.fn(async () => {
+        throw new Error('connection refused');
+      });
+
+      const response = await uploadFile(conversationId);
+      await onIdle();
+
+      const sourceFile = await File.findOne({ file_id: response.body.sourceFile.file_id }).lean();
+      expect(sourceFile.transcription.status).toBe('ready');
+    });
+
+    it('never calls the model when it is not configured', async () => {
+      delete process.env.SPEAKER_ID_MODEL;
+      global.fetch = jest.fn();
+
+      await uploadFile(crypto.randomUUID());
+      await onIdle();
+
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 
@@ -890,6 +1227,12 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
       expect(sourceFileAfterCancel.transcription.status).toBe('failed');
       expect(sourceFileAfterCancel.transcription.error).toBe('Cancelled by user');
       expect(sourceFileAfterCancel.transcription.cancelledAt).toBeTruthy();
+
+      // Not just Node giving up on listening - the Python service is
+      // actually told to kill the subprocess and free the GPU lock.
+      expect(mockCancelTranscription).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceFileId }),
+      );
 
       // The job itself is still running (the mock hasn't resolved yet) -
       // letting it finish "successfully" now must not resurrect a 'ready'

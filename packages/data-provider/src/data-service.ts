@@ -532,6 +532,14 @@ export const insertTranscriptLine = (
   return request.post(endpoints.insertTranscriptLine(transcriptFileId), data);
 };
 
+/** Removes a line, handing its time range to a neighbor server-side. */
+export const deleteTranscriptLine = (
+  transcriptFileId: string,
+  data: f.TLineDeleteRequest,
+): Promise<f.TTranscriptCorrection> => {
+  return request.post(endpoints.deleteTranscriptLine(transcriptFileId), data);
+};
+
 /** Corrects one line's start/end time. */
 export const editTranscriptTime = (
   transcriptFileId: string,

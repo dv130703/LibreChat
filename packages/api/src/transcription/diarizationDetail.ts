@@ -34,7 +34,7 @@ interface RawTranscriptSegment {
   words?: RawWordSpan[];
 }
 
-interface RawDiarizationTurn {
+export interface RawDiarizationTurn {
   start: number;
   end: number;
   speaker: string;

@@ -13,6 +13,7 @@ import {
   RotateCcw,
   AlertCircle,
   ArrowUpToLine,
+  Trash2,
   ArrowDownToLine,
   ChevronDown,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ import {
   useEditTranscriptTextMutation,
   useEditTranscriptTimeMutation,
   useInsertTranscriptLineMutation,
+  useDeleteTranscriptLineMutation,
   useRetranscribeAudioMutation,
   useExportInterviewDocxMutation,
   useExportMeetingMinutesDocxMutation,
@@ -46,6 +48,10 @@ import { useChatHeaderSlot } from './panelHostContext';
 import type { PanelComponentProps } from './panelHostContext';
 import { computeInsertionSlots, formatSlotTimestamp } from './lineInsert';
 import { reduceCorrections, createCustomSpeakerId } from './corrections';
+import DeleteLineDialog from './DeleteLineDialog';
+import type { PendingLineDeletion } from './DeleteLineDialog';
+import { getTurnPosition } from './speakerTurns';
+import { useCachedTranscript } from './useCachedTranscript';
 import { findFollowedLineIndex } from './playbackSync';
 import { getSpeakerDotColor } from './speakerColors';
 import TranscribeOptionsDialog from './TranscribeOptionsDialog';
@@ -415,7 +421,7 @@ MeasuredRow.displayName = 'TranscriptMeasuredRow';
  */
 function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelComponentProps) {
   const localize = useLocalize();
-  const { isAuthenticated } = useAuthContext();
+  const { isAuthenticated, user } = useAuthContext();
   const {
     data: conversation,
     isLoading: isConvoLoading,
@@ -517,9 +523,17 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
   }, [sourceFileId, fileId, onResolved]);
 
   const { data: preview, isLoading: isPreviewLoading } = useFilePreview(transcriptFileId);
+  /** Locally cached copy of this transcript, so reopening it after a reload
+   *  - or with no connection at all - paints immediately instead of waiting
+   *  on (or failing) the fetch above. Strictly a fallback: `preview.text`
+   *  below takes precedence the moment it arrives, so the network stays
+   *  authoritative and this can never mask a correction made elsewhere for
+   *  longer than one refetch. */
+  const cachedText = useCachedTranscript(user?.id, transcriptFileId, preview?.text);
+  const transcriptText = preview?.text ?? cachedText;
   const lines = useMemo(
-    () => (preview?.text ? parseTranscriptText(preview.text) : []),
-    [preview?.text],
+    () => (transcriptText ? parseTranscriptText(transcriptText) : []),
+    [transcriptText],
   );
 
   const { data: corrections } = useTranscriptCorrectionsQuery(transcriptFileId, conversationId);
@@ -554,10 +568,8 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
     },
     [sourceFileId, retranscribe],
   );
-  const { speakerNames, segmentReassignments, textEdits, timeEdits, insertedLines } = useMemo(
-    () => reduceCorrections(corrections ?? []),
-    [corrections],
-  );
+  const { speakerNames, segmentReassignments, textEdits, timeEdits, insertedLines, deletedLines } =
+    useMemo(() => reduceCorrections(corrections ?? []), [corrections]);
 
   /** `reduceCorrections` builds brand-new objects every time `corrections`
    *  changes at all - including for a plain text-edit correction, which
@@ -584,7 +596,14 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
 
   const effectiveLines = useMemo(() => {
     const insertedList = Object.values(stableInsertedLines);
-    const baseLines = insertedList.length === 0 ? lines : [...lines, ...insertedList];
+    const withInserts = insertedList.length === 0 ? lines : [...lines, ...insertedList];
+    // Deleted lines drop out before any overlay work: a removed line has no
+    // reassignment, text or timing worth computing, and leaving it in would
+    // put it back on screen.
+    const baseLines =
+      deletedLines.size === 0
+        ? withInserts
+        : withInserts.filter((line) => !deletedLines.has(line.lineIndex));
     const hasOverlay =
       Object.keys(stableSegmentReassignments).length > 0 ||
       Object.keys(textEdits).length > 0 ||
@@ -612,7 +631,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
     return insertedList.length === 0
       ? overlaid
       : overlaid.sort((a, b) => a.lineIndex - b.lineIndex);
-  }, [lines, stableSegmentReassignments, textEdits, timeEdits, stableInsertedLines]);
+  }, [lines, stableSegmentReassignments, textEdits, timeEdits, stableInsertedLines, deletedLines]);
 
   /** `effectiveLines` gets a new array reference on every single correction
    *  (any edit, on any line, of any type) - the fast path a few lines up
@@ -640,6 +659,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
    *  becomes one (see `onTextCommit`). Purely local state; never sent
    *  anywhere until it's committed. */
   const [drafts, setDrafts] = useState<ParsedLine[]>([]);
+  const [pendingDelete, setPendingDelete] = useState<PendingLineDeletion | null>(null);
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
 
@@ -1057,6 +1077,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
   const editTextMutation = useEditTranscriptTextMutation(transcriptFileId ?? '');
   const editTimeMutation = useEditTranscriptTimeMutation(transcriptFileId ?? '');
   const insertLineMutation = useInsertTranscriptLineMutation(transcriptFileId ?? '');
+  const deleteLineMutation = useDeleteTranscriptLineMutation(transcriptFileId ?? '');
 
   const renameSpeaker = useCallback(
     (speakerId: string, newName: string) => {
@@ -1378,6 +1399,46 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
     [contextMenu, closeContextMenu],
   );
 
+  /** Asks before removing a committed line. A draft has never been sent
+   *  anywhere and holds nothing a reviewer could lose track of, so it is
+   *  dropped straight away - the same as the row's own remove-draft button,
+   *  which has never prompted either. Anything already in the transcript
+   *  goes through `DeleteLineDialog` first, because the risk being guarded
+   *  against is a misclick in a list of near-identical rows. */
+  const handleDeleteLine = useCallback(() => {
+    const lineIndex = contextMenu?.lineIndex;
+    closeContextMenu();
+    if (lineIndex == null || conversationId == null) {
+      return;
+    }
+    if (draftsRef.current.some((draft) => draft.lineIndex === lineIndex)) {
+      setDrafts((current) => current.filter((draft) => draft.lineIndex !== lineIndex));
+      return;
+    }
+    const line = findEffectiveLine(lineIndex);
+    if (line == null) {
+      return;
+    }
+    setPendingDelete({
+      lineIndex,
+      // An unassigned line has no speaker at all - the dialog just omits the
+      // attribution rather than showing a name for nobody.
+      speaker: line.speaker != null ? getDisplayName(line.speaker) : undefined,
+      text: line.text,
+    });
+  }, [contextMenu, closeContextMenu, conversationId, findEffectiveLine, getDisplayName]);
+
+  const confirmDeleteLine = useCallback(() => {
+    const lineIndex = pendingDelete?.lineIndex;
+    setPendingDelete(null);
+    if (lineIndex == null || conversationId == null) {
+      return;
+    }
+    deleteLineMutation.mutate({ conversationId, lineIndex });
+    // See the eslint-disable note on `renameSpeaker` above - same reasoning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDelete, conversationId, deleteLineMutation.mutate]);
+
   useEffect(() => {
     if (!contextMenu) {
       return;
@@ -1477,12 +1538,12 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
       if (!line) {
         return null;
       }
-      // A run of short same-speaker segments (common right after the
-      // block-size cap splits one turn into several) would otherwise repeat
-      // an identical speaker label on every row - see TranscriptRow's
-      // `isContinuation`.
-      const isContinuation =
-        index > 0 && line.speaker != null && displayLines[index - 1]?.speaker === line.speaker;
+      // Consecutive lines from one speaker render as a single turn box - the
+      // pipeline splits a turn on a 0.6s pause or every 25 words, so one
+      // person speaking uninterrupted arrives as many lines. See
+      // `getTurnPosition`; the row draws the box's edges from these flags.
+      const { isTurnStart, isTurnEnd } = getTurnPosition(displayLines, index);
+      const isContinuation = !isTurnStart;
       const isDraft = draftsRef.current.some((draft) => draft.lineIndex === line.lineIndex);
       const isPreviewing = isPlaying && followedLineIndex === line.lineIndex;
       const duration =
@@ -1511,6 +1572,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
           <TranscriptRow
             line={line}
             isContinuation={isContinuation}
+            isTurnEnd={isTurnEnd}
             isFollowed={followedLineIndex === line.lineIndex}
             isPreviewing={isPreviewing}
             playbackRatio={playbackRatio}
@@ -1705,9 +1767,12 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
                 type="button"
                 onClick={() => retryTranscription.mutate({ sourceFileId })}
                 disabled={retryTranscription.isLoading}
-                className="rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
+                className="flex items-center gap-1.5 rounded-md border border-border-medium px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary"
               >
-                {localize('com_ui_transcript_card_retry')}
+                {retryTranscription.isLoading && <Spinner className="h-3.5 w-3.5 shrink-0" />}
+                {retryTranscription.isLoading
+                  ? localize('com_ui_transcript_card_retrying')
+                  : localize('com_ui_transcript_card_retry')}
               </button>
             )}
           </div>
@@ -1774,6 +1839,15 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
             <button
               type="button"
               role="menuitem"
+              onClick={handleDeleteLine}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-red-500 transition-colors hover:bg-surface-hover dark:text-red-400"
+            >
+              <Trash2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+              {localize('com_ui_transcript_context_menu_delete_line')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
               onClick={() => handleInsertDraftLine('below')}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-text-primary transition-colors hover:bg-surface-hover"
             >
@@ -1786,6 +1860,11 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
           </div>,
           document.body,
         )}
+      <DeleteLineDialog
+        pending={pendingDelete}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+        onConfirm={confirmDeleteLine}
+      />
       <TranscribeOptionsDialog
         isOpen={retranscribeOpen}
         onOpenChange={setRetranscribeOpen}

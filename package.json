@@ -37,7 +37,7 @@
     "llm-server": "node config/start-llm-server.js",
     "backend:inspect": "cross-env NODE_ENV=production node --inspect --expose-gc api/server/index.js",
     "backend:dev": "cross-env NODE_ENV=development npx nodemon api/server/index.js",
-    "dev": "concurrently -n \"[CODEAPI],,[FRONTEND],[LLM]\" --prefix \"{name}\" -c cyan,green,green,magenta \"npm:codeapi\" \"npm:backend:dev\" \"npm:frontend:dev\" \"npm:llm-server\"",
+    "dev": "concurrently --kill-others --kill-signal SIGTERM -n \"[CODEAPI],,[FRONTEND],[LLM]\" --prefix \"{name}\" -c cyan,green,green,magenta \"npm:codeapi\" \"npm:backend:dev\" \"npm:frontend:dev\" \"npm:llm-server\"",
     "backend:experimental": "cross-env NODE_ENV=production node api/server/experimental.js",
     "backend:stop": "node config/stop-backend.js",
     "build:data-provider": "cd packages/data-provider && npm run build",

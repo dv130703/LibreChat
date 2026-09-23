@@ -325,6 +325,8 @@ export const editTranscriptTime = (transcriptFileId: string) =>
   `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/time-edit`;
 export const insertTranscriptLine = (transcriptFileId: string) =>
   `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/line-insert`;
+export const deleteTranscriptLine = (transcriptFileId: string) =>
+  `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}/line-delete`;
 export const files = () => `${BASE_URL}/api/files`;
 export const fileUpload = () => `${BASE_URL}/api/files`;
 export const fileDelete = () => `${BASE_URL}/api/files`;

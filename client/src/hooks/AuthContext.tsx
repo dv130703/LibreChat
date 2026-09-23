@@ -31,6 +31,7 @@ import { SESSION_KEY, isSafeRedirect, getPostLoginRedirect } from '~/utils';
 import { getResponseStatus } from '~/utils/errors';
 import useTimeout from './useTimeout';
 import store from '~/store';
+import { clearTranscriptCache } from '~/components/AudioTranscriber/transcriptCache';
 
 const AuthContext = (import.meta.hot?.data?.__AuthContext ??
   createContext<TAuthContext | undefined>(undefined)) as React.Context<TAuthContext | undefined>;
@@ -162,6 +163,14 @@ const AuthContextProvider = ({
       if (redirect) {
         logoutRedirectRef.current = redirect;
       }
+      // Transcripts are cached to IndexedDB so they survive a reload (see
+      // `transcriptCache`). Interview content must not outlive the session
+      // on a shared machine, so the on-disk copy goes at logout. Not
+      // awaited - logging out must never be blocked or failed by a storage
+      // error, and `clearTranscriptCache` swallows those by design. Entries
+      // are user-scoped as a second line of defence, so even a clear that
+      // silently failed cannot expose one account's transcripts to another.
+      void clearTranscriptCache();
       logoutUser.mutate(undefined);
     },
     [logoutUser],

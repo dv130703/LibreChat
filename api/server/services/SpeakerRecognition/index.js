@@ -111,4 +111,46 @@ async function recognizeSpeaker({ req, file, candidates }) {
   }
 }
 
-module.exports = { embedSpeaker, recognizeSpeaker };
+/**
+ * Matches an audio clip against a user's already-fetched voice profiles.
+ * Shared by `POST /api/voice-profiles/recognize` and the automatic
+ * speaker-labeling step run after transcription - both need the same
+ * candidate-building and score-to-identity mapping, just against a clip that
+ * arrives differently (a direct upload vs. one cut from the source
+ * recording).
+ *
+ * @param {Object} params
+ * @param {ServerRequest} params.req
+ * @param {{path: string, originalname: string, mimetype: string}} params.file - multer file
+ * @param {Array<{_id: string, fullName: string, role: string, embedding: number[]}>} params.profiles
+ * @param {typeof recognizeSpeaker} [params.recognize] - injected for tests
+ * @returns {Promise<{recognized: boolean, bestMatch: {id: string, fullName: string, role: string, score: number} | null, scores: Array<{id: string, fullName: string, role: string, score: number}>}>}
+ */
+async function matchAgainstProfiles({ req, file, profiles, recognize = recognizeSpeaker }) {
+  if (profiles.length === 0) {
+    return { recognized: false, bestMatch: null, scores: [] };
+  }
+
+  const profilesById = new Map(profiles.map((profile) => [String(profile._id), profile]));
+  const candidates = profiles.map((profile) => ({
+    label: String(profile._id),
+    embedding: profile.embedding,
+  }));
+
+  const result = await recognize({ req, file, candidates });
+
+  const toIdentity = ({ label, score }) => {
+    const profile = profilesById.get(label);
+    return { id: label, fullName: profile?.fullName ?? null, role: profile?.role ?? null, score };
+  };
+
+  const scores = (result.scores || []).map(toIdentity);
+  const bestMatch =
+    result.recognized && result.best_match != null
+      ? (scores.find((entry) => entry.id === result.best_match) ?? null)
+      : null;
+
+  return { recognized: result.recognized, bestMatch, scores };
+}
+
+module.exports = { embedSpeaker, recognizeSpeaker, matchAgainstProfiles };

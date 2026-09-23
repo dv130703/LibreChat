@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { killTreeOnExit } = require('./killProcessTree');
 
 const CODEAPI_DIR = path.join(__dirname, '..', 'codeapi_server');
 const VENV_PYTHON =
@@ -16,5 +17,17 @@ if (!fs.existsSync(VENV_PYTHON)) {
   process.exit(1);
 }
 
-const codeapi = spawn(VENV_PYTHON, ['app.py'], { cwd: CODEAPI_DIR, stdio: 'inherit' });
+// `detached: true` makes `app.py` the leader of its own new process group
+// (POSIX) rather than sharing this wrapper's - its own sandboxed-execution
+// subprocesses (see app.py's own comment on why `reload=False`) inherit
+// that group too, so `killTreeOnExit` below reaches them even if this
+// wrapper (or the terminal running `npm run dev`) goes away without a clean
+// shutdown - same fix, same rationale, as start-llm-server.js.
+const codeapi = spawn(VENV_PYTHON, ['app.py'], {
+  cwd: CODEAPI_DIR,
+  stdio: 'inherit',
+  detached: process.platform !== 'win32',
+});
+
+killTreeOnExit(codeapi, '[codeapi]');
 codeapi.on('exit', (code) => process.exit(code ?? 0));

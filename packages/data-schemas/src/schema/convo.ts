@@ -67,6 +67,7 @@ const convoSchema: Schema<IConversation> = new Schema(
       clusteringThreshold: { type: Number },
       includeTimestamps: { type: Boolean },
       contextTerms: { type: String },
+      voiceRecognition: { type: Boolean },
       suppressNumerals: { type: Boolean },
       channelSplit: { type: Boolean },
       diarizationBackend: { type: String },

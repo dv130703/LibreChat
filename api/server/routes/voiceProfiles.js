@@ -8,7 +8,7 @@ const configMiddleware = require('~/server/middleware/config/app');
 const { storage: uploadStorage } = require('~/server/routes/files/multer');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { getFileStrategy } = require('~/server/utils/getFileStrategy');
-const { embedSpeaker, recognizeSpeaker } = require('~/server/services/SpeakerRecognition');
+const { embedSpeaker, matchAgainstProfiles } = require('~/server/services/SpeakerRecognition');
 const db = require('~/models');
 
 const router = express.Router();
@@ -134,35 +134,8 @@ router.post('/recognize', upload.single('file'), async (req, res) => {
 
   try {
     const profiles = await db.getVoiceProfilesWithEmbeddings(req.user.id);
-    if (profiles.length === 0) {
-      return res.status(200).json({ recognized: false, bestMatch: null, scores: [] });
-    }
-
-    const profilesById = new Map(profiles.map((profile) => [String(profile._id), profile]));
-    const candidates = profiles.map((profile) => ({
-      label: String(profile._id),
-      embedding: profile.embedding,
-    }));
-
-    const result = await recognizeSpeaker({ req, file, candidates });
-
-    const toIdentity = ({ label, score }) => {
-      const profile = profilesById.get(label);
-      return {
-        id: label,
-        fullName: profile?.fullName ?? null,
-        role: profile?.role ?? null,
-        score,
-      };
-    };
-
-    const scores = (result.scores || []).map(toIdentity);
-    const bestMatch =
-      result.recognized && result.best_match != null
-        ? (scores.find((entry) => entry.id === result.best_match) ?? null)
-        : null;
-
-    res.status(200).json({ recognized: result.recognized, bestMatch, scores });
+    const { recognized, bestMatch, scores } = await matchAgainstProfiles({ req, file, profiles });
+    res.status(200).json({ recognized, bestMatch, scores });
   } catch (error) {
     logger.error('[POST /api/voice-profiles/recognize] Failed to recognize speaker', error);
     res.status(502).json({ error: error.message || 'Failed to recognize speaker' });

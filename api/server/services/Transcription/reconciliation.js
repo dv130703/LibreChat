@@ -13,6 +13,12 @@ const HEARTBEAT_INTERVAL_MS = 30 * 1000;
  *  two loose constants nobody re-checks after editing one of them. */
 const STALE_THRESHOLD_MS = 3 * 60 * 1000;
 
+/** Marker written on a job the owning process abandoned mid-run, rather than
+ *  one that genuinely failed. `resumeInterruptedTranscriptions` matches on
+ *  exactly this to tell the two apart, so it is a shared constant instead of
+ *  a string literal repeated in two files. */
+const INTERRUPTED_ERROR = 'Transcription was interrupted. Retry to resume.';
+
 if (STALE_THRESHOLD_MS < HEARTBEAT_INTERVAL_MS * 4) {
   throw new Error(
     '[transcription/reconciliation] STALE_THRESHOLD_MS must be at least 4x HEARTBEAT_INTERVAL_MS ' +
@@ -63,7 +69,7 @@ async function reconcileStaleTranscriptionJobs() {
       {
         $set: {
           'transcription.status': 'failed',
-          'transcription.error': 'Transcription was interrupted. Retry to resume.',
+          'transcription.error': INTERRUPTED_ERROR,
         },
       },
     ),
@@ -83,17 +89,42 @@ let sweepInterval = null;
  *  at server boot (`api/server/index.js`) - see that file's post-listen
  *  initialization block. `unref()` so a lingering interval never keeps the
  *  process alive on its own during shutdown. */
-async function startTranscriptionReconciliation() {
-  await reconcileStaleTranscriptionJobs().catch((error) => {
-    logger.error('[transcription/reconciliation] Initial sweep failed', error);
-  });
+async function startTranscriptionReconciliation(onReconciled) {
+  // Every sweep, not only the one at boot: a job abandoned seconds before a
+  // restart still has a fresh heartbeat, so the boot sweep does not yet see
+  // it as stale. Without running the follow-up after each later sweep too,
+  // that job would stay failed until some future restart happened to catch
+  // it - exactly the case this recovery exists for.
+  const sweep = async (label, { always = false } = {}) => {
+    let reconciled = 0;
+    try {
+      ({ reconciled } = await reconcileStaleTranscriptionJobs());
+    } catch (error) {
+      logger.error(`[transcription/reconciliation] ${label} failed`, error);
+      if (!always) {
+        return;
+      }
+    }
+    if ((always || reconciled > 0) && typeof onReconciled === 'function') {
+      try {
+        await onReconciled();
+      } catch (error) {
+        logger.error('[transcription/reconciliation] Follow-up after sweep failed', error);
+      }
+    }
+  };
+
+  // The boot sweep always runs the follow-up, even having reconciled nothing:
+  // a job abandoned by a previous process was already marked failed by that
+  // process's own sweep, so this one finds nothing stale while the job still
+  // needs recovering. Later sweeps only follow up on what they just marked,
+  // so an idle server is not re-checking storage every five minutes.
+  await sweep('Initial sweep', { always: true });
   if (sweepInterval) {
     return;
   }
   sweepInterval = setInterval(() => {
-    reconcileStaleTranscriptionJobs().catch((error) => {
-      logger.error('[transcription/reconciliation] Sweep failed', error);
-    });
+    void sweep('Sweep');
   }, SWEEP_INTERVAL_MS);
   sweepInterval.unref();
 }
@@ -108,6 +139,7 @@ function stopTranscriptionReconciliation() {
 
 module.exports = {
   HEARTBEAT_INTERVAL_MS,
+  INTERRUPTED_ERROR,
   STALE_THRESHOLD_MS,
   SWEEP_INTERVAL_MS,
   reconcileStaleTranscriptionJobs,

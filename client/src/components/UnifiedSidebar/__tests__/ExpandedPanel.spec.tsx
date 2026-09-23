@@ -1,5 +1,6 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
+import { MemoryRouter } from 'react-router-dom';
 import '@testing-library/jest-dom/extend-expect';
 import { MessagesSquare, NotebookPen } from 'lucide-react';
 import { render, fireEvent, screen } from '@testing-library/react';
@@ -77,30 +78,36 @@ function renderPanel({
   onExpand = jest.fn(),
   initialPanel = DEFAULT_PANEL,
   initializeState,
+  route = '/c/new',
 }: {
   expanded?: boolean;
   onCollapse?: jest.Mock;
   onExpand?: jest.Mock;
   initialPanel?: string;
   initializeState?: (snapshot: MutableSnapshot) => void;
+  /** Full-page links highlight from the current location, so the panel now
+   *  needs a router. Defaults to a chat route, which owns no nav link. */
+  route?: string;
 } = {}) {
   if (initialPanel !== DEFAULT_PANEL) {
     localStorage.setItem('side:active-panel', initialPanel);
   }
 
   const result = render(
-    <QueryClientProvider client={createQueryClient()}>
-      <RecoilRoot initializeState={initializeState}>
-        <ActivePanelProvider>
-          <ExpandedPanel
-            links={createLinks()}
-            expanded={expanded}
-            onCollapse={onCollapse}
-            onExpand={onExpand}
-          />
-        </ActivePanelProvider>
-      </RecoilRoot>
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={[route]}>
+      <QueryClientProvider client={createQueryClient()}>
+        <RecoilRoot initializeState={initializeState}>
+          <ActivePanelProvider>
+            <ExpandedPanel
+              links={createLinks()}
+              expanded={expanded}
+              onCollapse={onCollapse}
+              onExpand={onExpand}
+            />
+          </ActivePanelProvider>
+        </RecoilRoot>
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 
   return { ...result, onCollapse, onExpand };

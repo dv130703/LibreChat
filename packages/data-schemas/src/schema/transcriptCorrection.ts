@@ -12,7 +12,13 @@ export interface ITranscriptCorrection extends Document {
   transcriptFileId: string;
   conversationId: string;
   user: Types.ObjectId;
-  type: 'speaker_rename' | 'segment_reassign' | 'text_edit' | 'line_insert' | 'time_edit';
+  type:
+    | 'speaker_rename'
+    | 'segment_reassign'
+    | 'text_edit'
+    | 'line_insert'
+    | 'line_delete'
+    | 'time_edit';
   /** speaker_rename: the pipeline/custom speaker id being renamed. */
   speakerId?: string;
   /** speaker_rename: display name before this event, for audit context only -
@@ -76,7 +82,14 @@ const transcriptCorrectionSchema: Schema<ITranscriptCorrection> = new Schema(
     },
     type: {
       type: String,
-      enum: ['speaker_rename', 'segment_reassign', 'text_edit', 'line_insert', 'time_edit'],
+      enum: [
+        'speaker_rename',
+        'segment_reassign',
+        'text_edit',
+        'line_insert',
+        'line_delete',
+        'time_edit',
+      ],
       required: true,
     },
     speakerId: {

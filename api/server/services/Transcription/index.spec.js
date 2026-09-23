@@ -15,6 +15,13 @@ jest.mock('@librechat/api', () => ({
     const url = process.env.TRANSCRIPTION_API_URL || process.env.RAG_API_URL;
     return url ? url.replace(/\/+$/, '') : undefined;
   },
+  // Pass-through, for the same reason `getTranscriptionApiUrl` is restated
+  // above: `requireActual` here loads the whole package, which cannot start
+  // against this file's `fs` mock. The repair's actual behavior is covered
+  // by `packages/api/src/transcription/realign.spec.ts`; what this file can
+  // still verify is that the service routes its segments through it at all,
+  // which the wiring test below asserts.
+  realignSegments: jest.fn((segments) => segments),
 }));
 jest.mock('fs', () => ({
   createReadStream: jest.fn(() => require('stream').Readable.from(['fake-audio-bytes'])),
@@ -159,6 +166,33 @@ describe('transcribeAndEmbed', () => {
     expect(result.text).toBe(
       '[00:00.0-00:02.0] SPEAKER_00: Hello there.\n[00:02.0-00:04.0] SPEAKER_01: General Kenobi.',
     );
+  });
+
+  /** Diarization routinely tears one sentence across a speaker change, so the
+   *  rendered transcript must go through the boundary repair rather than
+   *  straight from the pipeline's segments. The repair's own behavior lives
+   *  in `packages/api/src/transcription/realign.spec.ts`; this pins that the
+   *  service actually applies it, and to the raw segments. */
+  it('renders the transcript through the speaker-boundary repair', async () => {
+    const { realignSegments } = require('@librechat/api');
+
+    await transcribeAndEmbed({ req, file: multerFile, sourceFileId: 'source-1' });
+
+    expect(realignSegments).toHaveBeenCalledWith([
+      { start: 0, end: 2, speaker: 'SPEAKER_00', text: 'Hello there.' },
+      { start: 2, end: 4, speaker: 'SPEAKER_01', text: 'General Kenobi.' },
+    ]);
+  });
+
+  /** The diarization detail file is the record of what the pipeline itself
+   *  decided, so the repair must not reach the returned segments. */
+  it('leaves the pipeline’s own segments unrepaired for the detail record', async () => {
+    const result = await transcribeAndEmbed({ req, file: multerFile, sourceFileId: 'source-1' });
+
+    expect(result.segments).toEqual([
+      { start: 0, end: 2, speaker: 'SPEAKER_00', text: 'Hello there.' },
+      { start: 2, end: 4, speaker: 'SPEAKER_01', text: 'General Kenobi.' },
+    ]);
   });
 });
 

@@ -12,6 +12,7 @@ const {
   generateShortLivedToken,
   logAxiosError,
   getTranscriptionApiUrl,
+  realignSegments,
 } = require('@librechat/api');
 const {
   formatTranscriptLine: formatLine,
@@ -130,6 +131,12 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
     filename: file.originalname,
     contentType: file.mimetype,
   });
+  // Lets `cancelTranscription` (a separate request, fired by
+  // `POST /:sourceFileId/cancel`) find and kill this specific run's
+  // subprocess on the Python side - see api/watchdog.py's job registry.
+  // `sourceFileId` is already this run's unique identity on the Node side,
+  // so it's reused as-is rather than minting a second id for the same job.
+  formData.append('job_id', sourceFileId);
   formData.append('diarize', String(diarize));
   // Channel-split replaces pyannote clustering outright (each channel is its
   // own speaker) - the speaker-count/threshold hints exist to tune
@@ -174,10 +181,12 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
     },
     maxBodyLength: Infinity,
     maxContentLength: Infinity,
-    // WhisperX on a long recording can legitimately take tens of minutes,
-    // especially on the heavier models (e.g. large-v3) or a GPU near its
-    // VRAM limit - 15 min was cutting off real, still-in-progress jobs.
-    timeout: 45 * 60 * 1000,
+    // Kept above the Python service's own PIPELINE_TIMEOUT_S (config.py,
+    // currently 1h) so that service is always the one to report a real,
+    // specific timeout error and free the GPU lock - this is only a
+    // backstop for if Python itself becomes unreachable, not the ceiling
+    // that's meant to fire in the normal case.
+    timeout: 75 * 60 * 1000,
     // Lets a best-effort cancel (`POST /:sourceFileId/cancel`) actually stop
     // this specific request instead of just discarding its eventual result -
     // see `runTranscriptionJob`'s `registerActiveController`. Kept as its
@@ -209,7 +218,12 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
     };
   }
 
-  const text = segments
+  // Diarization hands each word to whichever turn its timestamp lands in, and
+  // at a turn boundary that routinely tears one sentence across two speakers
+  // ("Jordan: All" / "Alex: right."). Repaired here, on the rendered text
+  // only - `segments` below is still the pipeline's raw output, so the
+  // original attribution stays on record in the diarization detail file.
+  const text = realignSegments(segments)
     .map((segment) => formatLine(segment, { includeTimestamps, diarize }))
     .join('\n');
   const transcriptFileId = `${sourceFileId}-transcript`;
@@ -233,4 +247,57 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
   };
 }
 
-module.exports = { transcribeAndEmbed, embedTranscript, formatTimestamp, formatLine };
+// Short: this is a "please stop" nudge, not a request expected to do real
+// work - if the Python service is unreachable or slow to answer, the caller
+// (`POST /:sourceFileId/cancel`) should still return promptly to the user
+// rather than hang waiting for it. Aborting Node's own axios request via
+// `signal` (see `transcribeAndEmbed`) already makes Node stop listening for
+// a result either way; this call is what actually stops the GPU work.
+const CANCEL_REQUEST_TIMEOUT_MS = 5 * 1000;
+
+/**
+ * Best-effort: tells the Transcription Pipeline service to kill the
+ * subprocess it registered for `sourceFileId` (sent as `job_id` on the
+ * original `/transcribe` call - see `transcribeAndEmbed`), if that run is
+ * still in flight. Never throws - a cancel that can't reach the Python
+ * service, or finds nothing left to cancel, is not an error the caller
+ * needs to handle differently; `requestCancel`'s own client-side abort
+ * already covers Node's side of "stop waiting" regardless.
+ *
+ * @param {Object} params
+ * @param {ServerRequest} params.req
+ * @param {string} params.sourceFileId
+ * @returns {Promise<boolean>} Whether a running job was actually found and killed.
+ */
+async function cancelTranscription({ req, sourceFileId }) {
+  const transcriptionApiUrl = getTranscriptionApiUrl();
+  if (!transcriptionApiUrl) {
+    return false;
+  }
+  const jwtToken = generateShortLivedToken(req.user.id);
+  try {
+    const response = await axios.post(
+      `${transcriptionApiUrl}/transcribe/${encodeURIComponent(sourceFileId)}/cancel`,
+      {},
+      {
+        headers: { Authorization: `Bearer ${jwtToken}`, accept: 'application/json' },
+        timeout: CANCEL_REQUEST_TIMEOUT_MS,
+      },
+    );
+    return Boolean(response.data?.cancelled);
+  } catch (error) {
+    logAxiosError({
+      message: `[TRANSCRIPTION] Failed to cancel sourceFileId=${sourceFileId} on the Python service`,
+      error,
+    });
+    return false;
+  }
+}
+
+module.exports = {
+  transcribeAndEmbed,
+  embedTranscript,
+  cancelTranscription,
+  formatTimestamp,
+  formatLine,
+};

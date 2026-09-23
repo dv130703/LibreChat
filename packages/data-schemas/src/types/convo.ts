@@ -19,6 +19,7 @@ export interface ITranscriptionMeta {
   clusteringThreshold?: number;
   includeTimestamps?: boolean;
   contextTerms?: string;
+  voiceRecognition?: boolean;
   suppressNumerals?: boolean;
   channelSplit?: boolean;
   diarizationBackend?: string;

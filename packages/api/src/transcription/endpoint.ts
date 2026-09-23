@@ -24,3 +24,36 @@ export function getTranscriptionApiUrl(): string | undefined {
   }
   return url.replace(/\/+$/, '');
 }
+
+/**
+ * Where content-based speaker identification sends its prompts, or
+ * `undefined` when the feature is off.
+ *
+ * Opt-in by configuration: without `SPEAKER_ID_MODEL` nothing is ever
+ * called, so an existing install behaves exactly as before.
+ *
+ * The default target is this instance's local Ollama rather than a cloud
+ * API, and deliberately so - identification works by sending excerpts of the
+ * recording's transcript to a model, and interview audio is usually the most
+ * sensitive material in the system. Keeping the default local means turning
+ * the feature on cannot, by itself, send a transcript off the machine.
+ * Pointing `SPEAKER_ID_BASE_URL` at a hosted endpoint is a deliberate act.
+ */
+export function getSpeakerIdentificationConfig():
+  | { baseURL: string; apiKey: string; model: string }
+  | undefined {
+  const model = process.env.SPEAKER_ID_MODEL;
+  if (!model) {
+    return undefined;
+  }
+  const ollama = process.env.OLLAMA_BASE_URL;
+  const baseURL = process.env.SPEAKER_ID_BASE_URL || (ollama ? `${ollama}/v1` : undefined);
+  if (!baseURL) {
+    return undefined;
+  }
+  return {
+    baseURL: baseURL.replace(/\/+$/, ''),
+    apiKey: process.env.SPEAKER_ID_API_KEY || 'ollama',
+    model,
+  };
+}

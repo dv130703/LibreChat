@@ -14,6 +14,11 @@ interface TranscriptRowProps {
    *  label on every single row. Purely presentational: the dropdown still
    *  reassigns this exact line, independent of its neighbors. */
   isContinuation: boolean;
+  /** True when the line directly below this one has a different speaker (or
+   *  there is none) - this row draws the closing edge of the turn box. With
+   *  `isContinuation` it positions the row within its turn: the two are
+   *  both true for a turn only one line long. */
+  isTurnEnd: boolean;
   isFollowed: boolean;
   isPreviewing: boolean;
   /** 0-1 progress through this line while it's the one previewing. */
@@ -50,6 +55,7 @@ interface TranscriptRowProps {
 function TranscriptRow({
   line,
   isContinuation,
+  isTurnEnd,
   isFollowed,
   isPreviewing,
   playbackRatio,
@@ -163,22 +169,46 @@ function TranscriptRow({
     <div
       data-line-index={line.lineIndex}
       className={cn(
-        'rounded-lg border p-3 transition-colors',
-        // A continuation gets less top padding than a new speaker's row -
-        // react-virtualized positions rows absolutely (each `top` is fixed
-        // by the list from measured heights), so a negative margin here
-        // would overlap into the previous row's own box instead of
-        // shrinking the gap; reducing this row's own padding is the safe
-        // way to read as "still the same person talking."
-        isContinuation ? 'pt-1.5' : 'pt-3',
+        'group/line relative border-x px-3 transition-colors',
+        // One box per speaker turn. react-virtualized positions every row
+        // absolutely (each `top` fixed by the list from measured heights),
+        // so a single element cannot wrap several rows - consecutive rows
+        // instead draw the *edges* of a shared box: side borders always,
+        // top/bottom border and rounding only at the turn's boundaries.
+        // Because the rows abut exactly, the result reads as one continuous
+        // box while each row stays its own independently editable line.
+        !isContinuation && 'rounded-t-lg border-t pt-3',
+        isTurnEnd && 'rounded-b-lg border-b pb-3',
+        // Interior edges: padding alone separates lines within a turn, with
+        // no border to break the box.
+        isContinuation && 'pt-1.5',
+        !isTurnEnd && 'pb-1.5',
         isDraft && 'border-dashed border-blue-500/40 bg-blue-500/5 dark:border-blue-400/40',
-        !isDraft &&
-          (isFollowed
-            ? 'border-blue-500/30 bg-blue-500/5 dark:border-blue-400/30 dark:bg-blue-400/10'
-            : 'border-transparent hover:bg-surface-hover'),
+        !isDraft && 'border-border-light',
+        // The followed line is tinted rather than re-bordered, so
+        // highlighting one line inside a turn never chops its box in two.
+        !isDraft && (isFollowed ? 'bg-blue-500/5 dark:bg-blue-400/10' : 'hover:bg-surface-hover'),
       )}
     >
-      <div className="mb-2 flex flex-wrap items-center gap-2">
+      {/* On a turn's first line the controls sit in flow and carry the
+          speaker's name - the one header for the whole turn. On the lines
+          that continue that turn they would just repeat it, so they lift out
+          of the flow into a hover-revealed overlay instead: every per-line
+          action (play, time edit, reassigning this one line to another
+          speaker) stays reachable, without a stack of repeated headers or
+          the dead vertical space an in-flow-but-invisible row would leave.
+          Kept mounted rather than conditionally rendered so revealing it
+          never changes the row's measured height, which react-virtualized
+          caches. `focus-within` keeps it open while a field inside it is
+          being edited, and makes it reachable by keyboard. */}
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-2',
+          isContinuation
+            ? 'absolute right-2 top-0.5 z-10 rounded-md border border-border-light bg-surface-primary px-1.5 py-0.5 opacity-0 shadow-sm transition-opacity focus-within:opacity-100 group-hover/line:opacity-100'
+            : 'mb-2',
+        )}
+      >
         <button
           type="button"
           onClick={() => onPlaySegment(line.lineIndex)}

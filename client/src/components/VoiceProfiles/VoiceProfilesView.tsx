@@ -3,6 +3,7 @@ import { Mic, Plus } from 'lucide-react';
 import { Button, Spinner } from '@librechat/client';
 import AgentBuilderCard from '~/components/Agents/layouts/AgentBuilderCard';
 import AddVoiceProfileModal from '~/components/VoiceProfiles/AddVoiceProfileModal';
+import VoiceProfilePlayer from '~/components/VoiceProfiles/VoiceProfilePlayer';
 import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
 import { SidePanelGroup } from '~/components/SidePanel';
 import { useVoiceProfilesQuery } from '~/data-provider';
@@ -13,7 +14,7 @@ export default function VoiceProfilesView() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const { data: voiceProfiles, isLoading } = useVoiceProfilesQuery();
 
-  useDocumentTitle(`${localize('com_ui_voice_profiles_title')} | LibreChat`);
+  useDocumentTitle(`${localize('com_ui_information_management_title')} | LibreChat`);
 
   return (
     <div className="relative flex w-full grow overflow-hidden bg-presentation">
@@ -27,7 +28,7 @@ export default function VoiceProfilesView() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h1 className="text-lg font-semibold text-text-primary">
-                  {localize('com_ui_voice_profiles_title')}
+                  {localize('com_ui_information_management_title')}
                 </h1>
                 <p className="text-sm text-text-secondary">
                   {localize('com_ui_voice_profiles_description')}
@@ -57,16 +58,20 @@ export default function VoiceProfilesView() {
             {!isLoading && voiceProfiles != null && voiceProfiles.length > 0 && (
               <div className="flex flex-col gap-3">
                 {voiceProfiles.map((profile) => (
-                  <AgentBuilderCard
-                    key={profile._id}
-                    className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-text-primary">{profile.fullName}</p>
-                      <p className="truncate text-sm text-text-secondary">{profile.role}</p>
+                  <AgentBuilderCard key={profile._id} className="flex flex-col gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span
+                        aria-hidden="true"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-tertiary text-text-secondary"
+                      >
+                        <Mic className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-text-primary">{profile.fullName}</p>
+                        <p className="truncate text-sm text-text-secondary">{profile.role}</p>
+                      </div>
                     </div>
-                    {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                    <audio controls src={profile.audio.filepath} className="h-9 w-full sm:w-64" />
+                    <VoiceProfilePlayer src={profile.audio.filepath} />
                   </AgentBuilderCard>
                 ))}
               </div>

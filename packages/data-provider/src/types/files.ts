@@ -340,6 +340,10 @@ export type TTranscribeOptions = {
   clusteringThreshold?: number;
   language?: string;
   contextTerms?: string;
+  /** Match detected speakers against the caller's enrolled voice profiles
+   *  before anything is read from the transcript. Absent means enabled, so
+   *  an existing caller that never sent it keeps today's behaviour. */
+  voiceRecognition?: boolean;
   model?: string;
   /** Whether digits are suppressed at the decoder. Absent takes the server's
    *  configured default; `false` is a real instruction, not an absent option. */
@@ -567,7 +571,13 @@ export type TTranscriptCorrection = {
   transcriptFileId: string;
   conversationId: string;
   user: string;
-  type: 'speaker_rename' | 'segment_reassign' | 'text_edit' | 'line_insert' | 'time_edit';
+  type:
+    | 'speaker_rename'
+    | 'segment_reassign'
+    | 'text_edit'
+    | 'line_insert'
+    | 'line_delete'
+    | 'time_edit';
   speakerId?: string;
   fromName?: string;
   toName?: string;
@@ -637,6 +647,20 @@ export type TLineInsertRequest = {
   text: string;
   seconds: number;
   endSeconds: number;
+};
+
+/** Removes a line from the transcript. The line's own content is recorded on
+ *  the event (`fromText`/`speaker`/`fromSeconds`/`fromEndSeconds`) rather than
+ *  discarded, so an append-only log still says exactly what was taken out and
+ *  the original pipeline text underneath stays untouched.
+ *
+ *  The server, not the client, also writes the neighboring `time_edit` that
+ *  reabsorbs the deleted line's time range - it has the corrected line list
+ *  already and can do both writes for one request, so a delete can never land
+ *  without its reabsorption. */
+export type TLineDeleteRequest = {
+  conversationId: string;
+  lineIndex: number;
 };
 
 export type FileDownloadURLResponse = {

@@ -1,12 +1,18 @@
 import { memo, useCallback, useMemo, lazy, Suspense } from 'react';
 import { useRecoilValue } from 'recoil';
+import { useLocation } from 'react-router-dom';
 import { SquarePen } from 'lucide-react';
-import { QueryKeys, EModelEndpoint } from 'librechat-data-provider';
+import { QueryKeys } from 'librechat-data-provider';
 import { useQueryClient } from '@tanstack/react-query';
 import { Skeleton, Sidebar, Button, TooltipAnchor } from '@librechat/client';
 import type { NavLink } from '~/common';
 import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
-import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
+import {
+  useActivePanel,
+  resolveActivePanel,
+  resolveRouteActiveId,
+  DEFAULT_PANEL,
+} from '~/Providers';
 import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
 import { useLocalize, useNewConvo } from '~/hooks';
 import { clearMessagesCache, cn } from '~/utils';
@@ -145,19 +151,31 @@ function ExpandedPanel({
 }) {
   const localize = useLocalize();
   const { active, setActive } = useActivePanel();
+  const { pathname } = useLocation();
   const effectiveActive = resolveActivePanel(active, links);
 
-  // Agent Builder navigates to its own full page rather than opening in this
-  // panel, same as New Chat - grouped with it above the divider so it reads
-  // as "goes somewhere else" rather than one more panel toggle.
-  const agentBuilderLink = useMemo(
-    () => links.find((link) => link.id === EModelEndpoint.agents),
-    [links],
+  /**
+   * Which link the current route belongs to, if any.
+   *
+   * `resolveActivePanel` can only ever return a link that renders a panel
+   * inside the sidebar, so a link that navigates to a full page was never
+   * able to show as selected - it fell through to the first panel instead,
+   * leaving Conversations lit while you were somewhere else entirely. The
+   * route is the only thing that knows, so it decides for those links.
+   */
+  const routeActiveId = useMemo(() => resolveRouteActiveId(links, pathname), [links, pathname]);
+
+  const isLinkActive = useCallback(
+    (link: NavLink) =>
+      routeActiveId != null ? link.id === routeActiveId : link.id === effectiveActive,
+    [routeActiveId, effectiveActive],
   );
-  const panelLinks = useMemo(
-    () => links.filter((link) => link.id !== EModelEndpoint.agents),
-    [links],
-  );
+
+  // Links that open a full page rather than a panel, grouped above the
+  // divider with New Chat so they read as "goes somewhere else" rather than
+  // as more panel toggles.
+  const routeLinks = useMemo(() => links.filter((link) => link.path != null), [links]);
+  const panelLinks = useMemo(() => links.filter((link) => link.path == null), [links]);
 
   const toggleLabel = expanded ? 'com_nav_close_sidebar' : 'com_nav_open_sidebar';
   const toggleClick = expanded ? onCollapse : onExpand;
@@ -191,16 +209,17 @@ function ExpandedPanel({
           </Button>
         }
       />
-      {agentBuilderLink && (
+      {routeLinks.map((link) => (
         <NavIconButton
-          link={agentBuilderLink}
-          isActive={agentBuilderLink.id === effectiveActive}
+          key={link.id}
+          link={link}
+          isActive={isLinkActive(link)}
           expanded={expanded ?? true}
           setActive={setActive}
           onExpand={onExpand}
           onCollapse={onCollapse}
         />
-      )}
+      ))}
       <NewChatButton setActive={setActive} />
       <div className="mx-2 border-b border-border-light" />
       <div className="flex flex-col gap-1 overflow-y-auto">
@@ -208,7 +227,7 @@ function ExpandedPanel({
           <NavIconButton
             key={link.id}
             link={link}
-            isActive={link.id === effectiveActive}
+            isActive={isLinkActive(link)}
             expanded={expanded ?? true}
             setActive={setActive}
             onExpand={onExpand}

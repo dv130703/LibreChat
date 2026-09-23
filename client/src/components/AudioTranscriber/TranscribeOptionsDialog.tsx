@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { Check, ChevronDown, Clock, Hash, Plus, Upload, Users, X } from 'lucide-react';
-import type { ChangeEvent, KeyboardEvent } from 'react';
+import { Check, ChevronDown, Clock, Fingerprint, Hash, Plus, Upload, Users, X } from 'lucide-react';
+import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react';
 import {
   OGDialog,
   OGDialogTemplate,
@@ -21,6 +21,10 @@ export interface TranscribeAudioOptions {
   speakerCount?: number;
   clusteringThreshold?: number;
   contextTerms?: string;
+  /** Match each detected speaker against this user's enrolled voice profiles
+   *  and name the ones it recognizes, before anything is read from the
+   *  transcript itself. Off leaves naming entirely to what is said out loud. */
+  voiceRecognition?: boolean;
   model?: string;
   suppressNumerals?: boolean;
   language?: string;
@@ -88,7 +92,6 @@ interface MenuOption {
 function DropdownField({
   id,
   label,
-  hint,
   ariaLabel,
   value,
   options,
@@ -96,7 +99,6 @@ function DropdownField({
 }: {
   id: string;
   label: string;
-  hint?: string;
   ariaLabel: string;
   value: string;
   options: MenuOption[];
@@ -182,8 +184,53 @@ function DropdownField({
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
-      {hint != null && hint !== '' && <p className="text-xs text-text-secondary">{hint}</p>}
     </div>
+  );
+}
+
+/**
+ * One labelled group of related controls.
+ *
+ * Every group in this dialog is a peer - how to transcribe, what to output,
+ * who is speaking - so each gets the same treatment: a quiet heading and a
+ * hairline above it. Previously the three were drawn three different ways
+ * (a bare stack, a top border, and a filled card) which implied a hierarchy
+ * that does not exist, and the card's fill happened to match the dialog's
+ * own background, so it read as a stray rule rather than a container.
+ */
+function Section({
+  title,
+  first = false,
+  grow = false,
+  action,
+  children,
+}: {
+  title: string;
+  first?: boolean;
+  /** Claim the leftover height of a fixed-height dialog. Without it a short
+   *  section leaves the rest of the panel visibly empty, which is most of
+   *  what made this form read as floating rather than laid out. */
+  grow?: boolean;
+  /** Control that acts on the whole section, sat opposite its heading. A
+   *  "clear all" placed after a growing list instead gets shoved to the
+   *  bottom of the panel, stranded far from the thing it clears. */
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      className={cn(
+        'flex min-w-0 flex-col gap-3',
+        !first && 'border-t border-border-light pt-5',
+        grow && 'min-h-0 flex-1',
+      )}
+    >
+      <div className="flex min-h-5 items-center justify-between gap-3">
+        <h3 className="text-xs font-semibold text-text-secondary">{title}</h3>
+        {action}
+      </div>
+      <div className={cn('flex min-w-0 flex-col gap-3', grow && 'min-h-0 flex-1')}>{children}</div>
+    </section>
   );
 }
 
@@ -201,10 +248,10 @@ function ToggleRow({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <div className="flex items-center gap-2.5">
+    <div className="flex min-h-8 items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-2.5">
         <Icon className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
-        <Label htmlFor={id} className="text-sm font-medium text-text-primary">
+        <Label htmlFor={id} className="cursor-pointer truncate text-sm text-text-primary">
           {label}
         </Label>
       </div>
@@ -224,15 +271,19 @@ function TermChipList({
   removeLabel: (tag: string) => string;
   emptyLabel: string;
 }) {
+  // One bordered region in both states. Drawing the box only when empty made
+  // the same area read as a deliberate container with no terms and as blank
+  // space with one, which is the inconsistency that made this panel feel
+  // unplanned.
   if (tags.length === 0) {
     return (
-      <div className="min-h-32 flex-1 overflow-y-auto">
-        <p className="text-xs italic text-text-tertiary">{emptyLabel}</p>
+      <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed border-border-light px-6 py-8">
+        <p className="max-w-xs text-center text-xs text-text-tertiary">{emptyLabel}</p>
       </div>
     );
   }
   return (
-    <div className="flex min-h-32 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto pr-1">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto rounded-lg border border-dashed border-border-light p-3">
       {tags.map((tag, index) => (
         <span
           key={`${tag}-${index}`}
@@ -305,6 +356,9 @@ export default function TranscribeOptionsDialog({
   const [language, setLanguage] = useState('');
   const [includeTimestamps, setIncludeTimestamps] = useState(DEFAULT_OPTIONS.includeTimestamps);
   const [diarize, setDiarize] = useState(DEFAULT_OPTIONS.diarize);
+  const [voiceRecognition, setVoiceRecognition] = useState(
+    DEFAULT_OPTIONS.voiceRecognition ?? true,
+  );
   const [speakerCount, setSpeakerCount] = useState<number | undefined>(undefined);
   const [termTags, setTermTags] = useState<string[]>([]);
   const [termDraft, setTermDraft] = useState('');
@@ -331,6 +385,9 @@ export default function TranscribeOptionsDialog({
       languageTouchedRef.current = initialOptions?.language != null;
       setIncludeTimestamps(initialOptions?.includeTimestamps ?? DEFAULT_OPTIONS.includeTimestamps);
       setDiarize(initialOptions?.diarize ?? DEFAULT_OPTIONS.diarize);
+      setVoiceRecognition(
+        initialOptions?.voiceRecognition ?? DEFAULT_OPTIONS.voiceRecognition ?? true,
+      );
       setSpeakerCount(initialOptions?.speakerCount);
       seededRef.current = initialOptions != null;
       setTermTags(parseTermTags(initialOptions?.contextTerms));
@@ -440,6 +497,9 @@ export default function TranscribeOptionsDialog({
       diarize: effectiveDiarize,
       speakerCount: effectiveDiarize && !channelSplitEnabled ? speakerCount : undefined,
       contextTerms: termTags.length > 0 ? termTags.join(', ') : undefined,
+      // Only meaningful alongside diarization - with one undivided speaker
+      // there is nobody to tell apart, let alone recognize.
+      voiceRecognition: effectiveDiarize ? voiceRecognition : false,
       model: model || undefined,
       language: language || undefined,
       suppressNumerals: !emitNumerals,
@@ -479,9 +539,6 @@ export default function TranscribeOptionsDialog({
     }));
   }, [localize, defaultLanguage]);
 
-  const modelHint =
-    model === '' ? undefined : localize('com_ui_transcribe_options_model_hint_note');
-
   return (
     <OGDialog open={isOpen} onOpenChange={handleOpenChange}>
       <OGDialogTemplate
@@ -491,196 +548,222 @@ export default function TranscribeOptionsDialog({
             ? 'com_ui_transcribe_options_description'
             : 'com_ui_transcribe_options_terms_description',
         )}
-        className="w-11/12 border border-solid border-border-medium bg-surface-tertiary sm:w-[28rem]"
-        mainClassName="min-w-0 min-h-[36rem]"
+        className="w-11/12 border border-solid border-border-medium bg-surface-tertiary sm:w-[34rem]"
+        mainClassName="min-w-0 h-[min(34rem,68vh)]"
         showCloseButton
         showCancelButton={false}
         main={
           <div className="flex h-full w-full min-w-0 flex-col gap-5">
-            {step === 1 ? (
-              <>
-                <div className="flex flex-col gap-5">
-                  <DropdownField
-                    id="transcribe-option-model"
-                    label={localize('com_ui_transcribe_options_model_label')}
-                    hint={modelHint}
-                    ariaLabel={localize('com_ui_transcribe_options_model_label')}
-                    value={model}
-                    options={modelOptions}
-                    onChange={setModel}
-                  />
-                  <DropdownField
-                    id="transcribe-option-language"
-                    label={localize('com_ui_transcribe_options_language_label')}
-                    ariaLabel={localize('com_ui_transcribe_options_language_label')}
-                    value={language}
-                    options={languageOptions}
-                    onChange={handleLanguageChange}
-                  />
-                </div>
+            {/* Two segments rather than a numeral: the only thing worth
+                showing is how far through a two-step form you are, and the
+                Back/Next buttons already say which way you can move. */}
+            <div className="flex items-center gap-1.5">
+              <span className="h-0.5 flex-1 rounded-full bg-green-500 dark:bg-green-400" />
+              <span
+                className={cn(
+                  'h-0.5 flex-1 rounded-full transition-colors',
+                  step === 2 ? 'bg-green-500 dark:bg-green-400' : 'bg-border-medium',
+                )}
+              />
+              <span className="sr-only">
+                {localize('com_ui_transcribe_options_step_progress', { 0: String(step) })}
+              </span>
+            </div>
 
-                <div className="flex flex-col gap-4 border-t border-border-light pt-4">
-                  <ToggleRow
-                    id="transcribe-option-timestamps"
-                    icon={Clock}
-                    label={localize('com_ui_transcribe_options_timestamps')}
-                    checked={includeTimestamps}
-                    onCheckedChange={setIncludeTimestamps}
-                  />
-                  {!channelSplitEnabled && (
+            <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
+              {step === 1 ? (
+                <>
+                  <Section title={localize('com_ui_transcribe_options_section_engine')} first>
+                    <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                      <DropdownField
+                        id="transcribe-option-model"
+                        label={localize('com_ui_transcribe_options_model_label')}
+                        ariaLabel={localize('com_ui_transcribe_options_model_label')}
+                        value={model}
+                        options={modelOptions}
+                        onChange={setModel}
+                      />
+                      <DropdownField
+                        id="transcribe-option-language"
+                        label={localize('com_ui_transcribe_options_language_label')}
+                        ariaLabel={localize('com_ui_transcribe_options_language_label')}
+                        value={language}
+                        options={languageOptions}
+                        onChange={handleLanguageChange}
+                      />
+                    </div>
+                  </Section>
+
+                  <Section title={localize('com_ui_transcribe_options_section_output')}>
                     <ToggleRow
-                      id="transcribe-option-diarize"
-                      icon={Users}
-                      label={localize('com_ui_transcribe_options_diarize')}
-                      checked={diarize}
-                      onCheckedChange={setDiarize}
+                      id="transcribe-option-timestamps"
+                      icon={Clock}
+                      label={localize('com_ui_transcribe_options_timestamps')}
+                      checked={includeTimestamps}
+                      onCheckedChange={setIncludeTimestamps}
                     />
-                  )}
-                  <ToggleRow
-                    id="transcribe-option-numerals"
-                    icon={Hash}
-                    label={localize('com_ui_transcribe_options_numerals')}
-                    checked={emitNumerals}
-                    onCheckedChange={setEmitNumerals}
-                  />
-                </div>
+                    <ToggleRow
+                      id="transcribe-option-numerals"
+                      icon={Hash}
+                      label={localize('com_ui_transcribe_options_numerals')}
+                      checked={emitNumerals}
+                      onCheckedChange={setEmitNumerals}
+                    />
+                  </Section>
 
-                {channelSplitEnabled ? (
-                  <div className="flex items-center gap-2.5 rounded-lg border border-border-light bg-surface-tertiary p-3 text-xs text-text-secondary">
-                    <Users className="h-4 w-4 shrink-0" aria-hidden="true" />
-                    <span>{localize('com_ui_transcribe_options_channel_split_note')}</span>
-                  </div>
-                ) : (
-                  diarize && (
-                    <div className="flex flex-col gap-6 rounded-lg border border-border-light bg-surface-tertiary p-4">
-                      <div className="flex min-w-0 flex-col gap-2">
-                        <Label
-                          htmlFor="transcribe-option-speaker-count"
-                          className="text-sm font-medium text-text-primary"
-                        >
-                          {localize('com_ui_transcribe_options_speaker_count_label')}
-                        </Label>
-                        <input
-                          id="transcribe-option-speaker-count"
-                          type="text"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
-                          value={speakerCount != null ? String(speakerCount) : ''}
-                          onChange={(event) => handleSpeakerCountChange(event.target.value)}
-                          placeholder={localize('com_ui_transcribe_options_speaker_count_auto')}
-                          aria-label={localize('com_ui_transcribe_options_speaker_count_label')}
-                          className="h-10 w-full min-w-0 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary outline-none placeholder:text-text-secondary focus-visible:border-green-500 focus-visible:ring-2 focus-visible:ring-green-500/20"
+                  <Section title={localize('com_ui_transcribe_options_section_speakers')}>
+                    {channelSplitEnabled ? (
+                      <p className="flex items-start gap-2.5 text-xs text-text-secondary">
+                        <Users className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                        <span>{localize('com_ui_transcribe_options_channel_split_note')}</span>
+                      </p>
+                    ) : (
+                      <ToggleRow
+                        id="transcribe-option-diarize"
+                        icon={Users}
+                        label={localize('com_ui_transcribe_options_diarize')}
+                        checked={diarize}
+                        onCheckedChange={setDiarize}
+                      />
+                    )}
+                    {/* Both depend on speakers being told apart, so they sit
+                        inside this section and leave with it rather than
+                        turning into an orphaned card elsewhere in the form. */}
+                    {(channelSplitEnabled || diarize) && (
+                      <>
+                        <ToggleRow
+                          id="transcribe-option-voice-recognition"
+                          icon={Fingerprint}
+                          label={localize('com_ui_transcribe_options_voice_recognition')}
+                          checked={voiceRecognition}
+                          onCheckedChange={setVoiceRecognition}
                         />
-                        <p className="text-xs text-text-secondary">
-                          {localize('com_ui_transcribe_options_speakers_hint', {
-                            0: String(maxSpeakerCount),
-                          })}
-                        </p>
-                      </div>
-                      {/* The "speaker grouping" dropdown that used to sit here
-                       *  set `clusteringThreshold`, which is inert on the
-                       *  diarization pipeline this runs on: the same audio
-                       *  diarized at every threshold from 0.05 to 0.95
-                       *  returns byte-identical speaker turns (measured
-                       *  against the transcription service's own inertness
-                       *  constant). It was a control that silently did
-                       *  nothing, which is worse than no control. Speaker
-                       *  count above is the lever that actually changes the
-                       *  result on this pipeline. */}
-                    </div>
-                  )
-                )}
-              </>
-            ) : (
-              <>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-                  <Label htmlFor="transcribe-option-terms" className="text-sm font-medium">
-                    {localize('com_ui_transcribe_options_terms_label')}
-                  </Label>
-                  <TermChipList
-                    tags={termTags}
-                    onRemove={(index) =>
-                      setTermTags((current) => current.filter((_, i) => i !== index))
-                    }
-                    removeLabel={(tag) =>
-                      localize('com_ui_transcribe_options_remove_term', { 0: tag })
-                    }
-                    emptyLabel={localize('com_ui_transcribe_options_terms_empty')}
-                  />
-                  <div className="flex gap-2">
-                    <input
-                      id="transcribe-option-terms"
-                      type="text"
-                      value={termDraft}
-                      onChange={(event) => setTermDraft(event.target.value)}
-                      onKeyDown={handleTermKeyDown}
-                      placeholder={localize('com_ui_transcribe_options_terms_placeholder')}
-                      aria-label={localize('com_ui_transcribe_options_terms_label')}
-                      className="h-10 min-w-0 flex-1 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary transition-colors placeholder:text-text-secondary focus-visible:border-green-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/20"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={commitTermDraft}
-                      className="shrink-0"
-                    >
-                      {localize('com_ui_transcribe_options_add_term')}
-                    </Button>
-                  </div>
-                  <input
-                    ref={termFileInputRef}
-                    type="file"
-                    accept=".txt,text/plain"
-                    onChange={handleTermFileChange}
-                    className="hidden"
-                    aria-label={localize('com_ui_transcribe_options_upload_terms')}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => termFileInputRef.current?.click()}
-                    className="flex items-center gap-2 self-start"
-                  >
-                    <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-                    {localize('com_ui_transcribe_options_upload_terms')}
-                  </Button>
-                </div>
-
-                {unusedSuggestions.length > 0 && (
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <span className="text-xs font-medium text-text-secondary">
-                      {localize('com_ui_transcribe_options_suggestions_label')}
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {unusedSuggestions.map((term) => (
+                        {!channelSplitEnabled && (
+                          <div className="flex min-w-0 flex-col gap-1.5">
+                            <Label
+                              htmlFor="transcribe-option-speaker-count"
+                              className="text-sm font-medium text-text-primary"
+                            >
+                              {localize('com_ui_transcribe_options_speaker_count_label')}
+                            </Label>
+                            <input
+                              id="transcribe-option-speaker-count"
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={speakerCount != null ? String(speakerCount) : ''}
+                              onChange={(event) => handleSpeakerCountChange(event.target.value)}
+                              placeholder={localize('com_ui_transcribe_options_speaker_count_auto')}
+                              aria-label={localize('com_ui_transcribe_options_speaker_count_label')}
+                              className="h-10 w-full min-w-0 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-secondary focus-visible:border-green-500 focus-visible:ring-2 focus-visible:ring-green-500/20"
+                            />
+                            <p className="text-xs text-text-secondary">
+                              {localize('com_ui_transcribe_options_speakers_hint', {
+                                0: String(maxSpeakerCount),
+                              })}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </Section>
+                </>
+              ) : (
+                <>
+                  <Section
+                    title={localize('com_ui_transcribe_options_section_terms')}
+                    first
+                    grow
+                    action={
+                      termTags.length > 0 ? (
                         <button
-                          key={term}
                           type="button"
-                          onClick={() => addSuggestion(term)}
-                          aria-label={localize('com_ui_transcribe_options_add_suggestion', {
-                            0: term,
-                          })}
-                          className="flex items-center gap-1 rounded-full border border-dashed border-border-medium px-2.5 py-1 text-xs text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                          onClick={() => setTermTags([])}
+                          className="text-xs font-medium text-text-secondary transition-colors hover:text-red-600 dark:hover:text-red-400"
                         >
-                          <Plus className="h-3 w-3 shrink-0" aria-hidden="true" />
-                          {term}
+                          {localize('com_ui_transcribe_options_clear_terms')}
                         </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {termTags.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setTermTags([])}
-                    className="self-end text-xs font-medium text-red-600 transition-colors hover:text-red-700 hover:underline dark:text-red-400 dark:hover:text-red-300"
+                      ) : undefined
+                    }
                   >
-                    {localize('com_ui_transcribe_options_clear_terms')}
-                  </button>
-                )}
-              </>
-            )}
+                    {/* Entry first, then what has been entered. The add row
+                        and the upload button are one row of equal-height
+                        controls so the left edge stays straight instead of
+                        stepping in and out down the form. */}
+                    <div className="flex min-w-0 gap-2">
+                      <input
+                        id="transcribe-option-terms"
+                        type="text"
+                        value={termDraft}
+                        onChange={(event) => setTermDraft(event.target.value)}
+                        onKeyDown={handleTermKeyDown}
+                        placeholder={localize('com_ui_transcribe_options_terms_placeholder')}
+                        aria-label={localize('com_ui_transcribe_options_terms_label')}
+                        className="h-10 min-w-0 flex-1 rounded-lg border border-border-medium bg-transparent px-3 text-sm text-text-primary transition-colors placeholder:text-text-secondary focus-visible:border-green-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/20"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={commitTermDraft}
+                        className="h-10 shrink-0"
+                      >
+                        {localize('com_ui_transcribe_options_add_term')}
+                      </Button>
+                      <input
+                        ref={termFileInputRef}
+                        type="file"
+                        accept=".txt,text/plain"
+                        onChange={handleTermFileChange}
+                        className="hidden"
+                        aria-label={localize('com_ui_transcribe_options_upload_terms')}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => termFileInputRef.current?.click()}
+                        aria-label={localize('com_ui_transcribe_options_upload_terms')}
+                        title={localize('com_ui_transcribe_options_upload_terms')}
+                        className="h-10 w-10 shrink-0 p-0"
+                      >
+                        <Upload className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </div>
+
+                    <TermChipList
+                      tags={termTags}
+                      onRemove={(index) =>
+                        setTermTags((current) => current.filter((_, i) => i !== index))
+                      }
+                      removeLabel={(tag) =>
+                        localize('com_ui_transcribe_options_remove_term', { 0: tag })
+                      }
+                      emptyLabel={localize('com_ui_transcribe_options_terms_empty')}
+                    />
+                  </Section>
+
+                  {unusedSuggestions.length > 0 && (
+                    <Section title={localize('com_ui_transcribe_options_suggestions_label')}>
+                      <div className="flex flex-wrap gap-1.5">
+                        {unusedSuggestions.map((term) => (
+                          <button
+                            key={term}
+                            type="button"
+                            onClick={() => addSuggestion(term)}
+                            aria-label={localize('com_ui_transcribe_options_add_suggestion', {
+                              0: term,
+                            })}
+                            className="flex items-center gap-1 rounded-full border border-dashed border-border-medium px-2.5 py-1 text-xs text-text-secondary transition-colors hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/40"
+                          >
+                            <Plus className="h-3 w-3 shrink-0" aria-hidden="true" />
+                            {term}
+                          </button>
+                        ))}
+                      </div>
+                    </Section>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         }
         leftButtons={

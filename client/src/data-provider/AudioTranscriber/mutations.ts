@@ -7,6 +7,7 @@ import type {
   TTranscribeOptions,
   TTranscribeQueuedResponse,
   TTranscribeCancelResponse,
+  TConversationTranscriptsResponse,
   TTranscriptCorrection,
   InterviewTranscriptForm,
   MeetingMinutesForm,
@@ -15,6 +16,7 @@ import type {
   TSegmentReassignRequest,
   TTextEditRequest,
   TLineInsertRequest,
+  TLineDeleteRequest,
   TTimeEditRequest,
 } from 'librechat-data-provider';
 
@@ -129,7 +131,52 @@ export const useRetryTranscriptionMutation = (): UseMutationResult<
   return useMutation([MutationKeys.retryTranscription], {
     mutationFn: ({ sourceFileId }: RetryTranscriptionVariables) =>
       dataService.retryTranscription(sourceFileId),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      // `TranscriptPanel` renders its queued/transcribing/failed state from
+      // `useConversationTranscriptsQuery`, not from the status poll below,
+      // and that query stops polling once a job reaches a terminal state -
+      // which `'failed'` (what a cancel produces) is. Without this, hitting
+      // Retry from the cancelled state re-queued the job on the server but
+      // left the panel sitting on its stale pre-retry snapshot, showing no
+      // sign the click did anything.
+      //
+      // Written into the cache directly, not just invalidated: an
+      // invalidation alone leaves the old `failed` state rendered for the
+      // whole round-trip of the refetch, so the error panel and its Retry
+      // button visibly come back for a moment right after being clicked.
+      // Patching first means the panel flips to the in-progress state on
+      // the same tick the request succeeds. `unqueryableReason` matters as
+      // much as `jobStatus` here - it is what that query's own
+      // `refetchInterval` gates on, so setting it is what re-arms the 3s
+      // poll immediately rather than only after the invalidation lands.
+      queryClient.setQueriesData<TConversationTranscriptsResponse>(
+        [QueryKeys.conversationTranscripts],
+        (previous) => {
+          if (!previous?.transcripts) {
+            return previous;
+          }
+          return {
+            ...previous,
+            transcripts: previous.transcripts.map((entry) =>
+              entry.sourceFileId === variables.sourceFileId
+                ? {
+                    ...entry,
+                    jobStatus: 'queued',
+                    jobError: null,
+                    cancelled: false,
+                    isQueryable: false,
+                    unqueryableReason: 'in_progress',
+                  }
+                : entry,
+            ),
+          };
+        },
+      );
+      // Still invalidated so the optimistic patch above is reconciled
+      // against the server's own view rather than trusted indefinitely.
+      // Bare prefix because this response carries no conversationId to
+      // scope it with (unlike `useRetranscribeAudioMutation`, which does).
+      queryClient.invalidateQueries([QueryKeys.conversationTranscripts]);
       // See the matching comment in `useRetranscribeAudioMutation` - a
       // single-id key here would miss any batched poll where this file
       // isn't first.
@@ -157,7 +204,11 @@ export const useCancelTranscriptionMutation = (): UseMutationResult<
     mutationFn: ({ sourceFileId }: CancelTranscriptionVariables) =>
       dataService.cancelTranscription(sourceFileId),
     onSuccess: () => {
-      // Same reasoning as `useRetryTranscriptionMutation` above.
+      // Same reasoning as `useRetryTranscriptionMutation` above - the panel
+      // reads its state from the transcripts query, so a cancel that only
+      // refreshed the status poll left the panel showing the job as still
+      // running until something unrelated refetched it.
+      queryClient.invalidateQueries([QueryKeys.conversationTranscripts]);
       queryClient.invalidateQueries([QueryKeys.transcribeStatus]);
     },
     onError: (error) => {
@@ -172,7 +223,9 @@ export const useCancelTranscriptionMutation = (): UseMutationResult<
         // is already satisfied, so this isn't a failure worth alarming them
         // over. Just make sure the UI reflects the real, current state
         // instead of leaving the stop-square looking like the click did
-        // nothing at all.
+        // nothing at all - which means the panel's own query too, not only
+        // the status poll.
+        queryClient.invalidateQueries([QueryKeys.conversationTranscripts]);
         queryClient.invalidateQueries([QueryKeys.transcribeStatus]);
         return;
       }
@@ -277,6 +330,22 @@ export const useEditTranscriptTimeMutation = (
   const queryClient = useQueryClient();
   return useMutation([MutationKeys.editTranscriptTime, transcriptFileId], {
     mutationFn: (body: TTimeEditRequest) => dataService.editTranscriptTime(transcriptFileId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries([QueryKeys.transcriptCorrections, transcriptFileId]);
+    },
+  });
+};
+
+/** Removes a line outright. The neighbouring `time_edit` that takes over its
+ *  time range is written by the same request server-side, so invalidating the
+ *  correction log once picks up both. */
+export const useDeleteTranscriptLineMutation = (
+  transcriptFileId: string,
+): UseMutationResult<TTranscriptCorrection, unknown, TLineDeleteRequest, unknown> => {
+  const queryClient = useQueryClient();
+  return useMutation([MutationKeys.deleteTranscriptLine, transcriptFileId], {
+    mutationFn: (body: TLineDeleteRequest) =>
+      dataService.deleteTranscriptLine(transcriptFileId, body),
     onSuccess: () => {
       queryClient.invalidateQueries([QueryKeys.transcriptCorrections, transcriptFileId]);
     },

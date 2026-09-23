@@ -79,7 +79,14 @@ export * from './rum/proxy';
 /* Black Box crash logging */
 export * from './blackBox/logger';
 /* Audio Transcriber */
+export * from './transcription/autoLabelSpeakers';
 export * from './transcription/corrections';
+export * from './transcription/identifySpeakers';
+export * from './transcription/speakerModel';
+export * from './transcription/speakerNames';
+export * from './transcription/realign';
+export * from './transcription/attribution';
+export * from './transcription/attributionModel';
 export * from './transcription/diarizationDetail';
 export * from './transcription/docxWatermark';
 export * from './transcription/endpoint';

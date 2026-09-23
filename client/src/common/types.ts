@@ -123,6 +123,10 @@ export type NavLink = {
   icon: LucideIcon | React.FC;
   Component?: React.ComponentType;
   onClick?: (e?: React.MouseEvent) => void;
+  /** Route this link navigates to, for links that open a full page instead of
+   *  a panel. The sidebar highlights these from the current location, since
+   *  panel state only ever tracks panels that render inside the sidebar. */
+  path?: string;
   variant?: 'default' | 'ghost';
   id: string;
 };

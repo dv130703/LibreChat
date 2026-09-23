@@ -107,16 +107,21 @@ export default function useSideNavLinks({
         label: '',
         icon: Bot,
         id: EModelEndpoint.agents,
+        path: '/agents/builder',
         onClick: () => navigate('/agents/builder/new'),
       });
     }
 
+    // Sits directly after Agent Builder: both open a full page rather than a
+    // panel, so they read as one group of "goes somewhere else" links above
+    // the divider rather than being scattered among the panel toggles.
     links.push({
-      title: 'com_ui_voice_profiles_title',
+      title: 'com_ui_information_management_title',
       label: '',
       icon: Database,
-      id: 'voice-profiles',
-      onClick: () => navigate('/voice-profiles'),
+      id: 'information-management',
+      path: '/information-management',
+      onClick: () => navigate('/information-management'),
     });
 
     if (hasAccessToSkills && skillsEnabled) {

@@ -289,8 +289,14 @@ const HoverButtons = ({
       {failedTranscriptionFileId != null && (
         <HoverButton
           onClick={() => retryTranscription.mutate({ sourceFileId: failedTranscriptionFileId })}
-          title={localize('com_ui_transcript_card_retry')}
-          icon={<RotateCw size="19" />}
+          title={localize(
+            retryTranscription.isLoading
+              ? 'com_ui_transcript_card_retrying'
+              : 'com_ui_transcript_card_retry',
+          )}
+          icon={
+            <RotateCw size="19" className={retryTranscription.isLoading ? 'animate-spin' : ''} />
+          }
           isDisabled={retryTranscription.isLoading}
           isLast={isLast}
           dataTestId="retry-transcription-button"

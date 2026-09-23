@@ -229,7 +229,7 @@ const NOTICE_TEXT =
 // behind* the cursor by the time a 3-digit number finishes rendering - Word
 // can't tab backward, so it silently skips this stop and jumps straight to
 // the next one instead (DIALOGUE_COLUMN), which is what actually produced
-// the reported "108CHERYL" glue: not a rounding error, a stop the number had
+// the reported "108PRIYA" glue: not a rounding error, a stop the number had
 // already outgrown. Sized here for up to 4 digits (9999 turns) with real
 // headroom, not just enough for whatever happened to be tested.
 const NUMBER_COLUMN = 720; // 0.5"

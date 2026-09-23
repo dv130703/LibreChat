@@ -48,3 +48,34 @@ export function resolveActivePanel(
   }
   return links.find((l) => l.Component != null)?.id ?? active;
 }
+
+/**
+ * The link whose full page the browser is currently on, if any.
+ *
+ * `resolveActivePanel` deliberately only ever returns links that render a
+ * panel inside the sidebar, which left links that navigate to a full page
+ * (Agent Builder, Information Management) unable to show as selected at all -
+ * the highlight fell through to the first panel instead, lighting
+ * Conversations while the user was somewhere else entirely. Only the route
+ * knows, so it decides for those links.
+ *
+ * Matches on a path prefix because these pages have sub-routes
+ * (`/agents/builder/new`, `/agents/builder/:agentId`) that are all still the
+ * same destination. Longest path wins, so a more specific link is not
+ * shadowed by a shorter one that happens to be its prefix.
+ */
+export function resolveRouteActiveId(
+  links: { id: string; path?: string }[],
+  pathname: string,
+): string | undefined {
+  let match: { id: string; path: string } | undefined;
+  for (const link of links) {
+    if (link.path == null || !pathname.startsWith(link.path)) {
+      continue;
+    }
+    if (match == null || link.path.length > match.path.length) {
+      match = { id: link.id, path: link.path };
+    }
+  }
+  return match?.id;
+}

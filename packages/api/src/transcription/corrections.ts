@@ -34,6 +34,7 @@ function applyCorrectionsToLines(
   const textEdits: Record<number, string> = {};
   const insertedLines: Record<number, ParsedTranscriptLine> = {};
   const timeEdits: Record<number, { seconds: number; endSeconds: number }> = {};
+  const deletedLines = new Set<number>();
 
   for (const correction of corrections) {
     if (
@@ -72,6 +73,8 @@ function applyCorrectionsToLines(
         seconds: correction.seconds,
         endSeconds: correction.endSeconds,
       };
+    } else if (correction.type === 'line_delete' && correction.lineIndex != null) {
+      deletedLines.add(correction.lineIndex);
     }
   }
 
@@ -86,23 +89,28 @@ function applyCorrectionsToLines(
     }
   }
 
-  const merged = baseLines.map((line) => {
-    const reassignedTo = segmentReassignments[line.lineIndex];
-    const editedText = textEdits[line.lineIndex];
-    const editedTime = timeEdits[line.lineIndex];
-    if (reassignedTo == null && editedText == null && editedTime == null) {
-      return line;
-    }
-    return {
-      ...line,
-      speaker: reassignedTo ?? line.speaker,
-      text: editedText ?? line.text,
-      seconds: editedTime?.seconds ?? line.seconds,
-      endSeconds: editedTime?.endSeconds ?? line.endSeconds,
-    };
-  });
+  const merged = baseLines
+    .filter((line) => !deletedLines.has(line.lineIndex))
+    .map((line) => {
+      const reassignedTo = segmentReassignments[line.lineIndex];
+      const editedText = textEdits[line.lineIndex];
+      const editedTime = timeEdits[line.lineIndex];
+      if (reassignedTo == null && editedText == null && editedTime == null) {
+        return line;
+      }
+      return {
+        ...line,
+        speaker: reassignedTo ?? line.speaker,
+        text: editedText ?? line.text,
+        seconds: editedTime?.seconds ?? line.seconds,
+        endSeconds: editedTime?.endSeconds ?? line.endSeconds,
+      };
+    });
 
-  const inserted = Object.values(insertedLines);
+  // A hand-inserted line is deletable exactly like a pipeline one: drop it
+  // here rather than never adding it, so the delete works the same whichever
+  // kind of line it targets.
+  const inserted = Object.values(insertedLines).filter((line) => !deletedLines.has(line.lineIndex));
   if (inserted.length === 0) {
     return merged;
   }
@@ -181,4 +189,98 @@ export function applyTranscriptCorrections(
   corrections: TTranscriptCorrection[],
 ): string {
   return serializeTranscriptLines(applyTranscriptCorrectionsStructured(baseText, corrections));
+}
+
+/** What a delete must write: the removal itself, plus the neighbor edit that
+ *  takes over the removed line's time range. */
+export interface LineDeletionPlan {
+  deleted: {
+    lineIndex: number;
+    speaker?: string;
+    fromText: string;
+    fromSeconds?: number;
+    fromEndSeconds?: number;
+  };
+  timeEdit?: {
+    lineIndex: number;
+    fromSeconds: number;
+    fromEndSeconds: number;
+    seconds: number;
+    endSeconds: number;
+  };
+}
+
+function isTimed(
+  line: ParsedTranscriptLine | undefined,
+): line is ParsedTranscriptLine & { seconds: number; endSeconds: number } {
+  return line?.seconds != null && line.endSeconds != null;
+}
+
+/**
+ * Works out both writes a deletion needs, from the transcript as currently
+ * corrected.
+ *
+ * The time range of a deleted line would otherwise become unreachable - no
+ * box covers it, so that audio can no longer be played or re-timed from the
+ * panel at all. Instead the following line takes it over by extending its
+ * start backward. Deleting the last line has no following box, so the
+ * previous one extends its end forward instead; the range is preserved
+ * either way, only the direction changes.
+ *
+ * Computed here rather than on the client because the neighbor depends on
+ * every correction already applied, and because doing both writes from one
+ * request is what stops a delete from landing without its reabsorption.
+ *
+ * @returns `null` when no line carries that index - a delete racing another
+ *   reviewer's delete of the same line, which is a no-op rather than an error.
+ */
+export function planLineDeletion(
+  lines: ParsedTranscriptLine[],
+  lineIndex: number,
+): LineDeletionPlan | null {
+  const position = lines.findIndex((line) => line.lineIndex === lineIndex);
+  if (position === -1) {
+    return null;
+  }
+
+  const target = lines[position];
+  const deleted: LineDeletionPlan['deleted'] = {
+    lineIndex,
+    speaker: target.speaker,
+    fromText: target.text,
+    fromSeconds: target.seconds,
+    fromEndSeconds: target.endSeconds,
+  };
+  if (!isTimed(target)) {
+    return { deleted };
+  }
+
+  const next = lines[position + 1];
+  if (isTimed(next)) {
+    return {
+      deleted,
+      timeEdit: {
+        lineIndex: next.lineIndex,
+        fromSeconds: next.seconds,
+        fromEndSeconds: next.endSeconds,
+        seconds: target.seconds,
+        endSeconds: next.endSeconds,
+      },
+    };
+  }
+
+  const previous = lines[position - 1];
+  if (isTimed(previous)) {
+    return {
+      deleted,
+      timeEdit: {
+        lineIndex: previous.lineIndex,
+        fromSeconds: previous.seconds,
+        fromEndSeconds: previous.endSeconds,
+        seconds: previous.seconds,
+        endSeconds: target.endSeconds,
+      },
+    };
+  }
+  return { deleted };
 }

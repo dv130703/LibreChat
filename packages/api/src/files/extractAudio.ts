@@ -28,18 +28,43 @@ function resolveFfmpegBin(): string {
  * one code path rather than a video/audio branch.
  */
 export function extractAudioTrack(inputPath: string, outputPath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const ffmpeg = spawn(resolveFfmpegBin(), [
+  return runFfmpeg(
+    ['-y', '-i', inputPath, '-vn', '-acodec', 'aac', '-b:a', '128k', outputPath],
+    'extractAudioTrack',
+  );
+}
+
+/**
+ * Cuts a `[startSeconds, endSeconds]` slice out of an audio/video file into
+ * its own file at `outputPath` - used to grab one speaker's longest turn out
+ * of the source recording so it can be sent to the Speaker Recognition
+ * service for identification, without re-encoding the whole file.
+ */
+export function extractAudioClip(
+  inputPath: string,
+  outputPath: string,
+  startSeconds: number,
+  endSeconds: number,
+): Promise<void> {
+  return runFfmpeg(
+    [
       '-y',
+      '-ss',
+      String(startSeconds),
+      '-to',
+      String(endSeconds),
       '-i',
       inputPath,
       '-vn',
-      '-acodec',
-      'aac',
-      '-b:a',
-      '128k',
       outputPath,
-    ]);
+    ],
+    'extractAudioClip',
+  );
+}
+
+function runFfmpeg(args: string[], callerName: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn(resolveFfmpegBin(), args);
 
     let stderr = '';
     ffmpeg.stderr.on('data', (chunk: Buffer) => {
@@ -47,7 +72,7 @@ export function extractAudioTrack(inputPath: string, outputPath: string): Promis
     });
 
     ffmpeg.on('error', (error) => {
-      logger.error('[extractAudioTrack] Failed to spawn ffmpeg', error);
+      logger.error(`[${callerName}] Failed to spawn ffmpeg`, error);
       reject(error);
     });
 
@@ -57,7 +82,7 @@ export function extractAudioTrack(inputPath: string, outputPath: string): Promis
         return;
       }
       const error = new Error(`ffmpeg exited with code ${code}: ${stderr.slice(-1000)}`);
-      logger.error('[extractAudioTrack] ffmpeg failed', error);
+      logger.error(`[${callerName}] ffmpeg failed`, error);
       reject(error);
     });
   });

@@ -6,7 +6,7 @@ const { pipeline } = require('stream/promises');
 const axios = require('axios');
 const express = require('express');
 const multer = require('multer');
-const { logger, tenantStorage } = require('@librechat/data-schemas');
+const { logger, tenantStorage, runAsSystem } = require('@librechat/data-schemas');
 const {
   Constants,
   inferMimeType,
@@ -19,6 +19,8 @@ const {
   logAxiosError,
   getStorageMetadata,
   extractAudioTrack,
+  extractAudioClip,
+  autoLabelSpeakers,
   probeAudioChannels,
   generateShortLivedToken,
   restoreTenantContextFromReq,
@@ -27,6 +29,12 @@ const {
   buildMeetingMinutesDocx,
   buildDiarizationDetail,
   getTranscriptionApiUrl,
+  identifySpeakersFromContent,
+  findUnidentifiedSpeakers,
+  reviewAttribution,
+  createAttributionModel,
+  createSpeakerModel,
+  getSpeakerIdentificationConfig,
 } = require('@librechat/api');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
 const configMiddleware = require('~/server/middleware/config/app');
@@ -39,7 +47,9 @@ const {
 } = require('~/server/services/Files/process');
 const { getRetentionExpiry } = require('~/server/services/Files/retention');
 const { getFileStrategy } = require('~/server/utils/getFileStrategy');
-const { transcribeAndEmbed } = require('~/server/services/Transcription');
+const { transcribeAndEmbed, cancelTranscription } = require('~/server/services/Transcription');
+const { recordCorrectionAndReembed } = require('~/server/services/Transcription/corrections');
+const { matchAgainstProfiles } = require('~/server/services/SpeakerRecognition');
 const {
   enqueueTranscriptionJob,
   requestCancel,
@@ -47,7 +57,10 @@ const {
   wasJobCancelled,
   getQueueDepth,
 } = require('~/server/services/Transcription/jobQueue');
-const { HEARTBEAT_INTERVAL_MS } = require('~/server/services/Transcription/reconciliation');
+const {
+  HEARTBEAT_INTERVAL_MS,
+  INTERRUPTED_ERROR,
+} = require('~/server/services/Transcription/reconciliation');
 const localPaths = require('~/config/paths');
 const db = require('~/models');
 
@@ -98,6 +111,7 @@ function buildTranscriptionMeta(options, result) {
     clusteringThreshold: options.clusteringThreshold,
     includeTimestamps: options.includeTimestamps,
     contextTerms: options.contextTerms,
+    voiceRecognition: options.voiceRecognition,
     // The resolved value the decoder ran under, not the request's - the caller
     // may have left it unset and taken the deployment default.
     suppressNumerals: result.diagnostics?.suppress_numerals,
@@ -278,6 +292,34 @@ async function runTranscriptionJob({
         result,
         conversationId,
       });
+
+      await autoLabelDetectedSpeakers({
+        req,
+        sourceFileId,
+        conversationId,
+        transcriptFileId: transcriptFile.file_id,
+        audioFilePath: audioFile.path,
+        diarizationTurns: result.diarizationTurns,
+        // Absent means enabled: a job queued before this option existed, or
+        // by any caller that does not send it, keeps the previous behaviour.
+        enabled: options.voiceRecognition !== false,
+      });
+
+      await identifyRemainingSpeakers({
+        req,
+        sourceFileId,
+        conversationId,
+        transcriptFileId: transcriptFile.file_id,
+        baseText: result.text,
+      });
+
+      await reviewSpeakerAttribution({
+        req,
+        sourceFileId,
+        conversationId,
+        transcriptFileId: transcriptFile.file_id,
+        baseText: result.text,
+      });
     }
 
     // Dual-write, same as Phase 1: `Conversation.transcription` stays
@@ -375,6 +417,329 @@ async function persistDiarizationDetail({ req, sourceFileId, filename, result, c
   });
   await db.addConvoFile(conversationId, diarizationDetailFile.file_id);
   return diarizationDetailFile;
+}
+
+/**
+ * Best-effort: matches each detected speaker against this user's enrolled
+ * voice profiles and renames recognized ones in place, via the same
+ * `speaker_rename` correction the manual roster UI writes (so it's editable/
+ * undoable through the existing UI with no changes there). Skipped entirely
+ * when diarization found no speakers, or the user has no enrolled profiles -
+ * never fails the transcription job itself; see `autoLabelSpeakers`'s own
+ * per-speaker error handling for why one bad clip/match can't block another.
+ */
+async function autoLabelDetectedSpeakers({
+  req,
+  sourceFileId,
+  conversationId,
+  transcriptFileId,
+  audioFilePath,
+  diarizationTurns,
+  enabled = true,
+}) {
+  if (!enabled) {
+    logger.info(
+      `[TRANSCRIPTION] voice recognition off for this job sourceFileId=${sourceFileId} - ` +
+        'speakers will be named from the transcript only',
+    );
+    return;
+  }
+  if (!diarizationTurns?.length) {
+    return;
+  }
+  try {
+    const profiles = await db.getVoiceProfilesWithEmbeddings(req.user.id);
+    if (profiles.length === 0) {
+      return;
+    }
+    await autoLabelSpeakers({
+      audioFilePath,
+      diarizationTurns,
+      transcriptFileId,
+      conversationId,
+      userId: req.user.id,
+      tenantId: req.user.tenantId,
+      extractClip: extractAudioClip,
+      identifySpeaker: (clipPath) =>
+        matchAgainstProfiles({
+          req,
+          file: { path: clipPath, originalname: 'speaker-clip.wav', mimetype: 'audio/wav' },
+          profiles,
+        }),
+      createCorrection: (correction) =>
+        recordCorrectionAndReembed(req, transcriptFileId, conversationId, correction),
+      removeClip: (clipPath) => fs.promises.unlink(clipPath),
+      makeClipPath: (speakerLabel) =>
+        path.join(os.tmpdir(), `${sourceFileId}-${speakerLabel}-auto-label.wav`),
+      onError: (speakerLabel, error) => {
+        logger.error(
+          `[TRANSCRIPTION] auto-label failed sourceFileId=${sourceFileId} speaker=${speakerLabel}`,
+          error,
+        );
+      },
+    });
+  } catch (error) {
+    logger.error(`[TRANSCRIPTION] auto-label speakers failed sourceFileId=${sourceFileId}`, error);
+  }
+}
+
+/**
+ * Best-effort second pass at naming speakers, from what the transcript says
+ * rather than from how anyone sounds: a speaker who introduces themselves,
+ * or whom another speaker addresses by name and who then answers, can be
+ * identified even with no enrolled voice profile at all.
+ *
+ * Runs after `autoLabelDetectedSpeakers` and reads that pass's corrections
+ * back, so it only ever considers speakers voice matching left unnamed - the
+ * two stages never fight over the same label. Writes the same
+ * `speaker_rename` correction as the roster UI, which is why this can only
+ * affect speaker names and nothing else about the transcript.
+ *
+ * Off unless `SPEAKER_ID_MODEL` is configured, and never fails the job.
+ *
+ * Logs record that a speaker was named and how confidently, never the name
+ * itself. Application logs rotate to disk with weaker access control than
+ * the database and are read casually during debugging; the correction record
+ * already carries the full who/what/when under the same protection as the
+ * transcript, so repeating an interview subject's name here would add a
+ * second, looser copy of identifying data and no audit value.
+ */
+async function identifyRemainingSpeakers({
+  req,
+  sourceFileId,
+  conversationId,
+  transcriptFileId,
+  baseText,
+}) {
+  // Inside the try, not before it: this reads configuration, and a stage
+  // that promises never to fail the job must not be able to throw out of
+  // its own setup either.
+  try {
+    const config = getSpeakerIdentificationConfig();
+    if (!config) {
+      logger.info(
+        `[TRANSCRIPTION] speaker identification skipped (SPEAKER_ID_MODEL not set) sourceFileId=${sourceFileId}`,
+      );
+      return;
+    }
+    if (!baseText) {
+      return;
+    }
+    const [corrections, profiles] = await Promise.all([
+      db.getTranscriptCorrections(transcriptFileId),
+      db.getVoiceProfiles(req.user.id),
+    ]);
+    const lines = applyTranscriptCorrectionsStructured(baseText, corrections);
+    const unnamed = findUnidentifiedSpeakers(lines);
+    logger.info(
+      `[TRANSCRIPTION] speaker identification starting sourceFileId=${sourceFileId} ` +
+        `model=${config.model} unnamed=${unnamed.length ? unnamed.join(',') : 'none'} ` +
+        `profiles=${profiles.length}`,
+    );
+    const assigned = await identifySpeakersFromContent({
+      lines,
+      candidates: profiles.map((profile) => ({
+        profileId: String(profile._id),
+        fullName: profile.fullName,
+        role: profile.role,
+      })),
+      transcriptFileId,
+      conversationId,
+      userId: req.user.id,
+      tenantId: req.user.tenantId,
+      askModel: createSpeakerModel(config),
+      createCorrection: (correction) =>
+        recordCorrectionAndReembed(req, transcriptFileId, conversationId, correction),
+      onError: (error) => {
+        logger.error(`[TRANSCRIPTION] speaker identification failed ${sourceFileId}`, error);
+      },
+      onRejected: (rejected) => {
+        for (const entry of rejected) {
+          logger.info(
+            `[TRANSCRIPTION] speaker identification rejected sourceFileId=${sourceFileId} ` +
+              `speaker=${entry.assignment.speakerId} reason=${entry.reason}`,
+          );
+        }
+      },
+    });
+    if (assigned.length === 0) {
+      logger.info(
+        `[TRANSCRIPTION] speaker identification named no one sourceFileId=${sourceFileId} ` +
+          '(the transcript did not establish who they are)',
+      );
+    }
+    for (const assignment of assigned) {
+      logger.info(
+        `[TRANSCRIPTION] speaker identified sourceFileId=${sourceFileId} ` +
+          `${assignment.speakerId} named (confidence ${assignment.confidence})`,
+      );
+    }
+  } catch (error) {
+    logger.error(`[TRANSCRIPTION] speaker identification failed ${sourceFileId}`, error);
+  }
+}
+
+/**
+ * Corrects lines the transcript gives to the wrong person - an answer
+ * credited to the interviewer, or a witness's "Absolutely." absorbed onto
+ * the end of a question. `realignSegments` cannot reach these: their
+ * punctuation is already correct, and only the sense of the exchange shows
+ * the label is wrong.
+ *
+ * Runs last, so it sees speakers already named by voice matching and by the
+ * identification pass, and can therefore talk about real people rather than
+ * "Speaker 2". Every accepted fix is written as an ordinary correction -
+ * visible in the roster UI, undoable, attributed to this user, layered over
+ * a pipeline transcript that is never itself rewritten. That matters here
+ * more than anywhere else in this file: on an investigation transcript a
+ * wrong attribution is evidential.
+ *
+ * Off unless `SPEAKER_ID_MODEL` is configured, and never fails the job.
+ */
+async function reviewSpeakerAttribution({
+  req,
+  sourceFileId,
+  conversationId,
+  transcriptFileId,
+  baseText,
+}) {
+  try {
+    const config = getSpeakerIdentificationConfig();
+    if (!config || !baseText) {
+      return;
+    }
+    const corrections = await db.getTranscriptCorrections(transcriptFileId);
+    const lines = applyTranscriptCorrectionsStructured(baseText, corrections);
+    const review = await reviewAttribution({
+      lines,
+      askModel: createAttributionModel(config),
+      onError: (error) => {
+        logger.warn(
+          `[TRANSCRIPTION] attribution batch failed sourceFileId=${sourceFileId} - ` +
+            `other batches continue: ${error?.message ?? error}`,
+        );
+      },
+    });
+    logger.info(
+      `[TRANSCRIPTION] attribution review sourceFileId=${sourceFileId} ` +
+        `flagged=${review.candidates} accepted=${review.accepted.length} ` +
+        `rejected=${review.rejected.length}`,
+    );
+    for (const entry of review.rejected) {
+      logger.info(
+        `[TRANSCRIPTION] attribution rejected sourceFileId=${sourceFileId} ` +
+          `line=${entry.fix.lineIndex} reason=${entry.reason}`,
+      );
+    }
+    for (const correction of review.corrections) {
+      await recordCorrectionAndReembed(req, transcriptFileId, conversationId, {
+        transcriptFileId,
+        conversationId,
+        user: req.user.id,
+        tenantId: req.user.tenantId,
+        ...correction,
+      });
+    }
+    for (const fix of review.accepted) {
+      logger.info(
+        `[TRANSCRIPTION] attribution ${fix.kind} sourceFileId=${sourceFileId} ` +
+          `line=${fix.lineIndex} (confidence ${fix.confidence})`,
+      );
+    }
+  } catch (error) {
+    logger.error(`[TRANSCRIPTION] attribution review failed ${sourceFileId}`, error);
+  }
+}
+
+/** A job may be auto-resumed once. A second interruption is either a very
+ *  unlucky deploy or a job that is itself killing the process, and quietly
+ *  re-running a 40-minute GPU task forever is worse than stopping. */
+const MAX_RESUME_ATTEMPTS = 1;
+
+/**
+ * Re-queues transcriptions that a process restart abandoned mid-run.
+ *
+ * `reconcileStaleTranscriptionJobs` can only mark such a job failed - it is a
+ * background sweep with no request, and resuming one needs the owner's tenant
+ * context plus a fresh download of the stored source audio. The in-memory job
+ * queue does not survive a restart either, so without this a deploy during a
+ * long interview loses the job outright and the reviewer sees "failed" for
+ * work the transcription service may well have finished.
+ *
+ * Matches only on the interrupted marker, never on a genuine failure (a bad
+ * file, a service that was down) - those stay failed and manual, because
+ * re-running them would just fail again.
+ *
+ * Best-effort per job: one that cannot be resumed is left failed and
+ * retryable by hand, and never blocks the others.
+ */
+async function resumeInterruptedTranscriptions(appConfig) {
+  const interrupted = await runAsSystem(() =>
+    db.getFiles({
+      'transcription.status': 'failed',
+      'transcription.error': INTERRUPTED_ERROR,
+      $or: [
+        { 'transcription.resumeAttempts': { $exists: false } },
+        { 'transcription.resumeAttempts': { $lt: MAX_RESUME_ATTEMPTS } },
+      ],
+    }),
+  );
+  if (!interrupted?.length) {
+    return { resumed: 0 };
+  }
+
+  let resumed = 0;
+  for (const sourceFile of interrupted) {
+    const sourceFileId = sourceFile.file_id;
+    const req = {
+      user: { id: String(sourceFile.user), tenantId: sourceFile.tenantId },
+      config: appConfig,
+    };
+    let tmpPath = null;
+    try {
+      const { getDownloadStream } = getStrategyFunctions(sourceFile.source);
+      const stream = await getDownloadStream(req, sourceFile.storageKey || sourceFile.filepath);
+      tmpPath = path.join(os.tmpdir(), `resume-${sourceFileId}-${Date.now()}`);
+      await pipeline(stream, fs.createWriteStream(tmpPath));
+
+      await db.updateFile({
+        file_id: sourceFileId,
+        'transcription.status': 'queued',
+        'transcription.error': null,
+        'transcription.heartbeatAt': new Date(),
+        'transcription.resumeAttempts': (sourceFile.transcription?.resumeAttempts ?? 0) + 1,
+      });
+
+      enqueueTranscriptionJob(
+        () =>
+          runTranscriptionCore({
+            req,
+            sourceFileId,
+            sourceFilename: sourceFile.originalFilename ?? sourceFile.filename,
+            audioFile: {
+              path: tmpPath,
+              originalname: sourceFile.filename,
+              mimetype: sourceFile.type || inferMimeType(sourceFile.filename),
+            },
+            conversationId: sourceFile.conversationId,
+            options: sourceFile.transcription?.requestedOptions ?? {},
+            wipeCorrections: false,
+            cleanupPaths: [tmpPath],
+          }),
+        sourceFileId,
+      ).catch(() => {});
+      resumed++;
+      logger.info(`[TRANSCRIPTION] resumed interrupted job sourceFileId=${sourceFileId}`);
+    } catch (error) {
+      await fs.promises.unlink(tmpPath ?? '').catch(() => {});
+      logger.error(
+        `[TRANSCRIPTION] could not resume interrupted job sourceFileId=${sourceFileId} - ` +
+          'left failed and retryable by hand',
+        error,
+      );
+    }
+  }
+  return { resumed };
 }
 
 router.use(requireJwtAuth);
@@ -1006,6 +1371,14 @@ router.post('/:sourceFileId/cancel', async (req, res) => {
     'transcription.completedAt': new Date(),
   });
   const wasTracked = requestCancel(sourceFileId);
+  // Best-effort and deliberately not awaited: `wasTracked` already covers
+  // Node's own side (stop waiting on the request), and the response below
+  // shouldn't wait on a round-trip to the Python service. This is what
+  // actually stops the GPU work behind that request, rather than just
+  // Node giving up on listening for it - see `cancelTranscription`'s own
+  // doc comment for why a failure here is never treated as this route's
+  // own failure.
+  cancelTranscription({ req, sourceFileId }).catch(() => {});
   logger.info(
     `[TRANSCRIPTION] cancel requested sourceFileId=${sourceFileId} wasTracked=${wasTracked}`,
   );
@@ -1205,3 +1578,4 @@ router.post('/:sourceFileId/meeting-minutes-docx', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.resumeInterruptedTranscriptions = resumeInterruptedTranscriptions;

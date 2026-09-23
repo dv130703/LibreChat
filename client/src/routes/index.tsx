@@ -236,8 +236,15 @@ export const router = createBrowserRouter(
               lazy: loadTransparencyView,
             },
             {
-              path: 'voice-profiles',
+              path: 'information-management',
               lazy: loadVoiceProfilesView,
+            },
+            /* Renamed from `voice-profiles`; kept so existing bookmarks and
+             * any link already shared internally still land, same as
+             * `audio-transcriber/:conversationId` above. */
+            {
+              path: 'voice-profiles',
+              element: <Navigate to="/information-management" replace={true} />,
             },
           ],
         },
