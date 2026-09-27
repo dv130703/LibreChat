@@ -454,7 +454,14 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
       expect(mockTranscribeAndEmbed).not.toHaveBeenCalled();
     });
 
-    it('does not create a transcript file when no speech is detected, but still marks the job ready', async () => {
+    /** A job that produced no transcript used to be filed as `ready`, which
+     *  the panel could only render as "No transcript available yet" - no
+     *  reason, no retry, and indistinguishable from a backend malfunction.
+     *  That is exactly how a pipeline service returning progress reports
+     *  instead of transcripts went unnoticed across every recording: each
+     *  one was reported to the reviewer as a finished job. "Finished" has to
+     *  mean there is something to read. */
+    it('marks the job failed when transcription produced no transcript', async () => {
       mockTranscribeAndEmbed.mockResolvedValue({
         segments: [],
         language: 'en',
@@ -470,9 +477,14 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
       await onIdle();
 
       const sourceFile = await File.findOne({ file_id: response.body.sourceFile.file_id }).lean();
-      expect(sourceFile.transcription.status).toBe('ready');
-      expect(sourceFile.transcription.transcriptFileId).toBeNull();
+      expect(sourceFile.transcription.status).toBe('failed');
+      // Never written at all: the job fails before the completion write that
+      // would attach one.
+      expect(sourceFile.transcription.transcriptFileId).toBeUndefined();
+      expect(sourceFile.transcription.error).toMatch(/no speech/i);
 
+      // The recording itself is still the user's, and still attached: a job
+      // that found nothing is a reason to retry, not to lose the upload.
       const convo = await Conversation.findOne({ conversationId }).lean();
       expect(convo.files).toEqual([sourceFile.file_id]);
     });
@@ -1495,6 +1507,165 @@ describe('transcribe.js (async job model, transcription/ARCHITECTURE.md Phase 2)
         .send({ form: {}, speakers: [] });
 
       expect(response.status).toBe(404);
+    });
+  });
+  /**
+   * Reading aid, not a correction: the route hands back a translation keyed
+   * by `lineIndex` and must leave the stored transcript and its correction
+   * log exactly as they were. Only the LLM endpoint is stubbed - the real
+   * external boundary; transcript regeneration and ownership run for real.
+   */
+  describe('POST /api/transcribe/:sourceFileId/translate', () => {
+    let originalFetch;
+    const originalEnv = {};
+
+    beforeEach(() => {
+      originalFetch = global.fetch;
+      for (const key of ['SPEAKER_ID_MODEL', 'SPEAKER_ID_BASE_URL']) {
+        originalEnv[key] = process.env[key];
+      }
+      process.env.SPEAKER_ID_MODEL = 'test-model';
+      process.env.SPEAKER_ID_BASE_URL = 'http://fake-llm/v1';
+      mockTranscribeAndEmbed.mockResolvedValue(DEFAULT_RESULT);
+    });
+
+    afterEach(async () => {
+      global.fetch = originalFetch;
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value == null) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      await TranscriptCorrection.deleteMany({});
+    });
+
+    function stubModel(content) {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content } }] }),
+      });
+    }
+
+    async function transcribedSourceFileId() {
+      const response = await uploadFile(crypto.randomUUID());
+      await onIdle();
+      return response.body.sourceFile.file_id;
+    }
+
+    it('returns the translation keyed by lineIndex and records nothing', async () => {
+      const sourceFileId = await transcribedSourceFileId();
+      stubModel('[0] Hello there');
+
+      const response = await request(app).post(`/api/transcribe/${sourceFileId}/translate`).send();
+
+      expect(response.status).toBe(200);
+      expect(response.body.lines).toEqual({ 0: 'Hello there' });
+      expect(await TranscriptCorrection.countDocuments({})).toBe(0);
+      const file = await File.findOne({ file_id: DEFAULT_RESULT.transcriptFileId }).lean();
+      expect(file.text).toBe(DEFAULT_RESULT.text);
+    });
+
+    it('translates the CORRECTED text, not the raw pipeline transcript', async () => {
+      const sourceFileId = await transcribedSourceFileId();
+      await TranscriptCorrection.create({
+        transcriptFileId: DEFAULT_RESULT.transcriptFileId,
+        conversationId: crypto.randomUUID(),
+        user: userId,
+        type: 'text_edit',
+        lineIndex: 0,
+        fromText: 'Hello',
+        toText: 'Good morning',
+      });
+      stubModel('[0] Good morning');
+
+      await request(app).post(`/api/transcribe/${sourceFileId}/translate`).send();
+
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(body.messages[1].content).toContain('Good morning');
+      expect(body.messages[1].content).not.toContain('Hello');
+    });
+
+    it('returns 503 when no model is configured, instead of a silent empty result', async () => {
+      const sourceFileId = await transcribedSourceFileId();
+      delete process.env.SPEAKER_ID_MODEL;
+
+      const response = await request(app).post(`/api/transcribe/${sourceFileId}/translate`).send();
+
+      expect(response.status).toBe(503);
+    });
+
+    it('returns 404 for a source file belonging to a different user (R4)', async () => {
+      await File.create({
+        user: new mongoose.Types.ObjectId().toString(),
+        file_id: 'foreign-translate-target',
+        filename: 'a.m4a',
+        filepath: '/tmp/a',
+        type: 'audio/mp4',
+        bytes: 1,
+        source: 'local',
+        context: 'transcript_rag',
+        transcription: { status: 'ready', jobId: 'j', instanceId: 'i', heartbeatAt: new Date() },
+      });
+
+      const response = await request(app)
+        .post('/api/transcribe/foreign-translate-target/translate')
+        .send();
+
+      expect(response.status).toBe(404);
+    });
+  });
+  /**
+   * Full disclosure of what the LLM stages are told - a reviewer has to be
+   * able to read the instructions that produced a corrected transcript, so
+   * this route answers whether or not anything is configured.
+   */
+  describe('GET /api/transcribe/prompts', () => {
+    const originalModel = process.env.SPEAKER_ID_MODEL;
+    const originalBaseUrl = process.env.SPEAKER_ID_BASE_URL;
+
+    afterEach(() => {
+      if (originalModel == null) {
+        delete process.env.SPEAKER_ID_MODEL;
+      } else {
+        process.env.SPEAKER_ID_MODEL = originalModel;
+      }
+      if (originalBaseUrl == null) {
+        delete process.env.SPEAKER_ID_BASE_URL;
+      } else {
+        process.env.SPEAKER_ID_BASE_URL = originalBaseUrl;
+      }
+    });
+
+    it('returns every stage with its verbatim prompt, model and endpoint', async () => {
+      process.env.SPEAKER_ID_MODEL = 'test-model';
+      process.env.SPEAKER_ID_BASE_URL = 'http://fake-llm/v1';
+
+      const response = await request(app).get('/api/transcribe/prompts');
+
+      expect(response.status).toBe(200);
+      expect(response.body.enabled).toBe(true);
+      expect(response.body.model).toBe('test-model');
+      expect(response.body.endpoint).toBe('http://fake-llm/v1');
+      expect(response.body.stages.map((stage) => stage.stage)).toEqual([
+        'identifying_speakers',
+        'reviewing_attribution',
+        'translating',
+      ]);
+      for (const stage of response.body.stages) {
+        expect(stage.systemPrompt.length).toBeGreaterThan(0);
+        expect(stage.exampleUserMessage.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('says plainly that nothing runs when no model is configured', async () => {
+      delete process.env.SPEAKER_ID_MODEL;
+
+      const response = await request(app).get('/api/transcribe/prompts');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ enabled: false, stages: [] });
     });
   });
 });

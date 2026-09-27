@@ -32,6 +32,10 @@ export interface RecordingChipProps {
   /** Shown in place of the status line when `state` is `failed`. */
   errorMessage?: string;
   statusLabel: string;
+  /** 0-1 through the current phase, when that phase measures a position.
+   *  Absent leaves the spinner alone rather than drawing an empty bar,
+   *  which would read as "stuck at 0%" instead of "not measurable". */
+  progress?: number | null;
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
 }
 
@@ -41,6 +45,7 @@ function RecordingChip({
   state,
   errorMessage,
   statusLabel,
+  progress,
   onClick,
 }: RecordingChipProps) {
   const file = { filename: displayName, type: RECORDING_CHIP_TYPE, bytes };
@@ -72,9 +77,25 @@ function RecordingChip({
       displayName={displayName}
       onClick={onClick}
       subtitle={
-        <div className="flex items-center gap-1.5 text-text-secondary">
-          {state !== 'ready' && <Spinner className="h-3.5 w-3.5 shrink-0" />}
-          <span className="truncate">{statusLabel}</span>
+        <div className="flex min-w-0 flex-col gap-1 text-text-secondary">
+          <div className="flex items-center gap-1.5">
+            {state !== 'ready' && <Spinner className="h-3.5 w-3.5 shrink-0" />}
+            <span className="truncate">{statusLabel}</span>
+          </div>
+          {progress != null && (
+            <div
+              className="h-0.5 w-full overflow-hidden rounded-full bg-border-medium"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progress * 100)}
+            >
+              <div
+                className="h-full rounded-full bg-green-500 transition-[width] duration-500 ease-out dark:bg-green-400"
+                style={{ width: `${progress * 100}%` }}
+              />
+            </div>
+          )}
         </div>
       }
     />

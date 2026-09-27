@@ -525,6 +525,9 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
         diarizationDetailFileId: null,
         jobStatus: null,
         jobError: null,
+        jobStage: null,
+        jobProgressSeconds: null,
+        jobProgressTotalSeconds: null,
         cancelled: false,
         indexStatus: null,
         isQueryable: false,
@@ -541,6 +544,9 @@ export function createFileMethods(mongoose: typeof import('mongoose')): {
         entry.displayName = file.originalFilename ?? file.filename;
         entry.jobStatus = (file.transcription.status ?? null) as TTranscribeJobStatus | null;
         entry.jobError = file.transcription.error ?? null;
+        entry.jobStage = file.transcription.stage ?? null;
+        entry.jobProgressSeconds = file.transcription.progressSeconds ?? null;
+        entry.jobProgressTotalSeconds = file.transcription.progressTotalSeconds ?? null;
         entry.cancelled = file.transcription.cancelledAt != null;
         continue;
       }

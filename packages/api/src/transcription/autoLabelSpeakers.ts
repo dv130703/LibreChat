@@ -56,33 +56,34 @@ export function selectLongestTurnPerSpeaker(
  *  user's enrolled voice profiles and renames recognized ones in place, via
  *  the same `speaker_rename` correction the manual roster UI writes. A
  *  failure on one speaker (bad clip, service down, no match) never blocks
- *  the others - reported through `onError`, not thrown. */
+ *  the others - reported through `onError`, not thrown. Speakers are
+ *  identified one at a time: the recognition service runs a single GPU model,
+ *  so firing every clip at once only stacks them all behind the same queue
+ *  and times them out together on a cold model load. */
 export async function autoLabelSpeakers(params: AutoLabelSpeakersParams): Promise<void> {
   const longestTurns = selectLongestTurnPerSpeaker(params.diarizationTurns);
 
-  await Promise.all(
-    Array.from(longestTurns.entries()).map(async ([speakerLabel, turn]) => {
-      const clipPath = params.makeClipPath(speakerLabel);
-      try {
-        await params.extractClip(params.audioFilePath, clipPath, turn.start, turn.end);
-        const match = await params.identifySpeaker(clipPath);
-        if (match.recognized && match.bestMatch) {
-          await params.createCorrection({
-            transcriptFileId: params.transcriptFileId,
-            conversationId: params.conversationId,
-            user: params.userId,
-            type: 'speaker_rename',
-            speakerId: speakerLabel,
-            fromName: speakerLabel,
-            toName: match.bestMatch.fullName,
-            tenantId: params.tenantId,
-          });
-        }
-      } catch (error) {
-        params.onError?.(speakerLabel, error);
-      } finally {
-        await params.removeClip(clipPath).catch(() => {});
+  for (const [speakerLabel, turn] of longestTurns) {
+    const clipPath = params.makeClipPath(speakerLabel);
+    try {
+      await params.extractClip(params.audioFilePath, clipPath, turn.start, turn.end);
+      const match = await params.identifySpeaker(clipPath);
+      if (match.recognized && match.bestMatch) {
+        await params.createCorrection({
+          transcriptFileId: params.transcriptFileId,
+          conversationId: params.conversationId,
+          user: params.userId,
+          type: 'speaker_rename',
+          speakerId: speakerLabel,
+          fromName: speakerLabel,
+          toName: match.bestMatch.fullName,
+          tenantId: params.tenantId,
+        });
       }
-    }),
-  );
+    } catch (error) {
+      params.onError?.(speakerLabel, error);
+    } finally {
+      await params.removeClip(clipPath).catch(() => {});
+    }
+  }
 }

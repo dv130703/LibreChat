@@ -13,6 +13,7 @@ import {
 import { useTranscribeConfigQuery } from '~/data-provider';
 import useLocalize from '~/hooks/useLocalize';
 import type { TranslationKeys } from '~/hooks/useLocalize';
+import PromptDisclosure from './PromptDisclosure';
 import { cn } from '~/utils';
 
 export interface TranscribeAudioOptions {
@@ -666,6 +667,13 @@ export default function TranscribeOptionsDialog({
                         )}
                       </>
                     )}
+                  </Section>
+
+                  {/* Last, and collapsed: what the AI stages are told is
+                      something a reviewer goes and checks, not a decision to
+                      make before pressing Transcribe. */}
+                  <Section title={localize('com_ui_transcribe_options_section_ai')}>
+                    <PromptDisclosure />
                   </Section>
                 </>
               ) : (

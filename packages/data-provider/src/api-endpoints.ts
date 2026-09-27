@@ -273,6 +273,10 @@ export const transcribeConfig = () => `${BASE_URL}/api/transcribe/config`;
 
 /** Stateless channel-count probe (Phase 4, §6.2) - no File record, no job
  *  queued, just `ffprobe` on an uploaded temp file. */
+/** Every prompt the server's LLM stages use, for the transcribe dialog's own
+ *  disclosure - see `GET /api/transcribe/prompts`. */
+export const transcribePrompts = () => `${BASE_URL}/api/transcribe/prompts`;
+
 export const probeAudioChannels = () => `${BASE_URL}/api/transcribe/probe`;
 
 /** Every recording on a conversation plus, per recording, whether its
@@ -312,6 +316,8 @@ export const interviewDocx = (sourceFileId: string) =>
   `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/interview-docx`;
 export const meetingMinutesDocx = (sourceFileId: string) =>
   `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/meeting-minutes-docx`;
+export const translateTranscript = (sourceFileId: string) =>
+  `${BASE_URL}/api/transcribe/${encodeURIComponent(sourceFileId)}/translate`;
 const transcriptCorrectionsRoot = `${BASE_URL}/api/transcript-corrections`;
 export const transcriptCorrections = (transcriptFileId: string, conversationId: string) =>
   `${transcriptCorrectionsRoot}/${encodeURIComponent(transcriptFileId)}${buildQuery({ conversationId })}`;

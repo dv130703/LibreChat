@@ -16,7 +16,10 @@ const {
   getSpeakerRecognitionApiUrl,
 } = require('@librechat/api');
 
-const REQUEST_TIMEOUT_MS = 60 * 1000;
+/** Generous enough to cover a cold start: the first call to a freshly-started
+ *  service pays for loading the ECAPA-TDNN model onto the GPU before it
+ *  answers anything. */
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 function buildAudioFormData(file) {
   const formData = new FormData();

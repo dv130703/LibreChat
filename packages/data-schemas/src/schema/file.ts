@@ -103,6 +103,30 @@ const file: Schema<IMongoFile> = new Schema(
           // meaningful to allow through.
           requestedOptions: { type: Schema.Types.Mixed },
           effectiveOptions: { type: Schema.Types.Mixed },
+          // Which phase of the job is running right now. `status` alone
+          // said only "transcribing" for the job's whole multi-minute life,
+          // including the speaker-identification and attribution passes that
+          // run after the transcript already exists - indistinguishable from
+          // a hang. Absent on a record written before this existed.
+          stage: {
+            type: String,
+            enum: [
+              'extracting',
+              'transcribing',
+              'aligning',
+              'diarizing',
+              'indexing',
+              'matching_voices',
+              'identifying_speakers',
+              'reviewing_attribution',
+            ],
+          },
+          // How far through the transcription phase, in audio seconds.
+          // Only that phase can report a real position; the rest report
+          // their stage and nothing more, because inventing a percentage
+          // for them would be worse than showing none.
+          progressSeconds: { type: Number },
+          progressTotalSeconds: { type: Number },
           transcriptFileId: { type: String },
           diarizationDetailFileId: { type: String },
           durationS: { type: Number },

@@ -5,6 +5,7 @@ const { createModels } = require('@librechat/data-schemas');
 const {
   HEARTBEAT_INTERVAL_MS,
   STALE_THRESHOLD_MS,
+  reconcileOrphanedQueuedJobs,
   reconcileStaleTranscriptionJobs,
   startTranscriptionReconciliation,
   stopTranscriptionReconciliation,
@@ -219,6 +220,46 @@ describe('transcription reconciliation sweep (transcription/ARCHITECTURE.md §5.
 
       const file = await File.findOne({ file_id: 'interrupted-3' }).lean();
       expect(file.transcription.status).toBe('failed');
+    });
+  });
+
+  describe('reconcileOrphanedQueuedJobs', () => {
+    /** The in-process queue is empty at boot, so a surviving `queued` row is a
+     *  job nothing will ever run. Before this it stayed queued for good: the
+     *  heartbeat sweep only matches `transcribing`, and retry only accepts a
+     *  failed job, so the recording had no route out at all. */
+    it('fails a queued job that no in-process queue is holding any more', async () => {
+      await seedSourceFile('orphaned-queued', {
+        status: 'queued',
+        jobId: 'j-queued',
+        instanceId: 'host-1',
+        heartbeatAt: new Date(),
+        requestedOptions: {},
+      });
+
+      const { reconciled } = await reconcileOrphanedQueuedJobs();
+
+      expect(reconciled).toBe(1);
+      const after = await File.findOne({ file_id: 'orphaned-queued' }).lean();
+      expect(after.transcription.status).toBe('failed');
+      expect(after.transcription.error).toBe(INTERRUPTED_ERROR);
+    });
+
+    /** A fresh heartbeat is no defence here and must not be treated as one -
+     *  the whole point is that this only ever runs when nothing can be queued. */
+    it('leaves a running job alone no matter how it is heartbeating', async () => {
+      await seedSourceFile('still-running', {
+        status: 'transcribing',
+        jobId: 'j-running',
+        instanceId: 'host-1',
+        heartbeatAt: new Date(),
+        requestedOptions: {},
+      });
+
+      await reconcileOrphanedQueuedJobs();
+
+      const after = await File.findOne({ file_id: 'still-running' }).lean();
+      expect(after.transcription.status).toBe('transcribing');
     });
   });
 });

@@ -94,7 +94,9 @@ export * from './transcription/evidence';
 export * from './transcription/interviewDocx';
 export * from './transcription/meetingMinutesDocx';
 export * from './transcription/meta';
+export * from './transcription/prompts';
 export * from './transcription/tools';
+export * from './transcription/translate';
 /* Speaker Recognition */
 export * from './speakerRecognition/endpoint';
 export * from './endpoints/ollama/context';

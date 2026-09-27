@@ -34,6 +34,8 @@ const {
   reviewAttribution,
   createAttributionModel,
   createSpeakerModel,
+  translateTranscript,
+  describeTranscriptionPrompts,
   getSpeakerIdentificationConfig,
 } = require('@librechat/api');
 const requireJwtAuth = require('~/server/middleware/requireJwtAuth');
@@ -208,6 +210,26 @@ async function runTranscriptionCore(params) {
   );
 }
 
+/**
+ * Records which phase a job is in, so the UI can say what is happening
+ * rather than showing one spinner for the job's whole multi-minute life.
+ *
+ * Fire-and-forget and never awaited by the work it describes: this is a
+ * readout, and a failed status write must not take down the transcription
+ * it is only reporting on. Each write also refreshes the heartbeat, so
+ * advancing a stage is itself proof to the reconciler that the job is alive.
+ */
+function setStage(sourceFileId, stage, extra = {}) {
+  db.updateFile({
+    file_id: sourceFileId,
+    'transcription.stage': stage,
+    'transcription.heartbeatAt': new Date(),
+    ...extra,
+  }).catch((error) => {
+    logger.debug(`[TRANSCRIPTION] stage write failed sourceFileId=${sourceFileId}`, error);
+  });
+}
+
 async function runTranscriptionJob({
   req,
   sourceFileId,
@@ -239,9 +261,12 @@ async function runTranscriptionJob({
     await db.updateFile({
       file_id: sourceFileId,
       'transcription.status': 'transcribing',
+      'transcription.stage': 'transcribing',
       'transcription.startedAt': new Date(),
       'transcription.heartbeatAt': new Date(),
       'transcription.error': null,
+      'transcription.progressSeconds': null,
+      'transcription.progressTotalSeconds': null,
     });
 
     registerActiveController(sourceFileId, controller);
@@ -251,6 +276,17 @@ async function runTranscriptionJob({
       sourceFileId,
       options,
       signal: controller.signal,
+      // The pipeline reports its own phase and position; the later stages
+      // below are ours to set, because they happen after it has returned.
+      onProgress: (progress) =>
+        setStage(sourceFileId, progress.stage ?? 'transcribing', {
+          'transcription.progressSeconds': progress.processed_seconds ?? null,
+          'transcription.progressTotalSeconds': progress.total_seconds ?? null,
+        }),
+    });
+    setStage(sourceFileId, 'indexing', {
+      'transcription.progressSeconds': null,
+      'transcription.progressTotalSeconds': null,
     });
     logger.info(
       `[TRANSCRIPTION] job transcribeAndEmbed done sourceFileId=${sourceFileId} segments=${result.segments.length} embedded=${result.embedded}`,
@@ -265,6 +301,19 @@ async function runTranscriptionJob({
         `[TRANSCRIPTION] job finished after cancel, discarding result sourceFileId=${sourceFileId}`,
       );
       return;
+    }
+
+    // A run that produced nothing is a failed job, not a finished one. Filed
+    // as `ready`, it reaches the reviewer as a transcript panel reading "No
+    // transcript available yet" - no reason given and no way to retry, which
+    // looks identical whether the recording was silent or the pipeline
+    // malfunctioned. Thrown so it takes the same path as any other job
+    // failure: status, message, and the retry affordance that comes with it.
+    if (!result.transcriptFileId) {
+      throw new Error(
+        'No speech was found in this recording, so there is no transcript to show. ' +
+          'If that looks wrong, the recording may have failed to decode - try again.',
+      );
     }
 
     if (wipeCorrections) {
@@ -293,6 +342,7 @@ async function runTranscriptionJob({
         conversationId,
       });
 
+      setStage(sourceFileId, 'matching_voices');
       await autoLabelDetectedSpeakers({
         req,
         sourceFileId,
@@ -305,6 +355,7 @@ async function runTranscriptionJob({
         enabled: options.voiceRecognition !== false,
       });
 
+      setStage(sourceFileId, 'identifying_speakers');
       await identifyRemainingSpeakers({
         req,
         sourceFileId,
@@ -313,6 +364,7 @@ async function runTranscriptionJob({
         baseText: result.text,
       });
 
+      setStage(sourceFileId, 'reviewing_attribution');
       await reviewSpeakerAttribution({
         req,
         sourceFileId,
@@ -856,6 +908,20 @@ router.get('/config', async (req, res) => {
     logger.error('[GET /api/transcribe/config] Failed', error);
     res.status(502).json({ error: 'Could not read transcription defaults' });
   }
+});
+
+/**
+ * Every instruction this server gives a model about a transcript, in the
+ * words it really gives them - see `describeTranscriptionPrompts`. Read by
+ * the transcribe/re-transcribe dialog so a reviewer can see what the
+ * speaker-identification, attribution-review and translation stages ask
+ * before they run, rather than only seeing what came back.
+ *
+ * 200 with `enabled: false` when no model is configured: "nothing is sent to
+ * any model on this server" is an answer to the question, not an error.
+ */
+router.get('/prompts', (req, res) => {
+  res.json(describeTranscriptionPrompts(getSpeakerIdentificationConfig()));
 });
 
 /**
@@ -1574,6 +1640,45 @@ router.post('/:sourceFileId/meeting-minutes-docx', async (req, res) => {
     res
       .status(error.status ?? 500)
       .json({ error: error.status ? error.message : 'Could not generate the meeting minutes' });
+  }
+});
+
+/**
+ * Translates a recording's transcript into English for reading. Returns
+ * `{ lines: { [lineIndex]: text } }` keyed by the same `lineIndex` the
+ * correction log uses, so the panel can swap each line's text in place and
+ * swap it back out again.
+ *
+ * Deliberately writes nothing: no correction is recorded and the stored
+ * transcript is untouched, so the original words stay the record and the
+ * translation is only ever a view. Lines the model didn't return are simply
+ * absent - the client keeps the original text for those.
+ *
+ * Shares `SPEAKER_ID_MODEL` with the identification passes rather than
+ * introducing its own configuration, which also means it inherits the same
+ * local-by-default posture: turning translation on cannot, by itself, send a
+ * transcript off this machine.
+ */
+router.post('/:sourceFileId/translate', async (req, res) => {
+  const { sourceFileId } = req.params;
+
+  try {
+    const config = getSpeakerIdentificationConfig();
+    if (!config) {
+      return res.status(503).json({ error: 'Translation is not configured on this server' });
+    }
+    const { lines } = await loadCorrectedTranscript(req, sourceFileId);
+    const translated = await translateTranscript(config, lines);
+    logger.info(
+      `[TRANSCRIPTION] translated transcript sourceFileId=${sourceFileId} ` +
+        `model=${config.model} lines=${Object.keys(translated).length}/${lines.length}`,
+    );
+    res.json({ lines: translated });
+  } catch (error) {
+    logger.error('[POST /api/transcribe/:sourceFileId/translate] Failed', error);
+    res
+      .status(error.status ?? 500)
+      .json({ error: error.status ? error.message : 'Could not translate the transcript' });
   }
 });
 

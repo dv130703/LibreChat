@@ -7,6 +7,7 @@ import type {
   TTranscribeOptions,
   TTranscribeQueuedResponse,
   TTranscribeCancelResponse,
+  TTranslatedTranscriptResponse,
   TConversationTranscriptsResponse,
   TTranscriptCorrection,
   InterviewTranscriptForm,
@@ -163,6 +164,14 @@ export const useRetryTranscriptionMutation = (): UseMutationResult<
                     ...entry,
                     jobStatus: 'queued',
                     jobError: null,
+                    // A retry restarts the job, so the phase and position
+                    // the previous attempt reached are stale the moment it
+                    // is queued - showing them until the server catches up
+                    // would have the card claim progress that no longer
+                    // exists.
+                    jobStage: null,
+                    jobProgressSeconds: null,
+                    jobProgressTotalSeconds: null,
                     cancelled: false,
                     isQueryable: false,
                     unqueryableReason: 'in_progress',
@@ -279,6 +288,31 @@ export const useExportMeetingMinutesDocxMutation = (): UseMutationResult<
   return useMutation([MutationKeys.exportMeetingMinutesDocx], {
     mutationFn: ({ sourceFileId, form, speakers }: ExportMeetingMinutesDocxVariables) =>
       dataService.exportMeetingMinutesDocx(sourceFileId, form, speakers),
+  });
+};
+
+export interface TranslateTranscriptVariables {
+  sourceFileId: string;
+}
+
+/** An English translation of the transcript, for reading only - the server
+ *  records nothing, so there is no cache to invalidate and the correction log
+ *  stays exactly as it was. Surfaces its own toast on failure, since the
+ *  panel's only other signal would be a button that quietly did nothing. */
+export const useTranslateTranscriptMutation = (): UseMutationResult<
+  TTranslatedTranscriptResponse,
+  unknown,
+  TranslateTranscriptVariables,
+  unknown
+> => {
+  const localize = useLocalize();
+  const { showToast } = useToastContext();
+  return useMutation([MutationKeys.translateTranscript], {
+    mutationFn: ({ sourceFileId }: TranslateTranscriptVariables) =>
+      dataService.translateTranscript(sourceFileId),
+    onError: () => {
+      showToast({ message: localize('com_ui_transcript_translate_error'), status: 'error' });
+    },
   });
 };
 

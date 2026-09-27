@@ -37,6 +37,8 @@ jest.mock('~/server/services/Files/VectorDB/crud', () => ({
 const { uploadVectors } = require('~/server/services/Files/VectorDB/crud');
 const fsPromises = require('fs/promises');
 const fs = require('fs');
+const { generateShortLivedToken } = require('@librechat/api');
+const { logger } = require('@librechat/data-schemas');
 const { transcribeAndEmbed, embedTranscript, formatTimestamp, formatLine } = require('./index');
 
 const req = { user: { id: 'user-1' } };
@@ -161,6 +163,34 @@ describe('transcribeAndEmbed', () => {
     expect(uploadVectors).not.toHaveBeenCalled();
   });
 
+  /** The regression this pins, from a real incident: a long-lived pipeline
+   *  process whose worker subprocesses had been restarted onto newer code
+   *  answered `/transcribe` with a progress report instead of a transcript.
+   *  It was a 200 with a perfectly well-formed body - just not this body.
+   *  Defaulting `segments` to `[]` read that as "no speech", so every
+   *  recording came back silently empty and was filed as a finished job.
+   *  A response with no segments field at all is a broken contract, and has
+   *  to be loud. */
+  it('rejects a response that carries no segments field at all', async () => {
+    axios.post.mockResolvedValue({
+      data: { stage: 'transcribing', processed_seconds: 0.0, total_seconds: null },
+    });
+
+    await expect(
+      transcribeAndEmbed({ req, file: multerFile, sourceFileId: 'source-1' }),
+    ).rejects.toThrow(/unexpected response/i);
+
+    expect(uploadVectors).not.toHaveBeenCalled();
+  });
+
+  it('rejects a response body that is not an object', async () => {
+    axios.post.mockResolvedValue({ data: 'Service Unavailable' });
+
+    await expect(
+      transcribeAndEmbed({ req, file: multerFile, sourceFileId: 'source-1' }),
+    ).rejects.toThrow(/unexpected response/i);
+  });
+
   it('defaults to includeTimestamps/diarize=true when no options are provided', async () => {
     const result = await transcribeAndEmbed({ req, file: multerFile, sourceFileId: 'source-1' });
     expect(result.text).toBe(
@@ -252,4 +282,80 @@ describe('embedTranscript retry behavior', () => {
 
     expect(fsPromises.unlink).toHaveBeenCalledTimes(1);
   }, 10000);
+});
+
+describe('progress polling', () => {
+  beforeEach(() => {
+    process.env.RAG_API_URL = 'http://rag.test';
+    uploadVectors.mockResolvedValue({ embedded: true });
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    delete process.env.RAG_API_URL;
+    jest.clearAllMocks();
+  });
+
+  /** The regression this pins: the poll used to carry the token minted once
+   *  for the job, and `generateShortLivedToken` issues five-minute tokens.
+   *  Any recording longer than five minutes of work - which is most of them -
+   *  therefore spent the rest of its run being answered 401, and since the
+   *  poll swallows its failures, the reported stage and position simply
+   *  stopped advancing with nothing said about it. */
+  it('mints a token per poll rather than reusing the job-long one', async () => {
+    let finishTranscription;
+    axios.post.mockReturnValue(
+      new Promise((resolve) => {
+        finishTranscription = resolve;
+      }),
+    );
+    axios.get.mockResolvedValue({
+      data: { running: true, stage: 'aligning', processed_seconds: 10, total_seconds: 100 },
+    });
+
+    const onProgress = jest.fn();
+    const run = transcribeAndEmbed({ req, file: multerFile, sourceFileId: 'source-1', onProgress });
+
+    const mintedForTheJob = generateShortLivedToken.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(3000);
+    await jest.advanceTimersByTimeAsync(3000);
+    await jest.advanceTimersByTimeAsync(3000);
+
+    expect(axios.get).toHaveBeenCalledTimes(3);
+    expect(generateShortLivedToken.mock.calls.length - mintedForTheJob).toBe(3);
+    expect(onProgress).toHaveBeenCalledTimes(3);
+
+    finishTranscription({ data: { segments: [], language: 'en' } });
+    await run;
+  });
+
+  /** A poll answered 401 is not the transient miss the rest of the catch is
+   *  written for - it never recovers - so it has to leave a trace rather
+   *  than being absorbed silently for the remaining hours of the run. */
+  it('says so once when the pipeline rejects the poll, and keeps the job running', async () => {
+    let finishTranscription;
+    axios.post.mockReturnValue(
+      new Promise((resolve) => {
+        finishTranscription = resolve;
+      }),
+    );
+    axios.get.mockRejectedValue({ response: { status: 401 } });
+
+    const run = transcribeAndEmbed({
+      req,
+      file: multerFile,
+      sourceFileId: 'source-1',
+      onProgress: jest.fn(),
+    });
+
+    await jest.advanceTimersByTimeAsync(3000);
+    await jest.advanceTimersByTimeAsync(3000);
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][0]).toContain('401');
+
+    finishTranscription({ data: { segments: [], language: 'en' } });
+    await expect(run).resolves.toBeDefined();
+  });
 });

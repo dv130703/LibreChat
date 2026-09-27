@@ -3,6 +3,7 @@ import { Constants, QueryKeys, dataService } from 'librechat-data-provider';
 import type { QueryObserverResult, UseQueryOptions } from '@tanstack/react-query';
 import type {
   TTranscribeConfig,
+  TTranscriptionPromptsResponse,
   TTranscriptCorrection,
   TTranscribeStatusResponse,
   TTranscribeAudioTokenResponse,
@@ -109,6 +110,12 @@ export const useTranscribeAudioTokenQuery = (
     () => dataService.getTranscribeAudioToken(sourceFileId ?? ''),
     {
       staleTime: 5 * 60 * 60 * 1000,
+      // `staleTime` alone only marks the token stale, it does not go and get
+      // a new one - and with focus refetching off and the panel staying
+      // mounted, nothing else was going to either. A panel open past the
+      // token's six-hour life was left holding a URL the audio route had
+      // begun rejecting, with no way back but a remount.
+      refetchInterval: 5 * 60 * 60 * 1000,
       refetchOnWindowFocus: false,
       ...config,
       enabled: !!sourceFileId && (config?.enabled ?? true),
@@ -125,6 +132,26 @@ export const useTranscribeConfigQuery = (
   return useQuery<TTranscribeConfig>(
     [QueryKeys.transcribeConfig],
     () => dataService.getTranscribeConfig(),
+    {
+      staleTime: Infinity,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      ...config,
+    },
+  );
+};
+
+/** Every prompt this server's LLM stages use, fetched only once a reviewer
+ *  actually opens the disclosure - it's several KB of prompt text that most
+ *  people will never expand. Cached indefinitely alongside the defaults: the
+ *  prompts are compiled into the server, so they cannot change without a
+ *  restart. */
+export const useTranscribePromptsQuery = (
+  config?: UseQueryOptions<TTranscriptionPromptsResponse>,
+): QueryObserverResult<TTranscriptionPromptsResponse> => {
+  return useQuery<TTranscriptionPromptsResponse>(
+    [QueryKeys.transcribePrompts],
+    () => dataService.getTranscribePrompts(),
     {
       staleTime: Infinity,
       refetchOnWindowFocus: false,

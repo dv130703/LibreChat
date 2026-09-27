@@ -130,3 +130,33 @@ describe('autoLabelSpeakers', () => {
     );
   });
 });
+
+describe('autoLabelSpeakers concurrency', () => {
+  it('identifies one speaker at a time', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    await autoLabelSpeakers({
+      audioFilePath: '/tmp/a.wav',
+      diarizationTurns: [
+        { speaker: 'Speaker 1', start: 0, end: 10 },
+        { speaker: 'Speaker 2', start: 10, end: 20 },
+        { speaker: 'Speaker 3', start: 20, end: 30 },
+      ],
+      transcriptFileId: 't',
+      conversationId: 'c',
+      userId: 'u',
+      extractClip: async () => {},
+      identifySpeaker: async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return { recognized: false, bestMatch: null };
+      },
+      createCorrection: async () => undefined,
+      removeClip: async () => {},
+      makeClipPath: (label) => `/tmp/${label}.wav`,
+    });
+    expect(maxInFlight).toBe(1);
+  });
+});

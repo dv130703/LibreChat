@@ -412,6 +412,55 @@ export type TAudioChannelProbeResponse = {
   channelCount: number;
 };
 
+/** A stage of transcription that sends transcript text to an LLM. */
+export type TranscriptionPromptStage =
+  | 'identifying_speakers'
+  | 'reviewing_attribution'
+  | 'translating';
+
+/** One tool a stage makes available - the only shape its answer may take, so
+ *  as much a constraint on the outcome as the prompt itself. `parameters` is
+ *  the tool's JSON schema, pretty-printed for reading. */
+export type TTranscriptionPromptTool = {
+  name: string;
+  description: string;
+  parameters: string;
+};
+
+/** What one stage asks a model, verbatim. `exampleUserMessage` is the real
+ *  user-message structure rendered against a stand-in transcript - never a
+ *  line from the reviewer's own recording. */
+export type TTranscriptionPromptStage = {
+  stage: TranscriptionPromptStage;
+  systemPrompt: string;
+  exampleUserMessage: string;
+  tools: TTranscriptionPromptTool[];
+};
+
+/**
+ * Response shape for `GET /api/transcribe/prompts` - full disclosure of every
+ * instruction this server gives a model about a transcript, plus which model
+ * and endpoint it goes to. `enabled: false` (with no stages) means no model is
+ * configured and none of these stages run at all.
+ */
+export type TTranscriptionPromptsResponse = {
+  enabled: boolean;
+  model?: string;
+  endpoint?: string;
+  stages: TTranscriptionPromptStage[];
+};
+
+/**
+ * Response shape for `POST /api/transcribe/:sourceFileId/translate`. Keyed by
+ * `lineIndex` (the same stable, possibly fractional key the correction log
+ * uses), and sparse: a line the model did not return is absent, and keeps its
+ * original text. Nothing here is recorded against the transcript - the
+ * translation exists only for as long as it's on screen.
+ */
+export type TTranslatedTranscriptResponse = {
+  lines: Record<string, string>;
+};
+
 /**
  * Response shape for `POST /api/transcribe`, `POST /:sourceFileId/retry`,
  * and `POST /:sourceFileId/retranscribe` (Phase 2, async job model - see
@@ -504,6 +553,17 @@ export type TTranscribeStatusResponse = {
  * state from it is what let a client cache that had never been refetched
  * since job completion decide the conversation had no transcript at all.
  */
+/** The phases a transcription job moves through, in order. */
+export type TranscriptionStage =
+  | 'extracting'
+  | 'transcribing'
+  | 'aligning'
+  | 'diarizing'
+  | 'indexing'
+  | 'matching_voices'
+  | 'identifying_speakers'
+  | 'reviewing_attribution';
+
 export type TConversationTranscript = {
   /** The source audio File's id - the stable identity for this recording
    *  from upload through to answer. Its derived files are always
@@ -522,6 +582,17 @@ export type TConversationTranscript = {
   jobStatus: TTranscribeJobStatus | null;
   /** Server diagnosis text - set only when `jobStatus === 'failed'`. */
   jobError: string | null;
+  /** Which phase of the job is running. `jobStatus` reads `transcribing`
+   *  for the whole run, including the speaker passes that happen after the
+   *  transcript exists, so it cannot say what is actually happening. */
+  jobStage: TranscriptionStage | null;
+  /** Position within the transcription phase, in audio seconds. Only that
+   *  phase reports a real one - elsewhere both are null, and the UI shows
+   *  the stage alone rather than a percentage nothing measures. */
+  jobProgressSeconds: number | null;
+  jobProgressTotalSeconds: number | null;
+  /** When the worker last confirmed it is alive, ISO. Lets the UI show that
+   *  a long job is working rather than only that it has not finished. */
   /** `jobStatus === 'failed'` because the user cancelled, not a real
    *  failure - mirrors `TTranscribeStatusEntry.cancelled`. */
   cancelled: boolean;

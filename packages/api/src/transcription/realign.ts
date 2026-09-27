@@ -112,6 +112,50 @@ function withTimes(
   };
 }
 
+/**
+ * Merges consecutive lines of one speaker that are two halves of one
+ * sentence.
+ *
+ * The pipeline's block splitter cuts a turn on a 0.6s pause or every 25 words
+ * (`_group_into_blocks`), so a single sentence routinely arrives as two boxes
+ * - `This is` / `not Winston Churchill that we're dealing with.` - and the
+ * panel, which renders one box per line, shows text stopping and restarting
+ * mid-thought.
+ *
+ * Same grammatical signal `realignSpeakerBoundaries` uses, applied to the
+ * case where both halves already belong to the same person: nothing to
+ * re-attribute, so the two lines simply become one, keeping the first line's
+ * start and the second's end. A line that ends in terminal punctuation, or a
+ * next line that opens with a capital, is a real sentence break and stays
+ * its own line - so playback, editing and reassignment stay roughly
+ * sentence-grained rather than collapsing a whole turn into one box.
+ */
+export function mergeSplitSentences(lines: ParsedTranscriptLine[]): ParsedTranscriptLine[] {
+  const result: ParsedTranscriptLine[] = [];
+  for (const line of lines) {
+    const previous = result[result.length - 1];
+    const text = line.text.trim();
+    const previousText = previous?.text.trim() ?? '';
+    if (
+      previous != null &&
+      previous.speaker === line.speaker &&
+      previousText.length > 0 &&
+      text.length > 0 &&
+      !ENDS_SENTENCE.test(previousText) &&
+      STARTS_LOWERCASE.test(text)
+    ) {
+      result[result.length - 1] = {
+        ...previous,
+        text: join(previousText, text),
+        endSeconds: line.endSeconds ?? previous.endSeconds,
+      };
+      continue;
+    }
+    result.push(line);
+  }
+  return result;
+}
+
 export function realignSpeakerBoundaries(lines: ParsedTranscriptLine[]): ParsedTranscriptLine[] {
   if (lines.length < 2) {
     return lines;
@@ -186,14 +230,16 @@ export function realignSpeakerBoundaries(lines: ParsedTranscriptLine[]): ParsedT
  * corrections.
  */
 export function realignSegments(segments: TranscriptLineSegment[]): TranscriptLineSegment[] {
-  const realigned = realignSpeakerBoundaries(
-    segments.map((segment, index) => ({
-      lineIndex: index,
-      seconds: segment.start,
-      endSeconds: segment.end,
-      speaker: segment.speaker,
-      text: segment.text,
-    })),
+  const realigned = mergeSplitSentences(
+    realignSpeakerBoundaries(
+      segments.map((segment, index) => ({
+        lineIndex: index,
+        seconds: segment.start,
+        endSeconds: segment.end,
+        speaker: segment.speaker,
+        text: segment.text,
+      })),
+    ),
   );
   if (realigned.length === segments.length) {
     let changed = false;

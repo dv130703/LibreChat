@@ -14,6 +14,19 @@ import type { ITranscriptionMeta } from './convo';
  * favor of this field as of the same migration - see
  * `IConversation.transcription`'s own doc comment.
  */
+/** The phases a transcription job moves through, in order. The first four
+ *  happen inside the Transcription Pipeline and are reported back by it; the
+ *  rest happen here, after the transcript exists. */
+export type TranscriptionStage =
+  | 'extracting'
+  | 'transcribing'
+  | 'aligning'
+  | 'diarizing'
+  | 'indexing'
+  | 'matching_voices'
+  | 'identifying_speakers'
+  | 'reviewing_attribution';
+
 export interface IFileTranscriptionJob {
   status: 'queued' | 'transcribing' | 'ready' | 'failed';
   /** uuid, for log correlation - not a Mongo `_id`. */
@@ -50,6 +63,16 @@ export interface IFileTranscriptionJob {
    *  Re-transcribe's option dialog with what really produced the current
    *  transcript rather than the request's possibly-"auto" values. */
   effectiveOptions?: ITranscriptionMeta;
+  /** Which phase is running right now. `status` alone reads "transcribing"
+   *  for the job's entire multi-minute life, including the passes that run
+   *  after the transcript already exists, which is indistinguishable from a
+   *  hang. Absent on records written before this existed. */
+  stage?: TranscriptionStage;
+  /** Position within the transcription phase, in audio seconds. Only that
+   *  phase can report a real one; the others report their stage alone
+   *  rather than a percentage nothing measures. */
+  progressSeconds?: number;
+  progressTotalSeconds?: number;
   transcriptFileId?: string;
   diarizationDetailFileId?: string;
   durationS?: number;

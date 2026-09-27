@@ -1,4 +1,5 @@
 import {
+  mergeSplitSentences,
   realignSegments,
   realignSpeakerBoundaries,
   splitDanglingTail,
@@ -198,14 +199,49 @@ describe('realignSegments', () => {
     ]);
   });
 
-  /** Without diarization every segment is unattributed, so there is no
-   *  speaker boundary to repair and nothing may change. */
-  it('leaves an undiarized transcript untouched', () => {
+  /** Without diarization there is no speaker boundary to repair, so nothing
+   *  is ever re-attributed - but a sentence the block splitter cut in half
+   *  is still joined back together. */
+  it('joins a split sentence in an undiarized transcript', () => {
+    expect(
+      realignSegments([
+        { start: 0, end: 1, text: 'One sentence that runs' },
+        { start: 1, end: 2, text: 'across two segments.' },
+      ]),
+    ).toEqual([{ start: 0, end: 2, text: 'One sentence that runs across two segments.' }]);
+  });
+
+  it('leaves segments that are already whole sentences untouched', () => {
     const segments = [
-      { start: 0, end: 1, text: 'One sentence that runs' },
-      { start: 1, end: 2, text: 'across two segments.' },
+      { start: 0, end: 1, speaker: 'Alex', text: 'One whole sentence.' },
+      { start: 1, end: 2, speaker: 'Alex', text: 'Another whole one.' },
     ];
 
     expect(realignSegments(segments)).toEqual(segments);
+  });
+});
+
+describe('mergeSplitSentences', () => {
+  it('joins one speaker’s sentence cut across two lines, keeping the full time range', () => {
+    expect(
+      mergeSplitSentences([
+        line(0, 'Alex', 'This is', 30, 37.6),
+        line(1, 'Alex', 'not Winston Churchill that we are dealing with.', 37.9, 43.1),
+      ]),
+    ).toEqual([
+      line(0, 'Alex', 'This is not Winston Churchill that we are dealing with.', 30, 43.1),
+    ]);
+  });
+
+  it('keeps a finished sentence and the next one apart', () => {
+    const lines = [line(0, 'Alex', 'I have watched.'), line(1, 'Alex', 'He is elegant.')];
+
+    expect(mergeSplitSentences(lines)).toEqual(lines);
+  });
+
+  it('never merges across a speaker change', () => {
+    const lines = [line(0, 'Alex', 'I cannot help but wonder'), line(1, 'Jordan', 'what he meant.')];
+
+    expect(mergeSplitSentences(lines)).toEqual(lines);
   });
 });

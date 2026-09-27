@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { TConversationTranscript } from 'librechat-data-provider';
 import RecordingChip from '~/components/AudioTranscriber/RecordingChip';
+import { STAGE_LABEL_KEYS, stageFraction } from '~/components/AudioTranscriber/jobProgress';
 import type { TranslationKeys } from '~/hooks';
 import { useLocalize } from '~/hooks';
 
@@ -57,13 +58,20 @@ function TranscriptCard({ record }: { record: TConversationTranscript }) {
   /** A record with no job status yet reads as `queued` - the recording
    *  exists, its job just hasn't been stamped on it. */
   const state = record.jobStatus ?? 'queued';
-  const statusLabel = localize(STATUS_LABEL_KEYS[state]);
+  /** The job's phase when it has reported one, since `jobStatus` says
+   *  `transcribing` for the whole run - including the speaker passes that
+   *  happen minutes after the transcript itself is finished. */
+  const statusLabel =
+    state === 'transcribing' && record.jobStage != null
+      ? localize(STAGE_LABEL_KEYS[record.jobStage])
+      : localize(STATUS_LABEL_KEYS[state]);
 
   return (
     <RecordingChip
       displayName={record.displayName}
       state={state}
       statusLabel={statusLabel}
+      progress={stageFraction(record.jobProgressSeconds, record.jobProgressTotalSeconds)}
       onClick={openTranscript}
     />
   );

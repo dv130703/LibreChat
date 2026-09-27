@@ -83,6 +83,42 @@ async function reconcileStaleTranscriptionJobs() {
   return { reconciled };
 }
 
+/**
+ * Fails every job still sitting at `'queued'`, and is only ever correct to
+ * call at boot.
+ *
+ * The queue those rows belong to is an in-process array (`jobQueue.js`), so
+ * it is empty by definition at startup: any `'queued'` row that survives a
+ * restart describes a job nothing is going to run. The heartbeat sweep below
+ * cannot reach them - it matches `'transcribing'`, because a job waiting its
+ * turn behind a two-hour run legitimately has a two-hour-old heartbeat and
+ * must not be reaped for it - so before this they stayed `'queued'` for
+ * good: polled forever by the client, reported to the user as "Queued", and
+ * not eligible for retry, which only accepts a failed job.
+ *
+ * @returns {Promise<{ reconciled: number }>}
+ */
+async function reconcileOrphanedQueuedJobs() {
+  const result = await runAsSystem(() =>
+    File.updateMany(
+      { 'transcription.status': 'queued' },
+      {
+        $set: {
+          'transcription.status': 'failed',
+          'transcription.error': INTERRUPTED_ERROR,
+        },
+      },
+    ),
+  );
+  const reconciled = result.modifiedCount ?? 0;
+  if (reconciled > 0) {
+    logger.warn(
+      `[transcription/reconciliation] Failed ${reconciled} queued job(s) orphaned by a restart`,
+    );
+  }
+  return { reconciled };
+}
+
 let sweepInterval = null;
 
 /** Runs the sweep once immediately, then on `SWEEP_INTERVAL_MS`. Called once
@@ -119,6 +155,14 @@ async function startTranscriptionReconciliation(onReconciled) {
   // process's own sweep, so this one finds nothing stale while the job still
   // needs recovering. Later sweeps only follow up on what they just marked,
   // so an idle server is not re-checking storage every five minutes.
+  // Before the heartbeat sweep, and only here: the in-process queue is empty
+  // at this exact moment and never again, which is the whole basis on which
+  // an orphaned `'queued'` row can be told from one that is simply waiting.
+  try {
+    await reconcileOrphanedQueuedJobs();
+  } catch (error) {
+    logger.error('[transcription/reconciliation] Orphaned queued-job sweep failed', error);
+  }
   await sweep('Initial sweep', { always: true });
   if (sweepInterval) {
     return;
@@ -142,6 +186,7 @@ module.exports = {
   INTERRUPTED_ERROR,
   STALE_THRESHOLD_MS,
   SWEEP_INTERVAL_MS,
+  reconcileOrphanedQueuedJobs,
   reconcileStaleTranscriptionJobs,
   startTranscriptionReconciliation,
   stopTranscriptionReconciliation,

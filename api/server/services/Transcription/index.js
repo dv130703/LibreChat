@@ -105,7 +105,74 @@ async function embedTranscript({ req, file_id, filename, text }) {
  *   embedded: boolean,
  * }>}
  */
-async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signal }) {
+/** How often the position is re-read while a run is in flight. Frequent
+ *  enough that a stalled job is obvious within seconds, rare enough that a
+ *  40-minute run costs a few hundred trivial requests. */
+const PROGRESS_POLL_INTERVAL_MS = 3000;
+
+/** Deliberately longer than the interval. Sharing one constant meant a poll
+ *  was abandoned at exactly the moment the next one was due, so a service
+ *  busy with GPU work - which is every service this ever polls - had its
+ *  slow answers thrown away rather than merely arriving late. */
+const PROGRESS_POLL_TIMEOUT_MS = 10 * 1000;
+
+/**
+ * Polls the Transcription Pipeline for where `sourceFileId`'s run has got to
+ * and hands each reading to `onProgress`. Returns a function that stops it.
+ *
+ * Mints a token per request rather than reusing the job's. They are
+ * five-minute tokens (`generateShortLivedToken`'s default) and this runs for
+ * as long as the job does, so one taken at the start expires while the work
+ * it is reporting on is still in its first phase - every poll after minute
+ * five came back 401 and, because the catch below swallows everything, the
+ * readout simply froze at whatever it had last seen. Signing is local and
+ * costs nothing next to the HTTP call it rides on.
+ *
+ * Most failures here are swallowed deliberately: this is a progress readout
+ * running beside the real work, and a service that is busy transcribing is
+ * exactly the one most likely to drop a status poll. Losing a reading costs
+ * a stale number on screen for three seconds; letting it reject would take
+ * down the transcription it is only reporting on. A rejected token is the
+ * exception - it never recovers on its own, so it is said out loud once
+ * instead of being absorbed for the rest of the run.
+ */
+function pollTranscriptionProgress({ transcriptionApiUrl, userId, sourceFileId, onProgress }) {
+  let reportedAuthFailure = false;
+  /** A request already in flight when polling stops still resolves, and its
+   *  reading is by then about a phase the run has left - handing it on
+   *  rewrites the stage backwards over whatever the caller set on the way
+   *  out ("indexing" reverting to "transcribing" for a few seconds). */
+  let stopped = false;
+  const timer = setInterval(async () => {
+    try {
+      const { data } = await axios.get(
+        `${transcriptionApiUrl}/transcribe/${encodeURIComponent(sourceFileId)}/progress`,
+        {
+          headers: { Authorization: `Bearer ${generateShortLivedToken(userId)}` },
+          timeout: PROGRESS_POLL_TIMEOUT_MS,
+        },
+      );
+      if (data?.running && !stopped) {
+        onProgress(data);
+      }
+    } catch (error) {
+      const status = error?.response?.status;
+      if ((status === 401 || status === 403) && !reportedAuthFailure) {
+        reportedAuthFailure = true;
+        logger.warn(
+          `[TRANSCRIPTION] progress poll rejected (${status}) for ${sourceFileId} - progress will not advance`,
+        );
+      }
+    }
+  }, PROGRESS_POLL_INTERVAL_MS);
+  timer.unref();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
+async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signal, onProgress }) {
   const transcriptionApiUrl = getTranscriptionApiUrl();
   if (!transcriptionApiUrl) {
     throw new Error(
@@ -173,28 +240,59 @@ async function transcribeAndEmbed({ req, file, sourceFileId, options = {}, signa
   }
 
   logger.info(`[TRANSCRIPTION] POST ${transcriptionApiUrl}/transcribe file=${file.originalname}`);
-  const response = await axios.post(`${transcriptionApiUrl}/transcribe`, formData, {
-    headers: {
-      Authorization: `Bearer ${jwtToken}`,
-      accept: 'application/json',
-      ...formData.getHeaders(),
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    // Kept above the Python service's own PIPELINE_TIMEOUT_S (config.py,
-    // currently 1h) so that service is always the one to report a real,
-    // specific timeout error and free the GPU lock - this is only a
-    // backstop for if Python itself becomes unreachable, not the ceiling
-    // that's meant to fire in the normal case.
-    timeout: 75 * 60 * 1000,
-    // Lets a best-effort cancel (`POST /:sourceFileId/cancel`) actually stop
-    // this specific request instead of just discarding its eventual result -
-    // see `runTranscriptionJob`'s `registerActiveController`. Kept as its
-    // own parameter rather than folded into `options`, which gets persisted
-    // verbatim (`transcription.effectiveOptions`) - an `AbortSignal` can't
-    // serialize.
-    signal,
-  });
+  // `/transcribe` is one long request with no streaming, so on its own it
+  // tells a caller nothing between "sent" and "done" - a multi-minute
+  // silence indistinguishable from a hang. The service reports its position
+  // on a separate endpoint instead; poll it alongside.
+  const stopPolling = onProgress
+    ? pollTranscriptionProgress({
+        transcriptionApiUrl,
+        userId: req.user.id,
+        sourceFileId,
+        onProgress,
+      })
+    : null;
+  const response = await axios
+    .post(`${transcriptionApiUrl}/transcribe`, formData, {
+      headers: {
+        Authorization: `Bearer ${jwtToken}`,
+        accept: 'application/json',
+        ...formData.getHeaders(),
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      // Kept above the Python service's own PIPELINE_TIMEOUT_S (config.py,
+      // currently 1h) so that service is always the one to report a real,
+      // specific timeout error and free the GPU lock - this is only a
+      // backstop for if Python itself becomes unreachable, not the ceiling
+      // that's meant to fire in the normal case.
+      timeout: 75 * 60 * 1000,
+      // Lets a best-effort cancel (`POST /:sourceFileId/cancel`) actually stop
+      // this specific request instead of just discarding its eventual result -
+      // see `runTranscriptionJob`'s `registerActiveController`. Kept as its
+      // own parameter rather than folded into `options`, which gets persisted
+      // verbatim (`transcription.effectiveOptions`) - an `AbortSignal` can't
+      // serialize.
+      signal,
+    })
+    .finally(() => stopPolling?.());
+
+  // A 200 is not on its own proof that what came back is a transcript. A
+  // pipeline process running older code than its worker subprocesses once
+  // answered this call with a progress report - well-formed JSON, no
+  // `segments` field - and defaulting it to `[]` turned that into a silent
+  // "no speech found" on every recording. An absent field is a broken
+  // contract, which is not the same thing as a recording with nothing in it.
+  if (
+    response.data == null ||
+    typeof response.data !== 'object' ||
+    !Array.isArray(response.data.segments)
+  ) {
+    throw new Error(
+      'The transcription service returned an unexpected response (no segments). ' +
+        'This usually means the service needs restarting to match its current code.',
+    );
+  }
 
   const {
     segments = [],

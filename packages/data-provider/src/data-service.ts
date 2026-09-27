@@ -450,6 +450,12 @@ export const getTranscribeAudioToken = (
 /** This deployment's effective transcription defaults - see
  *  `GET /api/transcribe/config`. Read once and reused; it changes only when the
  *  server is reconfigured. */
+/** The verbatim prompts every LLM stage of transcription uses. Static for a
+ *  given server configuration, so the caller can cache it indefinitely. */
+export const getTranscribePrompts = (): Promise<f.TTranscriptionPromptsResponse> => {
+  return request.get(endpoints.transcribePrompts());
+};
+
 export const getTranscribeConfig = (): Promise<f.TTranscribeConfig> => {
   return request.get(endpoints.transcribeConfig());
 };
@@ -477,6 +483,15 @@ export const exportMeetingMinutesDocx = (
   speakers: NamedSpeaker[],
 ): Promise<Blob> => {
   return request.postForBlob(endpoints.meetingMinutesDocx(sourceFileId), { form, speakers });
+};
+
+/** An English translation of the recording's corrected transcript, keyed by
+ *  `lineIndex`. Read-only: nothing is recorded against the transcript, so the
+ *  original text stays the record and the panel can toggle back to it. */
+export const translateTranscript = (
+  sourceFileId: string,
+): Promise<f.TTranslatedTranscriptResponse> => {
+  return request.post(endpoints.translateTranscript(sourceFileId), {});
 };
 
 /** Re-runs transcription on the audio already stored for a source file,

@@ -261,7 +261,7 @@ export function parseToolCalls<T>(response: SpeakerModelResponse, toolName: stri
  *  endpoint. Shared by every transcription pass that asks a model something. */
 export async function postChatCompletion(
   config: SpeakerModelConfig,
-  { messages, tools }: { messages: SpeakerModelMessage[]; tools: unknown[] },
+  { messages, tools }: { messages: SpeakerModelMessage[]; tools?: unknown[] },
 ): Promise<SpeakerModelResponse> {
   const endpoint = `${config.baseURL.replace(/\/+$/, '')}/chat/completions`;
   const doFetch = config.fetchImpl ?? fetch;
@@ -274,15 +274,14 @@ export async function postChatCompletion(
     body: JSON.stringify({
       model: config.model,
       messages,
-      tools,
-      tool_choice: 'auto',
       temperature: 0,
+      ...(tools ? { tools, tool_choice: 'auto' } : {}),
     }),
     signal: AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`Speaker identification model returned ${response.status}: ${detail}`);
+    throw new Error(`Transcription model returned ${response.status}: ${detail}`);
   }
   return (await response.json()) as SpeakerModelResponse;
 }

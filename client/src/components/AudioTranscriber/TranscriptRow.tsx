@@ -4,6 +4,7 @@ import type { ChangeEvent, KeyboardEvent, RefObject } from 'react';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 import SpeakerDropdown from './SpeakerDropdown';
+import { activeWordRange } from './wordTiming';
 import type { ParsedLine, SpeakerOption } from './types';
 
 interface TranscriptRowProps {
@@ -44,6 +45,11 @@ interface TranscriptRowProps {
    *  separate mode. */
   isDraft?: boolean;
   onDeleteDraft?: () => void;
+  /** The row is showing a machine translation rather than what was actually
+   *  said, so its text is not editable - an edit here would record the
+   *  translation as the transcript's own words, which is exactly what the
+   *  translated view promises not to do. */
+  isReadOnly?: boolean;
 }
 
 /** One transcript line: play/pause + timestamp + speaker assignment on top,
@@ -73,6 +79,7 @@ function TranscriptRow({
   onCancelNewSpeaker,
   isDraft = false,
   onDeleteDraft,
+  isReadOnly = false,
 }: TranscriptRowProps) {
   const localize = useLocalize();
   const [text, setText] = useState(line.text);
@@ -122,7 +129,7 @@ function TranscriptRow({
 
   const commitText = () => {
     const trimmed = text;
-    if (trimmed === line.text) {
+    if (isReadOnly || trimmed === line.text) {
       return;
     }
     onTextCommit(line.lineIndex, trimmed);
@@ -158,6 +165,9 @@ function TranscriptRow({
     onTimeCommit(line.lineIndex, seconds, endSeconds);
   };
 
+  /** The word the playhead is inside, while this is the line playing. */
+  const spokenWord = isPreviewing ? activeWordRange(text, playbackRatio) : null;
+
   const cancelTimeEdit = () => {
     timeEditSessionRef.current = 'settled';
     setStartInput(line.seconds != null ? formatSeconds(line.seconds) : '');
@@ -179,10 +189,12 @@ function TranscriptRow({
         // box while each row stays its own independently editable line.
         !isContinuation && 'rounded-t-lg border-t pt-3',
         isTurnEnd && 'rounded-b-lg border-b pb-3',
-        // Interior edges: padding alone separates lines within a turn, with
-        // no border to break the box.
-        isContinuation && 'pt-1.5',
-        !isTurnEnd && 'pb-1.5',
+        // Interior edges: no padding and no border between lines of one
+        // turn, so the turn reads as a single block of prose rather than a
+        // stack of separately-spaced paragraphs - the textarea's own `py-1`
+        // is all that sets consecutive lines apart.
+        isContinuation && 'pt-0',
+        !isTurnEnd && 'pb-0',
         isDraft && 'border-dashed border-blue-500/40 bg-blue-500/5 dark:border-blue-400/40',
         !isDraft && 'border-border-light',
         // The followed line is tinted rather than re-bordered, so
@@ -332,23 +344,45 @@ function TranscriptRow({
        *  constantly: a mis-segmented line can be hundreds of characters with
        *  no space in it. */}
       <div className="-mx-2 -my-1 grid w-[calc(100%+1rem)] grid-cols-[minmax(0,1fr)]">
+        {/* The mirror doubles as the playback highlight layer. Its text is
+         *  transparent rather than hidden, so it still sizes the row and
+         *  still wraps identically to the textarea - which means a span
+         *  around the word being spoken lands exactly behind that word in
+         *  the (transparent-backgrounded) textarea on top. A textarea cannot
+         *  style a range of its own text, so this is the only place the
+         *  highlight can be drawn without giving up inline editing. */}
         <div
           aria-hidden="true"
-          className="invisible col-start-1 row-start-1 min-w-0 whitespace-pre-wrap break-words border border-transparent px-2 py-1 text-sm leading-relaxed"
+          className="pointer-events-none col-start-1 row-start-1 min-w-0 whitespace-pre-wrap break-words border border-transparent px-2 py-1 text-sm leading-relaxed text-transparent"
         >
-          {text + ' '}
+          {spokenWord == null ? (
+            text + ' '
+          ) : (
+            <>
+              {text.slice(0, spokenWord[0])}
+              <span className="rounded-[3px] bg-blue-500/25 dark:bg-blue-400/30">
+                {text.slice(spokenWord[0], spokenWord[1])}
+              </span>
+              {text.slice(spokenWord[1]) + ' '}
+            </>
+          )}
         </div>
         <textarea
           ref={textareaRef}
           value={text}
           rows={1}
           aria-label={localize('com_ui_transcript_line_text', { timestamp: line.timestamp ?? '' })}
+          readOnly={isReadOnly}
           onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setText(event.target.value)}
           onBlur={commitText}
           placeholder={
             isDraft ? localize('com_ui_transcript_insert_dialogue_text_placeholder') : undefined
           }
-          className="col-start-1 row-start-1 min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent bg-transparent px-2 py-1 text-sm leading-relaxed text-text-primary transition-colors hover:border-border-medium hover:bg-surface-hover focus:border-blue-500 focus:bg-surface-primary focus:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:border-blue-400"
+          className={cn(
+            'col-start-1 row-start-1 min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words rounded-md border border-transparent bg-transparent px-2 py-1 text-sm leading-relaxed text-text-primary transition-colors focus:outline-none',
+            !isReadOnly &&
+              'hover:border-border-medium hover:bg-surface-hover focus:border-blue-500 focus:bg-surface-primary focus:shadow-sm focus:ring-2 focus:ring-blue-500/20 dark:focus:border-blue-400',
+          )}
         />
       </div>
 

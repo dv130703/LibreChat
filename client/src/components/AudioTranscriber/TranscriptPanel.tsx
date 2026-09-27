@@ -14,6 +14,7 @@ import {
   AlertCircle,
   ArrowUpToLine,
   Trash2,
+  Languages,
   ArrowDownToLine,
   ChevronDown,
 } from 'lucide-react';
@@ -34,6 +35,7 @@ import {
   useExportMeetingMinutesDocxMutation,
   useConversationTranscriptsQuery,
   useRetryTranscriptionMutation,
+  useTranslateTranscriptMutation,
   useTranscribeAudioTokenQuery,
 } from '~/data-provider';
 import { QueryKeys, parseTranscriptText, sourceFileIdFromDerived } from 'librechat-data-provider';
@@ -48,6 +50,8 @@ import { useChatHeaderSlot } from './panelHostContext';
 import type { PanelComponentProps } from './panelHostContext';
 import { computeInsertionSlots, formatSlotTimestamp } from './lineInsert';
 import { reduceCorrections, createCustomSpeakerId } from './corrections';
+import { STAGE_LABEL_KEYS, isPostTranscriptStage } from './jobProgress';
+import JobProgressPanel from './JobProgressPanel';
 import DeleteLineDialog from './DeleteLineDialog';
 import type { PendingLineDeletion } from './DeleteLineDialog';
 import { getTurnPosition } from './speakerTurns';
@@ -71,6 +75,11 @@ const BOUNDARY_BACKOFF_SECONDS = 0.15;
  *  measured container's full size would render past that padding on the
  *  right/bottom, so this is subtracted from `listWidth`/`listHeight` first. */
 const ROWS_CONTAINER_PADDING = 12;
+
+/** How often the playhead is re-read while audio plays. Fast enough for the
+ *  word highlight to keep up with speech, slow enough that the panel is not
+ *  re-rendering on every animation frame. */
+const WORD_TRACK_INTERVAL_MS = 100;
 
 /** Rough, fixed estimate of the row context menu's own footprint rather than
  *  measuring it - two lines of text, so the size barely varies, and this
@@ -101,13 +110,16 @@ function downloadBlob(blob: Blob, filename: string): void {
  *  and `aria-label` behind, so the action stays both visible and
  *  screen-reader-identifiable with no visible text at all.
  *
- *  Read as a shed order, widest threshold first: the export menu's dropdown
- *  chevron goes first (the menu still opens on click with no chevron - only
+ *  Read as a shed order, widest threshold first: Translate goes first (an
+ *  occasional reading aid, and the panel is rarely this wide), then the
+ *  export menu's dropdown
+ *  chevron (the menu still opens on click with no chevron - only
  *  the visual hint is gone), then Re-transcribe (occasional, and the longest
  *  label), then the speaker roster, and Export keeps its label longest because
  *  it is the most-used action here. Values allow for three labelled buttons -
  *  they were originally tuned for two, so adding Re-transcribe raised them
  *  all rather than just adding a fourth constant. */
+const TRANSLATE_LABEL_MIN_WIDTH = 610;
 const EXPORT_CHEVRON_MIN_WIDTH = 540;
 const RETRANSCRIBE_LABEL_MIN_WIDTH = 470;
 const SPEAKERS_LABEL_MIN_WIDTH = 400;
@@ -126,9 +138,12 @@ function TranscriptPanelHeader({
   speakerCount,
   modelUsed,
   isRetranscribing,
+  isTranslating,
+  isTranslated,
   isExportingInterview,
   isExportingMeetingMinutes,
   showActions,
+  onToggleTranslate,
   onOpenRoster,
   onExportTxt,
   onExportInterview,
@@ -140,6 +155,8 @@ function TranscriptPanelHeader({
   speakerCount: number;
   modelUsed?: string;
   isRetranscribing: boolean;
+  isTranslating: boolean;
+  isTranslated: boolean;
   isExportingInterview: boolean;
   isExportingMeetingMinutes: boolean;
   /** False while there's no transcript yet to act on (loading/queued/
@@ -149,6 +166,7 @@ function TranscriptPanelHeader({
    *  present, not gated on this - the user needs to be able to close the
    *  panel in every one of those states too, not just once it's ready. */
   showActions: boolean;
+  onToggleTranslate: () => void;
   onOpenRoster: () => void;
   onExportTxt: () => void;
   onExportInterview: () => void;
@@ -181,10 +199,14 @@ function TranscriptPanelHeader({
   const showExportLabel = width === null || width >= EXPORT_LABEL_MIN_WIDTH;
   const showExportChevron = width === null || width >= EXPORT_CHEVRON_MIN_WIDTH;
   const showRetranscribeLabel = width === null || width >= RETRANSCRIBE_LABEL_MIN_WIDTH;
+  const showTranslateLabel = width === null || width >= TRANSLATE_LABEL_MIN_WIDTH;
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportMenuZIndex = usePopoverZIndex();
 
   const speakersLabel = localize('com_ui_transcript_define_speakers');
+  const translateLabel = isTranslated
+    ? localize('com_ui_transcript_show_original')
+    : localize('com_ui_transcript_translate');
 
   return (
     <div
@@ -234,6 +256,27 @@ function TranscriptPanelHeader({
                 {showSpeakersLabel && <span>{speakersLabel}</span>}
               </button>
             )}
+            <button
+              type="button"
+              onClick={onToggleTranslate}
+              disabled={isTranslating}
+              aria-pressed={isTranslated}
+              aria-label={translateLabel}
+              title={localize('com_ui_transcript_translate_hint')}
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                isTranslated
+                  ? 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                  : 'border-border-medium text-text-secondary hover:border-border-heavy hover:bg-surface-hover hover:text-text-primary',
+              )}
+            >
+              {isTranslating ? (
+                <Spinner className="h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <Languages className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              )}
+              {showTranslateLabel && <span>{translateLabel}</span>}
+            </button>
             <button
               type="button"
               onClick={onRetranscribe}
@@ -672,17 +715,69 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
     setDrafts((current) => current.filter((draft) => !(draft.lineIndex in stableInsertedLines)));
   }, [stableInsertedLines]);
 
-  /** What actually renders - real lines plus any still-uncommitted drafts,
-   *  in time order. Playback (`togglePlaySegment`) also looks lines up
-   *  through this, not `effectiveLines` alone, so a draft's play button
-   *  works immediately - re-hearing the exact gap being filled in is the
-   *  entire point of not doing this as a modal. */
-  const displayLines = useMemo(() => {
-    if (drafts.length === 0) {
-      return effectiveLines;
+  /** An English translation of every line, keyed by `lineIndex`, held only
+   *  in memory: the server records nothing, so leaving the panel (or
+   *  toggling off) puts the original words back with no correction to undo.
+   *  Kept separately from the lines themselves so the two are never confused
+   *  - what gets edited, exported or embedded is always the original. */
+  const [translations, setTranslations] = useState<Record<string, string> | null>(null);
+  const [showTranslated, setShowTranslated] = useState(false);
+  const translate = useTranslateTranscriptMutation();
+
+  const toggleTranslate = useCallback(() => {
+    if (showTranslated) {
+      setShowTranslated(false);
+      return;
     }
-    return [...effectiveLines, ...drafts].sort((a, b) => a.lineIndex - b.lineIndex);
-  }, [effectiveLines, drafts]);
+    if (translations != null) {
+      setShowTranslated(true);
+      return;
+    }
+    if (!sourceFileId) {
+      return;
+    }
+    translate.mutate(
+      { sourceFileId },
+      {
+        onSuccess: (data) => {
+          setTranslations(data.lines);
+          setShowTranslated(true);
+        },
+      },
+    );
+  }, [showTranslated, translations, sourceFileId, translate]);
+
+  // A correction made while the translation is on screen makes that
+  // translation stale for the line it touched, and there's no way to tell
+  // which line from here - so the whole thing is dropped and re-fetched on
+  // the next toggle rather than left showing pre-edit text. Keyed off the
+  // correction log's LENGTH, not the array itself: the log is append-only,
+  // so length changes on exactly the events that matter, while the array
+  // gets a fresh reference on every refetch.
+  useEffect(() => {
+    setTranslations(null);
+    setShowTranslated(false);
+  }, [corrections?.length, transcriptText]);
+
+  /** What actually renders - real lines plus any still-uncommitted drafts,
+   *  in time order, with each line's text swapped for its translation while
+   *  the translated view is on. Playback (`togglePlaySegment`) also looks
+   *  lines up through this, not `effectiveLines` alone, so a draft's play
+   *  button works immediately - re-hearing the exact gap being filled in is
+   *  the entire point of not doing this as a modal. */
+  const displayLines = useMemo(() => {
+    const ordered =
+      drafts.length === 0
+        ? effectiveLines
+        : [...effectiveLines, ...drafts].sort((a, b) => a.lineIndex - b.lineIndex);
+    if (!showTranslated || translations == null) {
+      return ordered;
+    }
+    return ordered.map((line) => {
+      const translated = translations[String(line.lineIndex)];
+      return translated == null || translated === line.text ? line : { ...line, text: translated };
+    });
+  }, [effectiveLines, drafts, showTranslated, translations]);
 
   const displayLinesRef = useRef(displayLines);
   displayLinesRef.current = displayLines;
@@ -900,19 +995,36 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
     // crossed a stop point, that much audio has already come out of the
     // speakers. This handler just tracks the playhead for highlighting.
     const handleTimeUpdate = () => setCurrentTime(audioEl.currentTime);
-    const handlePlay = () => setIsPlaying(true);
+    // `timeupdate` alone is too coarse to follow a spoken word: browsers fire
+    // it about four times a second, and a word goes by in a third of one. So
+    // while audio is actually playing the playhead is sampled on a timer as
+    // well, which is what moves the word highlight in `TranscriptRow`.
+    let wordTick: ReturnType<typeof setInterval> | null = null;
+    const stopWordTick = () => {
+      if (wordTick != null) {
+        clearInterval(wordTick);
+        wordTick = null;
+      }
+    };
+    const handlePlay = () => {
+      setIsPlaying(true);
+      stopWordTick();
+      wordTick = setInterval(() => setCurrentTime(audioEl.currentTime), WORD_TRACK_INTERVAL_MS);
+    };
     // A pause (from anywhere) just means "not playing right now" - it does
     // NOT retire the boundary, since resuming the exact same chunk needs it
     // to still be armed. Stopping the watch loop here is just housekeeping
     // (nothing to poll for while paused); it re-arms on resume.
     const handlePause = () => {
       setIsPlaying(false);
+      stopWordTick();
       stopBoundaryWatch();
     };
     audioEl.addEventListener('timeupdate', handleTimeUpdate);
     audioEl.addEventListener('play', handlePlay);
     audioEl.addEventListener('pause', handlePause);
     return () => {
+      stopWordTick();
       audioEl.removeEventListener('timeupdate', handleTimeUpdate);
       audioEl.removeEventListener('play', handlePlay);
       audioEl.removeEventListener('pause', handlePause);
@@ -1589,6 +1701,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
             onCommitNewSpeaker={commitNewSpeaker}
             onCancelNewSpeaker={cancelNewSpeaker}
             isDraft={isDraft}
+            isReadOnly={showTranslated}
             onDeleteDraft={isDraft ? () => deleteDraft(line.lineIndex) : undefined}
           />
         </MeasuredRow>
@@ -1596,6 +1709,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
     },
     [
       displayLines,
+      showTranslated,
       cache,
       invalidateRowHeight,
       followedLineIndex,
@@ -1632,6 +1746,22 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
    *  actually finished. */
   const isRetranscribingJob =
     lines.length > 0 && (jobStatus === 'queued' || jobStatus === 'transcribing');
+  /** A transcript on screen while the job is in one of its closing stages is
+   *  not being re-transcribed - it is being annotated. Those stages write
+   *  speaker corrections into the very lines below, so saying
+   *  "Re-transcribing..." there was both wrong and quietly alarming. */
+  const isAnnotatingSpeakers = isRetranscribingJob && isPostTranscriptStage(record?.jobStage);
+  const inFlightJobLabel = (() => {
+    if (isAnnotatingSpeakers && record?.jobStage != null) {
+      return localize('com_ui_transcript_annotating', {
+        0: localize(STAGE_LABEL_KEYS[record.jobStage]),
+      });
+    }
+    if (jobStatus === 'transcribing') {
+      return localize('com_ui_transcript_retranscribing_in_progress');
+    }
+    return localize('com_ui_transcript_retranscribing_queued');
+  })();
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -1640,9 +1770,12 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
         speakerCount={uniqueSpeakerIds.length}
         modelUsed={conversation?.transcription?.model}
         isRetranscribing={retranscribe.isLoading || isRetranscribingJob}
+        isTranslating={translate.isLoading}
+        isTranslated={showTranslated}
         isExportingInterview={exportInterviewDocx.isLoading}
         isExportingMeetingMinutes={exportMeetingMinutesDocx.isLoading}
         showActions={!isLoading && lines.length > 0}
+        onToggleTranslate={toggleTranslate}
         onOpenRoster={() => setRosterModalOpen(true)}
         onExportTxt={handleExportTxt}
         onExportInterview={() => setInterviewDialogOpen(true)}
@@ -1653,11 +1786,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
       {isRetranscribingJob && (
         <div className="flex flex-shrink-0 items-center gap-2 border-b border-border-medium bg-blue-500/5 px-4 py-2 text-xs font-medium text-text-secondary dark:bg-blue-400/10">
           <Spinner className="h-3.5 w-3.5 shrink-0 text-blue-600 dark:text-blue-400" />
-          <span>
-            {jobStatus === 'transcribing'
-              ? localize('com_ui_transcript_retranscribing_in_progress')
-              : localize('com_ui_transcript_retranscribing_queued')}
-          </span>
+          <span>{inFlightJobLabel}</span>
         </div>
       )}
       <div
@@ -1742,14 +1871,14 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
           !isConvoError &&
           transcriptFileId == null &&
           (jobStatus === 'queued' || jobStatus === 'transcribing') && (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-              <Spinner className="text-text-primary" />
-              <p className="text-sm font-medium text-text-primary">
-                {jobStatus === 'transcribing'
-                  ? localize('com_ui_transcript_card_transcribing')
-                  : localize('com_ui_transcript_card_queued')}
-              </p>
-            </div>
+            <JobProgressPanel
+              sourceFileId={sourceFileId}
+              displayName={record?.displayName}
+              stage={record?.jobStage ?? null}
+              processedSeconds={record?.jobProgressSeconds ?? null}
+              totalSeconds={record?.jobProgressTotalSeconds ?? null}
+              queued={jobStatus === 'queued'}
+            />
           )}
         {!isLoading && !isConvoError && transcriptFileId == null && jobStatus === 'failed' && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
