@@ -23,7 +23,7 @@ npm install
 npm run dev
 ```
 
-App defaults to [http://localhost:5173](http://localhost:5173).
+App defaults to [http://localhost:6969](http://localhost:6969).
 
 ```sh
 npm run dev -- --open   # open in browser

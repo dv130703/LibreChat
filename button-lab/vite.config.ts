@@ -4,6 +4,14 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+	server: {
+		port: 6969,
+		strictPort: true
+	},
+	preview: {
+		port: 6969,
+		strictPort: true
+	},
 	plugins: [
 		tailwindcss(),
 		sveltekit({
