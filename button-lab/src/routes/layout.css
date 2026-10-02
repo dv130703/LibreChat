@@ -1,0 +1,68 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@fontsource-variable/fraunces/wght.css';
+@import '@fontsource-variable/dm-sans/wght.css';
+
+@theme {
+	--font-display: 'Fraunces Variable', 'Fraunces', Georgia, serif;
+	--font-sans: 'DM Sans Variable', 'DM Sans', ui-sans-serif, sans-serif;
+
+	--color-ink: #0b1218;
+	--color-ink-soft: #121c26;
+	--color-panel: #162230;
+	--color-line: color-mix(in oklab, #d7e2ec 14%, transparent);
+	--color-mist: #8fa3b5;
+	--color-foam: #e8eef4;
+	--color-sea: #3f9d8f;
+	--color-sea-bright: #5cb8a9;
+	--color-ember: #c4785a;
+	--color-ember-soft: #d9a08a;
+}
+
+@layer base {
+	:root {
+		color-scheme: dark;
+		--bg-atmosphere:
+			radial-gradient(1200px 700px at 12% -10%, color-mix(in oklab, var(--color-sea) 22%, transparent), transparent 55%),
+			radial-gradient(900px 600px at 88% 8%, color-mix(in oklab, var(--color-ember) 16%, transparent), transparent 50%),
+			radial-gradient(700px 500px at 50% 100%, color-mix(in oklab, #1f3a4d 55%, transparent), transparent 60%),
+			linear-gradient(180deg, var(--color-ink) 0%, var(--color-ink-soft) 48%, #0e1720 100%);
+		--surface-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+	}
+
+	html {
+		scroll-behavior: smooth;
+	}
+
+	body {
+		margin: 0;
+		min-height: 100dvh;
+		font-family: var(--font-sans);
+		color: var(--color-foam);
+		background: var(--bg-atmosphere);
+		background-attachment: fixed;
+		-webkit-font-smoothing: antialiased;
+		text-rendering: optimizeLegibility;
+	}
+
+	body::before {
+		content: '';
+		pointer-events: none;
+		position: fixed;
+		inset: 0;
+		opacity: 0.045;
+		background-image: var(--surface-noise);
+		mix-blend-mode: soft-light;
+		z-index: 0;
+	}
+
+	#lab-root {
+		position: relative;
+		z-index: 1;
+	}
+
+	::selection {
+		background: color-mix(in oklab, var(--color-sea) 45%, transparent);
+		color: white;
+	}
+}
