@@ -596,7 +596,7 @@ function TranscriptPanel({ conversationId, fileId, onResolved, onClose }: PanelC
       speakerCount: meta.speakerCount,
       clusteringThreshold: meta.clusteringThreshold,
       contextTerms: meta.contextTerms,
-      model: meta.requestedModel,
+      model: meta.requestedModel ?? undefined,
       language: meta.language,
       suppressNumerals: meta.suppressNumerals,
     };
