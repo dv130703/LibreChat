@@ -16,7 +16,16 @@ if (!fs.existsSync(VENV_PYTHON)) {
   console.warn(
     `[llm-server] Skipping - venv not found at ${VENV_PYTHON}. Set LLM_SERVER_DIR if local-llm-server lives elsewhere.`,
   );
-  process.exit(0);
+  // Stay alive so `npm run dev`'s concurrently --kill-others does not tear
+  // down codeapi/backend/frontend when the optional LLM server is absent.
+  const keepAlive = setInterval(() => {}, 1 << 30);
+  const stop = () => {
+    clearInterval(keepAlive);
+    process.exit(0);
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  return;
 }
 
 // `detached: true` makes `main.py` the leader of its own new process group
